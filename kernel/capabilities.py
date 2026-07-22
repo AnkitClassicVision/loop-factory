@@ -26,6 +26,15 @@ _ALLOWED_ENV = frozenset(
         "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
         "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
         "OE_KERNEL_ONLY", "PLACEHOLDER_MODE",
+        # XDG_RUNTIME_DIR is a path (/run/user/<uid>), not a secret. Without it
+        # `systemctl --user` cannot reach the session bus, so watchdog-style
+        # departments sense every unit as unknown under confinement (observed
+        # podcast shadow run 2026-07-22: 8 real candidates ballooned to 15).
+        # Acknowledged widening: the session bus becomes reachable, so a dept
+        # process COULD invoke unit actions — that action class stays governed
+        # by the heal playbook allowlist, shadow mode, and the systemd unit
+        # sandbox (NoNewPrivileges, ProtectSystem=strict).
+        "XDG_RUNTIME_DIR",
     }
 )
 
