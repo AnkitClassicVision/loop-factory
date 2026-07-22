@@ -287,6 +287,40 @@ def test_manifest_completeness_and_fallback_flags(tmp_path):
     assert obs["metrics"]["fallback_available"] == {"bio": True, "promo_assets": False}
 
 
+def test_empty_manifest_emits_explicit_zero_active_guests_observation(tmp_path):
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    source = sources / "guest_manifests.json"
+    write_json(source, {"guests": []})
+
+    observations = manifest_sensor.run(tmp_path / "state", sources)
+
+    assert len(observations) == 1
+    assert observations[0]["subject"] == "manifest-coverage"
+    assert observations[0]["status"] == "ok"
+    assert observations[0]["detail"] == "zero active guests in source"
+    assert observations[0]["evidence"] == str(source)
+    assert read_rows(tmp_path / "state") == observations
+
+
+@pytest.mark.parametrize(
+    "source_value",
+    [None, {"guests": "not-a-list"}, {"guests": ["not-an-object"]}],
+)
+def test_missing_or_unreadable_manifest_emits_unknown(tmp_path, source_value):
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    if source_value is not None:
+        write_json(sources / "guest_manifests.json", source_value)
+
+    observations = manifest_sensor.run(tmp_path / "state", sources)
+
+    assert len(observations) == 1
+    assert observations[0]["subject"] == "guest-manifests"
+    assert observations[0]["status"] == "unknown"
+    assert read_rows(tmp_path / "state") == observations
+
+
 def test_duplicate_email_is_unknown_and_suppressed(tmp_path):
     sources = tmp_path / "sources"
     sources.mkdir()

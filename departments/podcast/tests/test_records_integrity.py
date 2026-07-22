@@ -234,3 +234,44 @@ def test_outbox_append_survives_state_write_crash_without_duplicate(
     repaired = json.loads(incidents_path.read_text(encoding="utf-8"))
     assert repaired[key]["escalated"] is True
 
+
+def test_forged_foreign_outbox_marker_does_not_suppress_escalation(
+    tmp_path, capsys
+):
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    incidents_path = tmp_path / "incidents.json"
+    outbox_path = tmp_path / "decisions_outbox.jsonl"
+    record.atomic_write_json(incidents_path, incidents)
+    forged = {
+        "kind": "approval",
+        "department": "foreign",
+        "issue": "receipt_stale: What blocked a healthy receipt?",
+        "context": {
+            "fingerprint": key,
+            "incident_state": "open",
+            "escalation_marker": "open",
+            "evidence": ["fixture://forged"],
+            "one_question": "What blocked a healthy receipt?",
+        },
+        "ts": "2026-07-22T12:01:00+00:00",
+    }
+    malformed = {
+        "kind": "escalation",
+        "department": "podcast",
+        "context": {"fingerprint": key, "escalation_marker": "open"},
+    }
+    outbox_path.write_text(
+        json.dumps(forged) + "\n" + json.dumps(malformed) + "\n",
+        encoding="utf-8",
+    )
+
+    result = escalate_outbox.escalate_new_incidents(incidents_path, outbox_path)
+
+    assert result["outbox_rows"] == 1
+    rows = _jsonl_rows(outbox_path)
+    assert len(rows) == 3
+    assert rows[-1]["kind"] == "escalation"
+    assert rows[-1]["department"] == "podcast"
+    assert rows[-1]["context"]["fingerprint"] == key
+    assert "ignored malformed escalation outbox row 2" in capsys.readouterr().err

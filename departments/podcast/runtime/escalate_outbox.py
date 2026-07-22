@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,8 @@ from departments.podcast.runtime import record as record_node
 
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 EscalateFn = Callable[..., dict[str, Any]]
+_FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
+_DEFECT_MARKER = re.compile(r"^department_defect:[1-9][0-9]*$")
 
 
 def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
@@ -30,11 +33,20 @@ def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
     return value
 
 
-def _load_outbox_markers(path: Path) -> dict[tuple[str, str], str | None]:
+def _outbox_warning(path: Path, line_number: int, detail: str) -> None:
+    print(
+        f"ignored malformed escalation outbox row {line_number}: {path}: {detail}",
+        file=sys.stderr,
+    )
+
+
+def _load_outbox_markers(
+    path: Path,
+) -> dict[tuple[str, str, str], str | None]:
     """Return durable escalation markers already appended to the outbox."""
     if not path.exists():
         return {}
-    markers: dict[tuple[str, str], str | None] = {}
+    markers: dict[tuple[str, str, str], str | None] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -45,18 +57,51 @@ def _load_outbox_markers(path: Path) -> dict[tuple[str, str], str | None]:
         try:
             packet = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"malformed escalation outbox row {line_number}: {path}: {exc}"
-            ) from exc
+            _outbox_warning(path, line_number, str(exc))
+            continue
         if not isinstance(packet, dict):
+            _outbox_warning(path, line_number, "row is not an object")
+            continue
+        if packet.get("department") != "podcast" or packet.get("kind") != "escalation":
             continue
         context = packet.get("context", {})
-        if not isinstance(context, dict) or not context.get("fingerprint"):
+        if not isinstance(context, dict):
+            _outbox_warning(path, line_number, "context is not an object")
             continue
-        fingerprint = str(context["fingerprint"])
-        # Rows written before state markers existed were initial-open escalations.
-        marker = str(context.get("escalation_marker") or "open")
-        markers[(fingerprint, marker)] = str(packet["ts"]) if packet.get("ts") else None
+        fingerprint = context.get("fingerprint")
+        marker = context.get("escalation_marker")
+        incident_state = context.get("incident_state")
+        question = context.get("one_question")
+        evidence = context.get("evidence")
+        issue = packet.get("issue")
+        timestamp = packet.get("ts")
+        marker_matches_state = (
+            (marker == "open" and incident_state == "open")
+            or (
+                isinstance(marker, str)
+                and _DEFECT_MARKER.fullmatch(marker) is not None
+                and incident_state == "department_defect"
+            )
+        )
+        structurally_valid = (
+            isinstance(fingerprint, str)
+            and _FINGERPRINT.fullmatch(fingerprint) is not None
+            and marker_matches_state
+            and isinstance(question, str)
+            and bool(question)
+            and isinstance(evidence, list)
+            and all(isinstance(value, str) for value in evidence)
+            and isinstance(issue, str)
+            and issue.endswith(f": {question}")
+            and len(issue) > len(question) + 2
+            and isinstance(timestamp, str)
+            and bool(timestamp)
+            and packet.get("eli5") == f"[podcast] needs you: {issue}"
+        )
+        if not structurally_valid:
+            _outbox_warning(path, line_number, "packet does not match podcast escalation schema")
+            continue
+        markers[(fingerprint, marker, issue)] = timestamp
     return markers
 
 
@@ -97,7 +142,12 @@ def escalate_new_incidents(
                 continue
             marker, escalated_field, escalated_at_field = _escalation_state(incident)
             fingerprint = str(incident["fingerprint"])
-            durable_key = (fingerprint, marker)
+            evidence = [str(value) for value in incident.get("evidence", [])]
+            question = str(
+                incident.get("one_question", "What owner decision is required?")
+            )
+            issue = f"{incident.get('failure_class')}: {question}"
+            durable_key = (fingerprint, marker, issue)
 
             if durable_key in durable_markers:
                 if not incident.get(escalated_field):
@@ -108,11 +158,6 @@ def escalate_new_incidents(
             if incident.get(escalated_field):
                 continue
 
-            evidence = [str(value) for value in incident.get("evidence", [])]
-            question = str(
-                incident.get("one_question", "What owner decision is required?")
-            )
-            issue = f"{incident.get('failure_class')}: {question}"
             escalate_fn(
                 department="podcast",
                 issue=issue,

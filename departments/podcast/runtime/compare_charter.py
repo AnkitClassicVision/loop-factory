@@ -126,13 +126,15 @@ def charter_setpoints(charter: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
-def _latest_by_subject(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    latest: dict[str, dict[str, Any]] = {}
+def _latest_by_sensor_subject(
+    observations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
     for row in observations:
-        subject = str(row.get("subject", ""))
-        current = latest.get(subject)
+        key = (str(row.get("sensor", "")), str(row.get("subject", "")))
+        current = latest.get(key)
         if current is None or str(row.get("ts", "")) >= str(current.get("ts", "")):
-            latest[subject] = row
+            latest[key] = row
     return [latest[key] for key in sorted(latest)]
 
 
@@ -195,7 +197,7 @@ def compare_observations(
     """Return candidates from the finite sensor/status transition table."""
     setpoints = charter_setpoints(charter)
     candidates: list[dict[str, Any]] = []
-    for row in _latest_by_subject(observations):
+    for row in _latest_by_sensor_subject(observations):
         sensor = row.get("sensor")
         status = row.get("status")
         if sensor == "receipt":
@@ -252,7 +254,12 @@ def run_compare(
     record_node.write_record(
         state_dir,
         "compare_charter",
-        {"observations_compared": len(_latest_by_subject(observations)), "candidates": len(candidates)},
+        {
+            "observations_compared": len(
+                _latest_by_sensor_subject(observations)
+            ),
+            "candidates": len(candidates),
+        },
         shadow=shadow,
     )
     return candidates

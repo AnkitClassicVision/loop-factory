@@ -241,7 +241,8 @@ def test_hollow_receipt_fails_as_receipt_hollow(tmp_path):
     candidate = compare_charter.compare_observations([observation], _charter())[0]
 
     # forged_receipt.json targets kernel-signed receipts and is out of scope for
-    # these Markdown loop-receipt content checks.
+    # these Markdown checks; tests/test_kernel_receipts.py consumes signature
+    # forgeries through the kernel verifier.
     assert observation["status"] == "fail"
     assert observation["metrics"]["failure_hint"] == "receipt_hollow"
     assert "receipt_hollow" in observation["detail"]
@@ -488,6 +489,51 @@ def test_compare_uses_daily_limit_from_charter_not_inventory_value():
     assert len(candidates) == 1
     assert candidates[0]["failure_class"] == "receipt_stale"
     assert candidates[0]["setpoint"] == "receipt age <= 1500 minutes"
+
+
+def test_compare_keeps_failure_from_other_sensor_with_same_subject():
+    observations = [
+        {
+            "ts": "2026-07-22T12:00:00+00:00",
+            "sensor": "publishday",
+            "subject": "episode-7",
+            "status": "fail",
+            "evidence": "fixture://missing-publish",
+            "detail": "publish evidence missing",
+            "metrics": {},
+        },
+        {
+            "ts": "2026-07-22T12:05:00+00:00",
+            "sensor": "manifest",
+            "subject": "episode-7",
+            "status": "ok",
+            "evidence": "fixture://complete-manifest",
+            "detail": "manifest complete",
+            "metrics": {},
+        },
+    ]
+
+    candidates = compare_charter.compare_observations(observations, _charter())
+
+    assert len(candidates) == 1
+    assert candidates[0]["sensor"] == "publishday"
+    assert candidates[0]["failure_class"] == "publish_missing"
+
+
+def test_poisoned_unit_missing_fails_sense_inventory_coverage():
+    poisoned = json.loads(
+        (POISONED_FIXTURES / "unit_missing.json").read_text(encoding="utf-8")
+    )
+    estate = {
+        "systemd_user_timers": [
+            {"name": name} for name in poisoned["inventory"]
+        ],
+        "channels": [],
+        "vps": {"services": []},
+    }
+
+    with pytest.raises(sense_estate.CoverageError, match="referral-flywheel.timer"):
+        sense_estate.assert_inventory_coverage(estate, poisoned["observations"])
 
 
 def test_missing_observations_emits_evidence_missing_candidate(tmp_path):

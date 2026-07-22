@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,3 +94,78 @@ def test_launch_build_env_honors_charter_capabilities(tmp_path, declared):
     )
 
     assert ("XDG_RUNTIME_DIR" in env) is declared
+
+
+def test_capability_launch_allows_department_runtime_python_and_grants_env(
+    tmp_path,
+):
+    department = "confined"
+    _write_charter(tmp_path, department, capabilities_marker="declared")
+    runtime = tmp_path / "departments" / department / "runtime"
+    runtime.mkdir()
+    script = runtime / "sensor.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    calls = []
+
+    result = LAUNCH.launch_command(
+        department,
+        [sys.executable, str(script)],
+        base={"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1000"},
+        root=tmp_path,
+        runner=lambda command, env: (
+            calls.append((command, env)) or SimpleNamespace(returncode=0)
+        ),
+    )
+
+    assert result == 0
+    assert calls[0][0] == [sys.executable, str(script)]
+    assert calls[0][1]["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert calls[0][1]["OE_DEPARTMENT"] == department
+
+
+@pytest.mark.parametrize("command_kind", ["out-of-tree", "non-python"])
+def test_capability_launch_refuses_untrusted_command(tmp_path, command_kind):
+    department = "confined"
+    _write_charter(tmp_path, department, capabilities_marker="declared")
+    runtime = tmp_path / "departments" / department / "runtime"
+    runtime.mkdir()
+    runtime_script = runtime / "sensor.py"
+    runtime_script.write_text("print('ok')\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("print('outside')\n", encoding="utf-8")
+    command = (
+        [sys.executable, str(outside)]
+        if command_kind == "out-of-tree"
+        else ["/bin/sh", str(runtime_script)]
+    )
+
+    with pytest.raises(LAUNCH.LaunchRefused, match="capability-bearing"):
+        LAUNCH.launch_command(
+            department,
+            command,
+            base={"XDG_RUNTIME_DIR": "/run/user/1000"},
+            root=tmp_path,
+            runner=lambda *args, **kwargs: pytest.fail(
+                "a refused command must not execute"
+            ),
+        )
+
+
+def test_no_capability_launch_keeps_arbitrary_command_behavior(tmp_path):
+    department = "unconfined"
+    _write_charter(tmp_path, department)
+    calls = []
+
+    result = LAUNCH.launch_command(
+        department,
+        ["/bin/echo", "still-allowed"],
+        base={"XDG_RUNTIME_DIR": "/run/user/1000"},
+        root=tmp_path,
+        runner=lambda command, env: (
+            calls.append((command, env)) or SimpleNamespace(returncode=0)
+        ),
+    )
+
+    assert result == 0
+    assert calls[0][0] == ["/bin/echo", "still-allowed"]
+    assert "XDG_RUNTIME_DIR" not in calls[0][1]

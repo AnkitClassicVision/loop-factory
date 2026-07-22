@@ -115,26 +115,82 @@ def _find_playbook(playbook_id: str, path) -> dict[str, Any] | None:
     )
 
 
-def _incident_refusal(
+def _bound_incident(
     state_dir: Path,
     fingerprint: str,
     playbook: dict[str, Any],
-) -> str | None:
-    """Return why this playbook is not bound to a healable incident."""
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return the incident only when this playbook is bound to it."""
     try:
         incidents = json.loads(
             (state_dir / "incidents.json").read_text(encoding="utf-8")
         )
     except (OSError, ValueError) as exc:
-        return f"incident data unavailable: {exc}"
+        return None, f"incident data unavailable: {exc}"
     incident = incidents.get(fingerprint) if isinstance(incidents, dict) else None
     if not isinstance(incident, dict):
-        return "fingerprint does not name an existing incident"
+        return None, "fingerprint does not name an existing incident"
     if incident.get("state") not in {"open", "department_defect"}:
-        return "incident is not open or a department defect"
+        return None, "incident is not open or a department defect"
     if incident.get("failure_class") != playbook.get("matches_failure_class"):
-        return "incident failure class does not match the selected playbook"
-    return None
+        return None, "incident failure class does not match the selected playbook"
+    return incident, None
+
+
+def _evidence_bound_params(
+    playbook: dict[str, Any],
+    incident: dict[str, Any],
+    caller_params: dict[str, str],
+) -> dict[str, str]:
+    """Derive command parameters from incident evidence, never the caller."""
+    expected: set[str] = set()
+    for template in playbook["commands"]:
+        expected.update(_fields(template))
+    extra = sorted(set(caller_params) - expected)
+    if extra:
+        raise ValueError(f"parameter mismatch: missing=[], extra={extra}")
+    if not expected:
+        return {}
+
+    evidence = incident.get("evidence")
+    if not isinstance(evidence, list):
+        raise ValueError("incident evidence must be a list of evidence entries")
+    entries = [value for value in evidence if isinstance(value, str) and value]
+    derived: dict[str, str] = {}
+    if "unit" in expected:
+        units = {
+            value.removeprefix("systemd://")
+            for value in entries
+            if value.startswith("systemd://") and value.removeprefix("systemd://")
+        }
+        if len(units) != 1:
+            raise ValueError(
+                f"incident evidence must name exactly one systemd unit; found {len(units)}"
+            )
+        derived["unit"] = next(iter(units))
+    if "path" in expected:
+        paths = {value for value in entries if "://" not in value}
+        if len(paths) != 1:
+            raise ValueError(
+                f"incident evidence must name exactly one filesystem path; found {len(paths)}"
+            )
+        derived["path"] = next(iter(paths))
+
+    unsupported = sorted(expected - set(derived))
+    if unsupported:
+        raise ValueError(
+            f"playbook has parameters without evidence derivation rules: {unsupported}"
+        )
+    disagreements = sorted(
+        name
+        for name, value in caller_params.items()
+        if value != derived.get(name)
+    )
+    if disagreements:
+        raise ValueError(
+            f"caller parameters disagree with incident evidence: {disagreements}"
+        )
+    return derived
 
 
 def apply_heal(
@@ -176,7 +232,7 @@ def apply_heal(
             state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,
             commands=[], result="refused", detail="playbook id is not allowlisted", now=now,
         )
-    incident_refusal = _incident_refusal(state_dir, fingerprint, playbook)
+    incident, incident_refusal = _bound_incident(state_dir, fingerprint, playbook)
     if incident_refusal is not None:
         return append_heal_receipt(
             state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,
@@ -184,7 +240,8 @@ def apply_heal(
         )
     try:
         assert_heal_target_allowed(playbook["heal_target"])
-        commands = render_commands(playbook, params)
+        bound_params = _evidence_bound_params(playbook, incident, params)
+        commands = render_commands(playbook, bound_params)
     except (ImmutableHealError, ValueError, KeyError) as exc:
         return append_heal_receipt(
             state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,

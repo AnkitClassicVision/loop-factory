@@ -32,8 +32,22 @@ def run(state_dir: Path, sources: Path, today: date | None = None) -> list[dict]
         return [obs]
     try:
         guests = json.loads(path.read_text(encoding="utf-8"))["guests"]
+        if not isinstance(guests, list):
+            raise TypeError("guests must be a list")
+        if not all(isinstance(guest, dict) for guest in guests):
+            raise TypeError("every guest must be an object")
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         obs = _obs("guest-manifests", "unknown", str(path), f"unreadable source: {exc}", {})
+        _append(state_dir, obs)
+        return [obs]
+    if not guests:
+        obs = _obs(
+            "manifest-coverage",
+            "ok",
+            str(path),
+            "zero active guests in source",
+            {"active_guests": 0},
+        )
         _append(state_dir, obs)
         return [obs]
     emails = Counter(str(row.get("email") or "").strip().casefold()

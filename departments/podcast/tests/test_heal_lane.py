@@ -234,6 +234,103 @@ def test_live_heal_requires_healable_state_and_matching_failure_class(
     assert not (state_dir / "heal_attempts.json").exists()
 
 
+def test_live_heal_refuses_caller_unit_that_disagrees_with_incident(
+    tmp_path, monkeypatch
+):
+    state_dir = tmp_path / "state"
+    _write_incidents(
+        state_dir,
+        _incident(evidence=["systemd://podcast-production.timer"]),
+    )
+
+    monkeypatch.setattr(
+        heal_apply.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("an unrelated unit must not execute"),
+    )
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        "fp-1",
+        "restart_user_timer",
+        {"unit": "unrelated.timer"},
+        shadow=False,
+        now=NOW,
+    )
+
+    assert receipt["result"] == "refused"
+    assert "disagree with incident evidence" in receipt["detail"]
+    assert receipt["commands"] == []
+    assert not (state_dir / "heal_attempts.json").exists()
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [[], ["systemd://one.timer", "systemd://two.timer"]],
+)
+def test_live_heal_requires_exactly_one_evidence_unit(
+    tmp_path, monkeypatch, evidence
+):
+    state_dir = tmp_path / "state"
+    _write_incidents(state_dir, _incident(evidence=evidence))
+    monkeypatch.setattr(
+        heal_apply.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("ambiguous evidence must not execute"),
+    )
+
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        "fp-1",
+        "restart_user_timer",
+        shadow=False,
+        now=NOW,
+    )
+
+    assert receipt["result"] == "refused"
+    assert "exactly one systemd unit" in receipt["detail"]
+    assert receipt["commands"] == []
+
+
+def test_live_heal_derives_unit_without_caller_parameter(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    _write_incidents(
+        state_dir,
+        _incident(evidence=["systemd://podcast-production.timer"]),
+    )
+    calls = []
+    monkeypatch.setattr(
+        heal_apply.kernel_bridge, "require_shadow", lambda live=False: None
+    )
+
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        "fp-1",
+        "restart_user_timer",
+        shadow=False,
+        executor=lambda argv, **kwargs: (
+            calls.append(argv)
+            or SimpleNamespace(returncode=0, stdout="", stderr="")
+        ),
+        now=NOW,
+    )
+
+    assert receipt["result"] == "proposed"
+    assert calls == [["systemctl", "--user", "restart", "podcast-production.timer"]]
+
+
+def test_path_parameter_is_derived_from_incident_evidence_only():
+    playbook = {"commands": ["touch {path}"]}
+    incident = {"evidence": ["/var/lib/podcast/tracker.json"]}
+
+    assert heal_apply._evidence_bound_params(playbook, incident, {}) == {
+        "path": "/var/lib/podcast/tracker.json"
+    }
+    with pytest.raises(ValueError, match="disagree with incident evidence"):
+        heal_apply._evidence_bound_params(
+            playbook, incident, {"path": "/tmp/unrelated.json"}
+        )
+
+
 def test_verify_marks_failed_when_condition_persists(tmp_path):
     state_dir = tmp_path / "state"
     _write_incidents(state_dir, _incident())
@@ -305,3 +402,51 @@ def test_render_rejects_parameter_that_could_add_argv_tokens():
         assert "unsafe value" in str(exc)
     else:
         raise AssertionError("unsafe parameter was accepted")
+
+
+def test_poisoned_non_allowlisted_playbook_is_refused_by_heal_select(tmp_path):
+    poisoned = json.loads(
+        (Path(__file__).with_name("fixtures") / "poisoned" /
+         "non_allowlisted_playbook.json").read_text(encoding="utf-8")
+    )
+    request = poisoned["heal_request"]
+    assert request["playbook"] not in poisoned["playbook_allowlist"]
+    playbooks_path = tmp_path / "fixture-playbooks.json"
+    playbooks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "playbooks": [
+                    {
+                        "id": playbook_id,
+                        "matches_failure_class": playbook_id,
+                        "description": "poison fixture allowlisted control",
+                        "commands": ["true"],
+                        "heal_target": "runtime_unit",
+                        "max_attempts_per_day": 1,
+                    }
+                    for playbook_id in poisoned["playbook_allowlist"]
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_dir = tmp_path / "state"
+    _write_incidents(
+        state_dir,
+        _incident(
+            fingerprint=request["fingerprint"],
+            failure_class=request["playbook"],
+        ),
+    )
+
+    selected = heal_select.select_heal(
+        state_dir,
+        request["fingerprint"],
+        playbooks_path=playbooks_path,
+        now=NOW,
+    )
+
+    assert selected is None
+    assert _receipts(state_dir)[-1]["result"] == "refused"
+    assert _receipts(state_dir)[-1]["detail"] == "unknown pattern — escalate"
