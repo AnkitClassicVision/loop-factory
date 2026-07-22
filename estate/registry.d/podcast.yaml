@@ -1,0 +1,9 @@
+entries:
+  - id: podcast
+    owner: "ankit"
+    surface: "department"
+    schedule: "TODO_F1"
+    health_check: "test -f departments/podcast/state/STATE.json"
+    heartbeat_path: "departments/podcast/state/heartbeats.jsonl"
+    state_dir: "departments/podcast/state"
+    kill_switch: "systemctl --user disable --now podcast-loop.timer"

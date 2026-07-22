@@ -1,0 +1,106 @@
+{
+  "_doc": "Machine form of departments/podcast/procedural-graph.md. Validated by factory/graphs.py. Derives from knowledge/concept-map.md (LOCKED 2026-07-22). Watchdog department: read-only sensing lanes + propose-only heal lane; no external dispatch, no CRM writes, no model-capable nodes (C14).",
+  "subgraphs": [
+    {
+      "id": "SG-WATCHDOG",
+      "concept_refs": ["C1", "C3", "C4", "C12", "C13", "C16"],
+      "not_applicable": {
+        "S1": "senses infrastructure units, timers, receipts, and channels — no person entities joined",
+        "S2": "no contact targeting; sensing only",
+        "S3": "no model-capable nodes; script-only lane (C14)",
+        "S8": "no cost-incurring nodes; scripts on local host under subscription-only policy (C8)",
+        "S4": "read-only sensing funnel; no external dispatch — estate gateway owns sends",
+        "S5": "read-only sensing funnel; no external dispatch",
+        "S6": "read-only sensing funnel; no external dispatch",
+        "S7": "read-only sensing funnel; no external dispatch"
+      },
+      "nodes": [
+        {"id": "N1", "impl": "runtime/sense_estate.py"},
+        {"id": "N2", "impl": "runtime/compare_charter.py"},
+        {"id": "N3", "impl": "runtime/fingerprint_dedup.py"},
+        {"id": "N4", "impl": "runtime/escalate_outbox.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-PIPELINE",
+      "concept_refs": ["C1", "C3", "C4", "C15"],
+      "not_applicable": {
+        "S2": "no contact targeting; read-only count of already-engaged guests",
+        "S3": "no model-capable nodes; script-only lane (C14)",
+        "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+        "S4": "read-only sensing funnel; no external dispatch",
+        "S5": "read-only sensing funnel; no external dispatch",
+        "S6": "read-only sensing funnel; no external dispatch",
+        "S7": "read-only sensing funnel; no external dispatch"
+      },
+      "nodes": [
+        {"id": "S1", "guard": "S1"},
+        {"id": "N1", "impl": "runtime/pipeline_sensor.py"},
+        {"id": "N2", "impl": "runtime/compare_charter.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-PUBLISHDAY",
+      "concept_refs": ["C1", "C3", "C10", "C16"],
+      "not_applicable": {
+        "S1": "verifies public provider receipts for episodes, not person entities",
+        "S2": "no contact targeting; sensing only",
+        "S3": "no model-capable nodes; script-only lane (C14)",
+        "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+        "S4": "read-only verification funnel; no external dispatch",
+        "S5": "read-only verification funnel; no external dispatch",
+        "S6": "read-only verification funnel; no external dispatch",
+        "S7": "read-only verification funnel; no external dispatch"
+      },
+      "nodes": [
+        {"id": "N1", "impl": "runtime/publish_verifier.py"},
+        {"id": "N2", "impl": "runtime/compare_charter.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-MANIFEST",
+      "concept_refs": ["C6", "C7", "C10", "C15"],
+      "not_applicable": {
+        "S2": "no contact targeting; completeness sensing of already-engaged guests only",
+        "S3": "no model-capable nodes; script-only lane (C14)",
+        "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+        "S4": "read-only sensing funnel; HubSpot manifest WRITES are estate-side per charter estate_decisions",
+        "S5": "read-only sensing funnel; no external dispatch",
+        "S6": "read-only sensing funnel; no external dispatch",
+        "S7": "read-only sensing funnel; no external dispatch"
+      },
+      "nodes": [
+        {"id": "S1", "guard": "S1"},
+        {"id": "N1", "impl": "runtime/manifest_sensor.py"},
+        {"id": "N2", "impl": "runtime/compare_charter.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-HEAL",
+      "concept_refs": ["C5", "C11", "C12", "C14"],
+      "not_applicable": {
+        "S1": "operates on incident fingerprints from SG-WATCHDOG, not person entities",
+        "S2": "no contact targeting; internal heal lane",
+        "S3": "no model-capable nodes; playbook heals are deterministic scripts (C14)",
+        "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+        "S4": "internal heal lane; no external dispatch — heals restricted to versioned playbook allowlist (C11), propose-only in shadow",
+        "S5": "internal heal lane; no external dispatch",
+        "S6": "internal heal lane; no external dispatch",
+        "S7": "internal heal lane; no external dispatch"
+      },
+      "nodes": [
+        {"id": "N1", "impl": "runtime/heal_select.py"},
+        {"id": "N2", "impl": "runtime/heal_apply.py"},
+        {"id": "N3", "impl": "runtime/heal_verify.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    }
+  ],
+  "untraced_allowed": {
+    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node"
+  }
+}
