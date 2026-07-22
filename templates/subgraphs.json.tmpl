@@ -1,0 +1,28 @@
+{
+  "_doc": "Machine form of the procedural graph. Validated by factory/graphs.py (guard-matrix lint + traceability). Every runtime/*.py must be an 'impl' of some node or listed in untraced_allowed with a rationale.",
+  "subgraphs": [
+    {
+      "id": "SG-EXAMPLE",
+      "concept_refs": ["C3"],
+      "not_applicable": {},
+      "nodes": [
+        {"id": "S1", "guard": "S1"},
+        {"id": "S2", "guard": "S2"},
+        {"id": "N3", "impl": "runtime/assemble_context.py"},
+        {"id": "S3", "guard": "S3"},
+        {"id": "S8", "guard": "S8"},
+        {"id": "N4", "model_capable": true, "cost_incurring": true, "impl": "runtime/draft.py"},
+        {"id": "N5", "model_capable": true, "impl": "runtime/qa_draft.py"},
+        {"id": "S5", "guard": "S5"},
+        {"id": "S4", "guard": "S4"},
+        {"id": "S6", "guard": "S6"},
+        {"id": "S7", "guard": "S7"},
+        {"id": "N6", "external_dispatch": true, "impl": "runtime/dispatch.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    }
+  ],
+  "untraced_allowed": {
+    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node"
+  }
+}

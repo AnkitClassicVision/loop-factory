@@ -1,0 +1,12 @@
+# {{DEPARTMENT}} department loop timer. Installed DISABLED by convention:
+# generating a unit never enables it; a human enables it deliberately after
+# a manual dry-run (the factory promotion-safety rule).
+[Unit]
+Description=Run the {{DEPARTMENT}} department loop on schedule
+
+[Timer]
+OnCalendar={{ONCALENDAR}}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

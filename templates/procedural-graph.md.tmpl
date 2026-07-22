@@ -1,0 +1,57 @@
+# {name} Department — Procedural Graph (F2 output, the WHAT)
+
+Status: DRAFT. Hand-authored from the locked concept map. The authoritative
+machine form is `subgraphs.json` (validated by `factory/graphs.py`); these
+tables are the human-readable companion. If the two disagree, the JSON is
+wrong OR this file is wrong — fix both, re-lint, re-pin. A process change that
+does not update BOTH plus the release is a drift alarm.
+
+Traces to: `knowledge/concept-map.md` (locked) + `charter.yaml`.
+Every node carries the uniform wrapper: declared inputs → output contract →
+executed QA check → receipt to runs. Scripts get NO QA exemption.
+
+## Shared Safety Layer (factory standard; immutable per charter)
+
+| ID | Node | impl | What it enforces |
+|---|---|---|---|
+| S1 | resolve_identity | SCRIPT | canonical entity across systems; unresolved = suppress+review |
+| S2 | eligibility_gate | SCRIPT | charter eligibility; never_contact suppressed |
+| S3 | privacy_preflight | SCRIPT | deterministic sensitive-data detect + redact BEFORE any model call |
+| S4 | send_authorization | SCRIPT (gate) | pre-dispatch atomic proof → one-time token; no token = no send |
+| S5 | frequency_reserve | SCRIPT | ONE shared ledger across all lanes; atomic slot reservation |
+| S6 | kill_controller | SCRIPT (independent) | kill conditions + plate-load; outside self-scoring |
+| S7 | circuit_breaker | SCRIPT | auto-freeze send class on complaint/bounce/negative signals |
+| S8 | budget_reserve | SCRIPT | reserve worst-case BEFORE the first cost node; fail closed |
+
+Delivery rule: while a lane's send class is shadow/draft_only, dispatch runs
+`delivery_mode=simulate` to a synthetic sink and asserts `delivered_count==0`.
+
+## SG-<ID> — <lane name> (proving slice)
+
+```
+[T] trigger
+  → S1 → S2 → N2 select → N3 assemble_context (versioned manifest, context receipt)
+  → S3 → N4 draft → N5 qa (claim→source, cross-model) → S8 → S5 → S4
+  → N6 dispatch(simulate|live) → N7 follow-up state machine → N8 outcome_sensor (independent)
+  → N9 record
+  [S6 + S7 run continuously across the lane]
+```
+
+| # | Node | type | impl | action_class / autonomy | QA check (executed) | model |
+|---|---|---|---|---|---|---|
+| N2 | | Transform | SCRIPT | internal_read / shadow | | none |
+| N3 | assemble_context | Transform | SCRIPT+read | internal_read / shadow | versioned context manifest; incomplete/stale = HALT+escalate | none |
+| N4 | draft | Generate | LLM | content_draft / shadow | consumes ONLY the S3 sanitized bundle | per node contract |
+| N5 | qa_draft | Gate | HYBRID | internal_check / shadow | claim→source coverage; cross-model (different family); context-completeness | ≠ N4 family |
+| N6 | dispatch | Act | SCRIPT→gateway | external_send / shadow=simulate | delivered_count==0 in shadow; consumes S4 token live | none |
+| N8 | outcome_sensor | Score | SCRIPT (independent) | internal_read / shadow | independent join; the department never self-scores | none |
+
+## Autonomy rollout
+
+All send/write classes start at shadow (simulate). Promotion is per action
+class per the ladder (runbooks/promotion-ladder.md); no lane auto-promotes.
+
+## Intent traceability
+
+Every node lists the concept-map node (C#) and interview question (Q#) it
+closes. Does-less / does-more check: no capability beyond the locked interview.

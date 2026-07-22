@@ -1,0 +1,23 @@
+# {{DEPARTMENT}} department loop — oneshot, SHADOW-safe, hardened.
+# Install: copy to ~/.config/systemd/user/{{DEPARTMENT}}-loop.service, review,
+# then enable the TIMER deliberately (never auto-enabled by the factory).
+[Unit]
+Description={{DEPARTMENT}} department loop (loop-factory)
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart=/usr/bin/env bash {{REPO}}/departments/{{DEPARTMENT}}/runtime/{{DEPARTMENT}}_daily.sh
+TimeoutStartSec=600
+# Confinement (deny-by-default; departments hold no credentials):
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{REPO}}/departments/{{DEPARTMENT}}/state {{REPO}}/state
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET
+# NO credential-bearing Environment= lines. The lock service reads secrets; the
+# department process never does.
+Environment=PLACEHOLDER_MODE=1

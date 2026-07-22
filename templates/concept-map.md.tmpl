@@ -1,0 +1,53 @@
+# {name} Department — Concept Map (F1 output, the WHY)
+
+Status: DRAFT — derives ONLY from `interview/intent-interview.md`. Locked by the
+owner at INTENT LOCK; read-only afterward except through a re-opened interview.
+
+Rules:
+- Every node cites the interview question it derives from (Q1..Q16).
+- Nothing appears here that the owner did not say or confirm at readback.
+- The procedural graph (F2) must trace every node back to THIS map; anything
+  that traces to nothing is a lint failure.
+
+## Spine (one sentence)
+
+WHO it is for + WHAT it does + WHAT counts as the win.
+> TODO (from Q1)
+
+## Nodes
+
+| ID | Concept | From | Notes (owner's words where possible) |
+|---|---|---|---|
+| C1 | core outcome owed | Q1 | |
+| C2 | process inventory | Q2 | |
+| C3 | v1 proving slice | Q3 | |
+| C4 | setpoints (operational + outcome/independent sensor) | Q4 | |
+| C5 | hard floors / NEVER list | Q5 | |
+| C6 | budget + engine policy | Q6 | |
+| C7 | kill conditions | Q7 | |
+| C8 | script-vs-LLM triage | Q8 | |
+| C9 | boundary rules & cross-lane caps | Q9 | |
+| C10 | weird-input handling | Q10 | |
+| C11 | per-step exception policy | Q11 | |
+| C12 | named subtle failure → QA gate | Q12 | |
+| C13 | faux-work sensor | Q13 | |
+| C14 | escalation & human gates | Q14 | |
+| C15 | records & memory | Q15 | |
+
+## Edges (what feeds what)
+
+```mermaid
+graph LR
+  C2 --> C3
+  C1 --> C4
+  C5 --> C14
+  C7 --> C13
+```
+
+## Open questions (never fake definitions)
+
+- TODO
+
+## INTENT LOCK
+
+Status: NOT LOCKED. Provenance on sign-off: decided_by ___, date ___, surface ___.

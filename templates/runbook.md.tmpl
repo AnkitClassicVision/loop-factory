@@ -1,0 +1,37 @@
+# {name} — <runbook title> (v1)
+
+Goal: <one line — what outcome this procedure produces and for whom>.
+Owner: <human owner>. Department: {name}.
+Traces to: concept-map node <C#>, procedural-graph node(s) <N#/SG-#>.
+
+## Required skills
+
+| Skill | Where it lives | Why this runbook needs it |
+|---|---|---|
+| <skill name> | skills/<name>.md (or external skills repo) | |
+
+## Preconditions
+
+- <auth/context that must exist; missing precondition = park, never improvise>
+
+## Steps
+
+1. <step — name the executable check that proves it worked>
+2. ...
+
+## QA gate
+
+- Executed check(s): <command / assertion — every step's proof, no exemptions>
+- Cross-model QA required: <yes/no — yes for any generated content>
+
+## Exceptions & escalation
+
+- On failure of step N: <retry n / quarantine / escalate with ONE question>
+- Escalation target + SLA: <who, how fast>
+
+## Manifest
+
+- Inputs: <declared inputs>
+- Outputs/receipts: <artifact paths, runs rows>
+- This runbook is a release artifact: changing it means re-lint + re-pin
+  (runbooks/process-change-qa.md).
