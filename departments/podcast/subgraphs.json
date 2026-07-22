@@ -101,6 +101,9 @@
     }
   ],
   "untraced_allowed": {
-    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node"
+    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node",
+    "runtime/estate.json": "sensed-inventory data consumed by SG-WATCHDOG N1 (sense_estate.py); configuration, not behavior",
+    "runtime/playbooks.json": "versioned heal allowlist data consumed by SG-HEAL N1 (heal_select.py); owner-reviewed data, not behavior",
+    "runtime/podcast_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one"
   }
 }

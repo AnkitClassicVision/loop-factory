@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "playbooks": [
+    {
+      "id": "restart_user_timer",
+      "matches_failure_class": "timer_failed",
+      "description": "Restart a known failed user timer.",
+      "commands": [
+        "systemctl --user restart {unit}"
+      ],
+      "heal_target": "runtime_unit",
+      "max_attempts_per_day": 2
+    },
+    {
+      "id": "recreate_referral_touch_tracker",
+      "matches_failure_class": "missing_tracker_file",
+      "description": "Recreate the referral touch tracker with the estate-owned initializer.",
+      "commands": [
+        "python3 /mnt/d_drive/repos/podcast/scripts/ensure_referral_touch_tracker.py"
+      ],
+      "heal_target": "local_state_file",
+      "max_attempts_per_day": 2
+    },
+    {
+      "id": "rerun_failed_step",
+      "matches_failure_class": "receipt_stale",
+      "description": "Re-run the known unit whose receipt did not become fresh.",
+      "commands": [
+        "systemctl --user start {unit}"
+      ],
+      "heal_target": "runtime_unit",
+      "max_attempts_per_day": 2
+    }
+  ]
+}

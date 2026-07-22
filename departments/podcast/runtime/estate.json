@@ -1,0 +1,27 @@
+{
+  "systemd_user_timers": [
+    {"name": "podcast-loop-health", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "podcast-loop-guest-acquisition", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "podcast-loop-referral-flywheel", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "podcast-loop-booking-readiness", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "podcast-loop-production-publish", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "podcast-loop-sales-handoff", "expected_cadence": "weekly", "stale_after_minutes": 11520},
+    {"name": "podcast-loop-proof-improvement", "expected_cadence": "weekly", "stale_after_minutes": 11520},
+    {"name": "podcast-prep-sweep", "expected_cadence": "15min", "stale_after_minutes": 30},
+    {"name": "podcast-context-watch", "expected_cadence": "hourly", "stale_after_minutes": 120},
+    {"name": "obe-scheduled-intent-sweeper", "expected_cadence": "daily", "stale_after_minutes": 1560},
+    {"name": "obe-draft-bridge", "expected_cadence": "30min"},
+    {"name": "obe-approved-send-executor", "expected_cadence": "10min"}
+  ],
+  "receipts_dir": "/mnt/d_drive/repos/podcast/episodes/_loop_receipts",
+  "logs_dir": "/mnt/d_drive/repos/podcast/logs",
+  "channels": [
+    {"name": "telegram", "via": "VPS bot", "shadow_check": "config_presence_only"},
+    {"name": "linear"}
+  ],
+  "vps": {
+    "host": "18.211.196.126",
+    "services": ["podcast-webhook", "podcast-recording-worker"],
+    "shadow_rule": "skip_ssh_and_emit_unknown_unless_probe_vps"
+  }
+}

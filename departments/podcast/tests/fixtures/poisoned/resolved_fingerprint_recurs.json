@@ -1,0 +1,23 @@
+{
+  "incidents": {
+    "fingerprint-abc123": {
+      "fingerprint": "fingerprint-abc123",
+      "failure_class": "loop_timeout",
+      "first_seen": "2023-07-15T08:30:00Z",
+      "last_seen": "2023-07-15T09:45:00Z",
+      "state": "resolved",
+      "severity": "medium",
+      "setpoint": "loop.cycle.time > 24h",
+      "observed": "loop.cycle.time exceeded limit",
+      "evidence": {
+        "loop_id": "referral-flywheel",
+        "execution_time": "25h"
+      },
+      "one_question": "What blocked the workflow?",
+      "count": 1
+    }
+  },
+  "new_observation": {
+    "fingerprint": "fingerprint-abc123"
+  }
+}

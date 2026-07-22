@@ -1,0 +1,25 @@
+{
+  "inventory": [
+    "podcast-prep-sweep.timer",
+    "referral-flywheel.timer",
+    "episode-publish-channel.vps"
+  ],
+  "observations": [
+    {
+      "ts": "2023-07-15T08:30:00Z",
+      "sensor": "log",
+      "subject": "podcast-prep-sweep.timer",
+      "status": "ok",
+      "evidence": "null",
+      "detail": "null"
+    },
+    {
+      "ts": "2023-07-15T09:45:00Z",
+      "sensor": "channel",
+      "subject": "episode-publish-channel.vps",
+      "status": "warn",
+      "evidence": "missing-podcast-unit",
+      "detail": "The referral-flywheel.timer unit has no observation rows"
+    }
+  ]
+}

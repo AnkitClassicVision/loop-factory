@@ -1,0 +1,11 @@
+{
+  "receipt": {
+    "body": {
+      "ts": "2023-07-15T10:00:00Z",
+      "loop": "referral-flywheel",
+      "verdict": "accept"
+    },
+    "signature": "fake-signature-xyz789"
+  },
+  "expected_signature": "real-signature-abc123"
+}

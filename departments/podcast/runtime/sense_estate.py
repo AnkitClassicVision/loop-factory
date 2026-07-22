@@ -1,0 +1,392 @@
+"""Sense every podcast estate unit without allowing silent inventory gaps."""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from departments.podcast.runtime import record as record_node
+
+
+DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
+DEFAULT_ESTATE_PATH = Path(__file__).with_name("estate.json")
+ERROR_PATTERN = re.compile(r"\b(error|failed|failure|fatal|traceback|exception)\b", re.I)
+Provider = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any] | None]
+
+
+class CoverageError(RuntimeError):
+    """Raised when sensing does not emit exactly one row per inventory item."""
+
+
+def load_estate(path: str | Path = DEFAULT_ESTATE_PATH) -> dict[str, Any]:
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("estate inventory must be a JSON object")
+    return value
+
+
+def inventory_items(estate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten timer, channel, and VPS inventory into uniquely named items."""
+    items: list[dict[str, Any]] = []
+    for timer in estate.get("systemd_user_timers", []):
+        items.append({"kind": "timer", **timer})
+    for channel in estate.get("channels", []):
+        items.append({"kind": "channel", **channel})
+    vps = estate.get("vps") or {}
+    for service in vps.get("services", []):
+        items.append(
+            {
+                "kind": "vps",
+                "name": service,
+                "host": vps.get("host", ""),
+                "shadow_rule": vps.get("shadow_rule", ""),
+            }
+        )
+    names = [str(item.get("name", "")) for item in items]
+    if any(not name for name in names):
+        raise ValueError("every estate inventory item must have a name")
+    if len(set(names)) != len(names):
+        raise ValueError("estate inventory subjects must be unique")
+    return items
+
+
+def assert_inventory_coverage(
+    estate: dict[str, Any], observations: list[dict[str, Any]]
+) -> None:
+    """Fail loudly unless every inventory subject has exactly one observation."""
+    expected = {item["name"] for item in inventory_items(estate)}
+    counts: dict[str, int] = {}
+    for row in observations:
+        subject = str(row.get("subject", ""))
+        counts[subject] = counts.get(subject, 0) + 1
+    missing = sorted(expected - set(counts))
+    extra = sorted(set(counts) - expected)
+    duplicate = sorted(subject for subject, count in counts.items() if count != 1)
+    if missing or extra or duplicate:
+        raise CoverageError(
+            f"inventory coverage failed: missing={missing}, extra={extra}, duplicate={duplicate}"
+        )
+
+
+def _timestamp(value: datetime | str | None) -> tuple[datetime, str]:
+    if value is None:
+        moment = datetime.now(timezone.utc)
+    elif isinstance(value, str):
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
+        moment = value
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    moment = moment.astimezone(timezone.utc)
+    return moment, moment.isoformat()
+
+
+def _run_systemctl(unit: str) -> dict[str, Any]:
+    command = [
+        "systemctl",
+        "--user",
+        "show",
+        unit,
+        "-p",
+        "ActiveState,SubState,Result,ExecMainStatus",
+    ]
+    completed = subprocess.run(
+        command, check=False, capture_output=True, text=True, timeout=10
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"systemctl exited {completed.returncode}"
+        raise RuntimeError(detail[:240])
+    values: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+    return values
+
+
+def _matching_files(directory: Path, subject: str) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    tokens = {subject.lower(), subject.lower().replace("-", "_")}
+    return sorted(
+        path
+        for path in directory.rglob("*")
+        if path.is_file() and any(token in path.name.lower() for token in tokens)
+    )
+
+
+def _tail_has_error(path: Path, limit: int = 65536) -> bool:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - limit))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(ERROR_PATTERN.search(line) for line in tail.splitlines()[-200:])
+
+
+def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    now: datetime = context["now"]
+    estate = context["estate"]
+    runner = context.get("systemctl_runner") or _run_systemctl
+    subject = item["name"]
+    unit = subject if subject.endswith(".timer") else f"{subject}.timer"
+    failures: list[tuple[str, str, str]] = []
+    unknowns: list[str] = []
+    metrics: dict[str, Any] = {
+        "expected_cadence": item.get("expected_cadence"),
+        "stale_after_minutes": item.get("stale_after_minutes"),
+    }
+
+    try:
+        service = runner(unit)
+        metrics.update(
+            {
+                "active_state": service.get("ActiveState"),
+                "sub_state": service.get("SubState"),
+                "result": service.get("Result"),
+                "exec_main_status": service.get("ExecMainStatus"),
+            }
+        )
+        active = service.get("ActiveState") == "active"
+        result = service.get("Result") in {None, "", "success"}
+        exit_ok = str(service.get("ExecMainStatus", "0")) == "0"
+        if not (active and result and exit_ok):
+            failures.append(("timer", f"systemd state unhealthy for {unit}", f"systemd://{unit}"))
+    except Exception as exc:
+        unknowns.append(f"systemctl probe failed: {exc}")
+
+    receipts_dir = Path(estate.get("receipts_dir", ""))
+    receipts = _matching_files(receipts_dir, subject)
+    threshold = item.get("stale_after_minutes")
+    if receipts:
+        newest = max(receipts, key=lambda path: path.stat().st_mtime)
+        age_minutes = max(0.0, (now.timestamp() - newest.stat().st_mtime) / 60)
+        metrics.update(
+            {"receipt_path": str(newest), "receipt_age_minutes": round(age_minutes, 3)}
+        )
+        if threshold is None:
+            unknowns.append("receipt freshness threshold is not defined")
+        elif age_minutes > float(threshold):
+            failures.append(
+                (
+                    "receipt",
+                    f"receipt is {age_minutes:.1f} minutes old; limit is {threshold}",
+                    str(newest),
+                )
+            )
+    else:
+        failures.append(("receipt", "no matching receipt found", str(receipts_dir)))
+
+    logs_dir = Path(estate.get("logs_dir", ""))
+    if not logs_dir.is_dir():
+        unknowns.append(f"logs directory unavailable: {logs_dir}")
+        log_files: list[Path] = []
+    else:
+        log_files = _matching_files(logs_dir, subject)
+    error_logs = [path for path in log_files if _tail_has_error(path)]
+    metrics.update({"log_files_checked": len(log_files), "log_error_files": len(error_logs)})
+    if error_logs:
+        failures.append(("log", "error pattern found in log tail", str(error_logs[0])))
+
+    if failures:
+        sensor, detail, evidence = failures[0]
+        status = "fail"
+    elif unknowns:
+        sensor, detail, evidence = "timer", "; ".join(unknowns)[:240], f"systemd://{unit}"
+        status = "unknown"
+    else:
+        sensor, detail, evidence = "timer", "timer, receipt, and log probes healthy", f"systemd://{unit}"
+        status = "ok"
+    return {
+        "sensor": sensor,
+        "subject": subject,
+        "status": status,
+        "evidence": evidence,
+        "detail": detail,
+        "metrics": metrics,
+    }
+
+
+def _channel_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    metadata_present = bool(item.get("via") and item.get("shadow_check"))
+    return {
+        "sensor": "channel",
+        "subject": item["name"],
+        "status": "ok" if metadata_present else "unknown",
+        "evidence": str(context["estate_path"]),
+        "detail": (
+            "channel configuration metadata present; no message sent"
+            if metadata_present
+            else "channel configuration metadata is incomplete"
+        ),
+        "metrics": {
+            "config_present": metadata_present,
+            "reachability_checked": False,
+            "delivered_count": 0,
+            "via": item.get("via"),
+        },
+    }
+
+
+def _vps_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    detail = "VPS probe skipped in shadow; SSH and network access are disabled"
+    if context.get("probe_vps"):
+        detail = "VPS probe requested but no injected read-only provider is configured"
+    return {
+        "sensor": "vps",
+        "subject": item["name"],
+        "status": "unknown",
+        "evidence": f"vps://{item.get('host', '')}/{item['name']}",
+        "detail": detail,
+        "metrics": {"probe_attempted": False, "host": item.get("host", "")},
+    }
+
+
+def default_provider(item: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Probe one inventory item. It never performs network or mutating work."""
+    if item["kind"] == "timer":
+        return _timer_observation(item, context)
+    if item["kind"] == "channel":
+        return _channel_observation(item, context)
+    return _vps_observation(item, context)
+
+
+def _normalize_observation(
+    item: dict[str, Any], value: dict[str, Any], timestamp: str
+) -> dict[str, Any]:
+    row = {
+        "ts": timestamp,
+        "sensor": value.get("sensor", item["kind"]),
+        "subject": item["name"],
+        "status": value.get("status", "unknown"),
+        "evidence": str(value.get("evidence", "")),
+        "detail": str(value.get("detail", ""))[:240],
+        "metrics": value.get("metrics") if isinstance(value.get("metrics"), dict) else {},
+    }
+    if row["sensor"] not in {"timer", "receipt", "log", "channel", "vps"}:
+        raise ValueError(f"invalid observation sensor: {row['sensor']!r}")
+    if row["status"] not in {"ok", "warn", "fail", "unknown"}:
+        raise ValueError(f"invalid observation status: {row['status']!r}")
+    return row
+
+
+def collect_observations(
+    estate: dict[str, Any],
+    *,
+    provider: Provider | None = None,
+    now: datetime | str | None = None,
+    shadow: bool = True,
+    probe_vps: bool = False,
+    estate_path: str | Path = DEFAULT_ESTATE_PATH,
+    systemctl_runner: Callable[[str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Collect exactly one observation for every estate inventory item."""
+    moment, timestamp = _timestamp(now)
+    probe = provider or default_provider
+    context = {
+        "estate": estate,
+        "estate_path": Path(estate_path),
+        "now": moment,
+        "shadow": shadow,
+        "probe_vps": probe_vps,
+        "systemctl_runner": systemctl_runner,
+    }
+    observations: list[dict[str, Any]] = []
+    for item in inventory_items(estate):
+        try:
+            value = probe(item, context)
+            if value is None:
+                raise RuntimeError("provider returned no observation")
+            row = _normalize_observation(item, value, timestamp)
+        except Exception as exc:
+            row = _normalize_observation(
+                item,
+                {
+                    "sensor": item["kind"] if item["kind"] != "timer" else "timer",
+                    "status": "unknown",
+                    "evidence": str(estate_path),
+                    "detail": f"probe error: {exc}",
+                    "metrics": {},
+                },
+                timestamp,
+            )
+        observations.append(row)
+    assert_inventory_coverage(estate, observations)
+    return observations
+
+
+def append_observations(path: str | Path, observations: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in observations:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def run_sense(
+    state_dir: str | Path,
+    *,
+    estate_path: str | Path = DEFAULT_ESTATE_PATH,
+    provider: Provider | None = None,
+    now: datetime | str | None = None,
+    shadow: bool = True,
+    probe_vps: bool = False,
+    systemctl_runner: Callable[[str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    estate = load_estate(estate_path)
+    observations = collect_observations(
+        estate,
+        provider=provider,
+        now=now,
+        shadow=shadow,
+        probe_vps=probe_vps,
+        estate_path=estate_path,
+        systemctl_runner=systemctl_runner,
+    )
+    state_dir = Path(state_dir)
+    append_observations(state_dir / "observations.jsonl", observations)
+    record_node.write_record(
+        state_dir,
+        "sense_estate",
+        {
+            "observations": len(observations),
+            "failed": sum(row["status"] == "fail" for row in observations),
+            "unknown": sum(row["status"] == "unknown" for row in observations),
+        },
+        shadow=shadow,
+    )
+    return observations
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Sense the podcast estate inventory")
+    parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
+    parser.add_argument("--estate", default=str(DEFAULT_ESTATE_PATH))
+    parser.add_argument("--probe-vps", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--shadow", dest="shadow", action="store_true", default=True)
+    mode.add_argument("--live", dest="shadow", action="store_false")
+    args = parser.parse_args()
+    observations = run_sense(
+        args.state_dir,
+        estate_path=args.estate,
+        shadow=args.shadow,
+        probe_vps=args.probe_vps,
+    )
+    print(json.dumps({"observations": len(observations), "shadow": args.shadow}))
+
+
+if __name__ == "__main__":
+    main()
