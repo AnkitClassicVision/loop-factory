@@ -114,15 +114,10 @@ def _run_systemctl(unit: str) -> dict[str, Any]:
     return values
 
 
-def _matching_files(directory: Path, subject: str) -> list[Path]:
+def _matching_files(directory: Path, pattern: str) -> list[Path]:
     if not directory.is_dir():
         return []
-    tokens = {subject.lower(), subject.lower().replace("-", "_")}
-    return sorted(
-        path
-        for path in directory.rglob("*")
-        if path.is_file() and any(token in path.name.lower() for token in tokens)
-    )
+    return sorted(path for path in directory.glob(pattern) if path.is_file())
 
 
 def _tail_has_error(path: Path, limit: int = 65536) -> bool:
@@ -141,7 +136,9 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
     estate = context["estate"]
     runner = context.get("systemctl_runner") or _run_systemctl
     subject = item["name"]
-    unit = subject if subject.endswith(".timer") else f"{subject}.timer"
+    base_unit = subject.removesuffix(".timer")
+    timer_unit = f"{base_unit}.timer"
+    service_unit = f"{base_unit}.service"
     failures: list[tuple[str, str, str]] = []
     unknowns: list[str] = []
     metrics: dict[str, Any] = {
@@ -150,53 +147,115 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
     }
 
     try:
-        service = runner(unit)
+        timer_state = runner(timer_unit)
         metrics.update(
             {
-                "active_state": service.get("ActiveState"),
-                "sub_state": service.get("SubState"),
-                "result": service.get("Result"),
-                "exec_main_status": service.get("ExecMainStatus"),
+                "active_state": timer_state.get("ActiveState"),
+                "sub_state": timer_state.get("SubState"),
+                "result": timer_state.get("Result"),
+                "exec_main_status": timer_state.get("ExecMainStatus"),
             }
         )
-        active = service.get("ActiveState") == "active"
-        result = service.get("Result") in {None, "", "success"}
-        exit_ok = str(service.get("ExecMainStatus", "0")) == "0"
+        active = timer_state.get("ActiveState") == "active"
+        result = str(timer_state.get("Result") or "") in {"", "success"}
+        exit_ok = str(timer_state.get("ExecMainStatus") or "0") == "0"
         if not (active and result and exit_ok):
-            failures.append(("timer", f"systemd state unhealthy for {unit}", f"systemd://{unit}"))
+            failures.append(
+                (
+                    "timer",
+                    f"timer_failed: systemd state unhealthy for {timer_unit}",
+                    f"systemd://{timer_unit}",
+                )
+            )
     except Exception as exc:
-        unknowns.append(f"systemctl probe failed: {exc}")
+        unknowns.append(f"timer systemctl probe failed: {exc}")
 
-    receipts_dir = Path(estate.get("receipts_dir", ""))
-    receipts = _matching_files(receipts_dir, subject)
+    try:
+        service_state = runner(service_unit)
+        metrics.update(
+            {
+                "service_active_state": service_state.get("ActiveState"),
+                "service_sub_state": service_state.get("SubState"),
+                "service_result": service_state.get("Result"),
+                "service_exec_main_status": service_state.get("ExecMainStatus"),
+            }
+        )
+        service_result = str(service_state.get("Result") or "")
+        service_exit = str(service_state.get("ExecMainStatus") or "0")
+        if service_result not in {"", "success"} or service_exit != "0":
+            failures.append(
+                (
+                    "timer",
+                    f"timer_failed: last service run unhealthy for {service_unit}",
+                    f"systemd://{service_unit}",
+                )
+            )
+    except Exception as exc:
+        unknowns.append(f"service systemctl probe failed: {exc}")
+
+    evidence_specs = [
+        key
+        for key in ("receipt_glob", "log_glob", "ledger_path", "evidence")
+        if item.get(key)
+    ]
     threshold = item.get("stale_after_minutes")
-    if receipts:
-        newest = max(receipts, key=lambda path: path.stat().st_mtime)
+    artifact_kind = ""
+    artifacts: list[Path] = []
+    artifact_location = ""
+    if len(evidence_specs) != 1:
+        unknowns.append(
+            "missing evidence spec; expected exactly one of receipt_glob, "
+            "log_glob, ledger_path, or evidence=timer_only"
+        )
+    elif item.get("evidence"):
+        if item["evidence"] != "timer_only":
+            unknowns.append(f"unsupported evidence spec: {item['evidence']}")
+    elif item.get("receipt_glob"):
+        artifact_kind = "receipt"
+        directory = Path(estate.get("receipts_dir", ""))
+        artifact_location = str(directory / item["receipt_glob"])
+        artifacts = _matching_files(directory, item["receipt_glob"])
+    elif item.get("log_glob"):
+        artifact_kind = "log"
+        directory = Path(estate.get("logs_dir", ""))
+        artifact_location = str(directory / item["log_glob"])
+        artifacts = _matching_files(directory, item["log_glob"])
+    else:
+        artifact_kind = "ledger"
+        ledger = Path(estate.get("logs_dir", "")) / item["ledger_path"]
+        artifact_location = str(ledger)
+        if ledger.is_file():
+            artifacts = [ledger]
+
+    if artifact_kind and artifacts:
+        newest = max(artifacts, key=lambda path: path.stat().st_mtime)
         age_minutes = max(0.0, (now.timestamp() - newest.stat().st_mtime) / 60)
         metrics.update(
-            {"receipt_path": str(newest), "receipt_age_minutes": round(age_minutes, 3)}
+            {
+                "evidence_kind": artifact_kind,
+                "evidence_path": str(newest),
+                "receipt_path": str(newest),
+                "receipt_age_minutes": round(age_minutes, 3),
+            }
         )
         if threshold is None:
-            unknowns.append("receipt freshness threshold is not defined")
+            unknowns.append(f"{artifact_kind} freshness threshold is not defined")
         elif age_minutes > float(threshold):
             failures.append(
                 (
                     "receipt",
-                    f"receipt is {age_minutes:.1f} minutes old; limit is {threshold}",
+                    f"{artifact_kind} is {age_minutes:.1f} minutes old; limit is {threshold}",
                     str(newest),
                 )
             )
-    else:
-        failures.append(("receipt", "no matching receipt found", str(receipts_dir)))
+    elif artifact_kind:
+        unknowns.append(f"no {artifact_kind} matched configured evidence: {artifact_location}")
 
-    logs_dir = Path(estate.get("logs_dir", ""))
-    if not logs_dir.is_dir():
-        unknowns.append(f"logs directory unavailable: {logs_dir}")
-        log_files: list[Path] = []
-    else:
-        log_files = _matching_files(logs_dir, subject)
+    log_files = artifacts if artifact_kind == "log" else []
     error_logs = [path for path in log_files if _tail_has_error(path)]
-    metrics.update({"log_files_checked": len(log_files), "log_error_files": len(error_logs)})
+    metrics.update(
+        {"log_files_checked": len(log_files), "log_error_files": len(error_logs)}
+    )
     if error_logs:
         failures.append(("log", "error pattern found in log tail", str(error_logs[0])))
 
@@ -204,10 +263,14 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
         sensor, detail, evidence = failures[0]
         status = "fail"
     elif unknowns:
-        sensor, detail, evidence = "timer", "; ".join(unknowns)[:240], f"systemd://{unit}"
+        sensor = "receipt" if artifact_kind and not artifacts else "timer"
+        detail = "; ".join(unknowns)[:240]
+        evidence = artifact_location or f"systemd://{timer_unit}"
         status = "unknown"
     else:
-        sensor, detail, evidence = "timer", "timer, receipt, and log probes healthy", f"systemd://{unit}"
+        sensor = "timer"
+        detail = "timer, service, and configured evidence probes healthy"
+        evidence = f"systemd://{timer_unit}"
         status = "ok"
     return {
         "sensor": sensor,

@@ -52,6 +52,30 @@ def _candidate(ts="2026-07-22T12:00:00+00:00"):
     }
 
 
+def _healthy_systemctl(_unit):
+    return {
+        "ActiveState": "active",
+        "SubState": "waiting",
+        "Result": "success",
+        "ExecMainStatus": "0",
+    }
+
+
+def _charter():
+    return {
+        "setpoints": {
+            "operational": {"metric": "escalation_pings_per_day", "target": 5},
+            "outcome": {
+                "metric": "silent_failure_detection_latency_minutes",
+                "target": 30,
+            },
+            "outcome_additional": [
+                {"metric": "detection_latency_daily_loops_hours", "target": 25}
+            ],
+        }
+    }
+
+
 def test_missing_fake_provider_output_emits_unknown_and_drop_fails_coverage(tmp_path):
     estate = _estate(
         tmp_path,
@@ -84,27 +108,20 @@ def test_stale_daily_receipt_produces_fail_observation(tmp_path):
                 "name": "podcast-loop-health",
                 "expected_cadence": "daily",
                 "stale_after_minutes": 1560,
+                "receipt_glob": "health-*.md",
             }
         ],
     )
-    receipt = tmp_path / "receipts" / "podcast-loop-health.json"
+    receipt = tmp_path / "receipts" / "health-2026-07-22.md"
     receipt.write_text("{}\n", encoding="utf-8")
     now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
     stale = now - timedelta(hours=27)
     os.utime(receipt, (stale.timestamp(), stale.timestamp()))
 
-    def healthy_systemctl(_unit):
-        return {
-            "ActiveState": "active",
-            "SubState": "waiting",
-            "Result": "success",
-            "ExecMainStatus": "0",
-        }
-
     observations = sense_estate.collect_observations(
         estate,
         now=now,
-        systemctl_runner=healthy_systemctl,
+        systemctl_runner=_healthy_systemctl,
         estate_path=tmp_path / "estate.json",
     )
     assert len(observations) == 1
@@ -113,19 +130,208 @@ def test_stale_daily_receipt_produces_fail_observation(tmp_path):
     assert observations[0]["metrics"]["receipt_age_minutes"] == 1620.0
 
 
-def test_compare_uses_daily_limit_from_charter_not_inventory_value():
-    charter = {
-        "setpoints": {
-            "operational": {"metric": "escalation_pings_per_day", "target": 5},
-            "outcome": {
-                "metric": "silent_failure_detection_latency_minutes",
-                "target": 30,
-            },
-            "outcome_additional": [
-                {"metric": "detection_latency_daily_loops_hours", "target": 25}
-            ],
-        }
+def test_receipt_glob_matches_short_loop_receipt_name(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-loop-health",
+                "expected_cadence": "daily",
+                "stale_after_minutes": 1560,
+                "receipt_glob": "health-*.md",
+            }
+        ],
+    )
+    receipt = tmp_path / "receipts" / "health-2026-07-22.md"
+    receipt.write_text("healthy\n", encoding="utf-8")
+    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
+    os.utime(receipt, (now.timestamp(), now.timestamp()))
+
+    observations = sense_estate.collect_observations(
+        estate, now=now, systemctl_runner=_healthy_systemctl
+    )
+
+    assert observations[0]["status"] == "ok"
+    assert observations[0]["metrics"]["receipt_path"] == str(receipt)
+
+
+def test_no_matching_artifact_is_unknown_not_observed_stale_failure(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-loop-health",
+                "expected_cadence": "daily",
+                "stale_after_minutes": 1560,
+                "receipt_glob": "health-*.md",
+            }
+        ],
+    )
+
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=_healthy_systemctl
+    )[0]
+    candidate = compare_charter.compare_observations([observation], _charter())[0]
+
+    assert observation["status"] == "unknown"
+    assert "no receipt matched configured evidence" in observation["detail"]
+    assert candidate["failure_class"] == "receipt_unknown"
+    assert candidate["severity"] == "med"
+
+
+def test_service_failure_overrides_successful_timer(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-prep-sweep",
+                "expected_cadence": "15min",
+                "stale_after_minutes": 30,
+                "evidence": "timer_only",
+            }
+        ],
+    )
+    probed = []
+
+    def systemctl_runner(unit):
+        probed.append(unit)
+        state = _healthy_systemctl(unit)
+        if unit.endswith(".service"):
+            state = {**state, "ActiveState": "failed", "Result": "exit-code", "ExecMainStatus": "1"}
+        return state
+
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=systemctl_runner
+    )[0]
+
+    assert probed == ["podcast-prep-sweep.timer", "podcast-prep-sweep.service"]
+    assert observation["sensor"] == "timer"
+    assert observation["status"] == "fail"
+    assert "timer_failed" in observation["detail"]
+    assert observation["metrics"]["service_result"] == "exit-code"
+    candidate = compare_charter.compare_observations([observation], _charter())[0]
+    assert candidate["failure_class"] == "timer_failed"
+    assert candidate["severity"] == "high"
+
+
+def test_ledger_mtime_drives_freshness(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "obe-scheduled-intent-sweeper",
+                "expected_cadence": "daily",
+                "stale_after_minutes": 60,
+                "ledger_path": "scheduled-intent-sweeper-ledger.jsonl",
+            }
+        ],
+    )
+    ledger = tmp_path / "logs" / "scheduled-intent-sweeper-ledger.jsonl"
+    ledger.write_text("{}\n", encoding="utf-8")
+    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
+    modified = now - timedelta(minutes=15)
+    os.utime(ledger, (modified.timestamp(), modified.timestamp()))
+
+    observation = sense_estate.collect_observations(
+        estate, now=now, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["status"] == "ok"
+    assert observation["metrics"]["evidence_kind"] == "ledger"
+    assert observation["metrics"]["receipt_age_minutes"] == 15.0
+
+
+def test_timer_only_skips_artifact_freshness(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-context-watch",
+                "expected_cadence": "hourly",
+                "stale_after_minutes": 120,
+                "evidence": "timer_only",
+            }
+        ],
+    )
+
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["status"] == "ok"
+    assert "receipt_age_minutes" not in observation["metrics"]
+
+
+def test_missing_evidence_spec_is_unknown_and_compares_as_med(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [{"name": "unit-with-gap", "expected_cadence": "daily", "stale_after_minutes": 60}],
+    )
+
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=_healthy_systemctl
+    )[0]
+    candidates = compare_charter.compare_observations([observation], _charter())
+
+    assert observation["status"] == "unknown"
+    assert "missing evidence spec" in observation["detail"]
+    assert candidates[0]["failure_class"] == "timer_unknown"
+    assert candidates[0]["severity"] == "med"
+
+
+@pytest.mark.parametrize("sensor", ["channel", "vps"])
+def test_unknown_channel_and_vps_severity_is_med(sensor):
+    observation = {
+        "ts": "2026-07-22T12:00:00+00:00",
+        "sensor": sensor,
+        "subject": f"fixture-{sensor}",
+        "status": "unknown",
+        "evidence": "fixture://unknown",
+        "detail": "probe unavailable",
+        "metrics": {},
     }
+
+    candidates = compare_charter.compare_observations([observation], _charter())
+
+    assert candidates[0]["severity"] == "med"
+
+
+def test_default_estate_has_one_explicit_evidence_spec_per_timer():
+    estate = sense_estate.load_estate()
+    timers = {row["name"]: row for row in estate["systemd_user_timers"]}
+    expected = {
+        "podcast-loop-health": ("receipt_glob", "health-*.md"),
+        "podcast-loop-guest-acquisition": ("receipt_glob", "guest-acquisition-*.md"),
+        "podcast-loop-referral-flywheel": ("receipt_glob", "referral-flywheel-*.md"),
+        "podcast-loop-booking-readiness": ("receipt_glob", "booking-readiness-*.md"),
+        "podcast-loop-production-publish": ("receipt_glob", "production-publish-*.md"),
+        "podcast-loop-sales-handoff": ("receipt_glob", "sales-handoff-*.md"),
+        "podcast-loop-proof-improvement": ("receipt_glob", "proof-improvement-*.md"),
+        "podcast-prep-sweep": ("log_glob", "prep-sweep-*.log"),
+        "podcast-context-watch": ("evidence", "timer_only"),
+        "obe-scheduled-intent-sweeper": (
+            "ledger_path",
+            "scheduled-intent-sweeper-ledger.jsonl",
+        ),
+        "obe-draft-bridge": ("ledger_path", "send-approval-bridge-ledger.jsonl"),
+        "obe-approved-send-executor": (
+            "ledger_path",
+            "send-approval-bridge-ledger.jsonl",
+        ),
+    }
+
+    assert set(timers) == set(expected)
+    for name, (key, value) in expected.items():
+        configured = [
+            field
+            for field in ("receipt_glob", "log_glob", "ledger_path", "evidence")
+            if field in timers[name]
+        ]
+        assert configured == [key]
+        assert timers[name][key] == value
+
+
+def test_compare_uses_daily_limit_from_charter_not_inventory_value():
     observation = {
         "ts": "2026-07-22T12:00:00+00:00",
         "sensor": "receipt",
@@ -140,7 +346,7 @@ def test_compare_uses_daily_limit_from_charter_not_inventory_value():
         },
     }
 
-    candidates = compare_charter.compare_observations([observation], charter)
+    candidates = compare_charter.compare_observations([observation], _charter())
     assert len(candidates) == 1
     assert candidates[0]["failure_class"] == "receipt_stale"
     assert candidates[0]["setpoint"] == "receipt age <= 1500 minutes"
