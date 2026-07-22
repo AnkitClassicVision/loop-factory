@@ -9,7 +9,7 @@
     {"name": "podcast-loop-proof-improvement", "expected_cadence": "weekly", "stale_after_minutes": 11520, "receipt_glob": "proof-improvement-*.md"},
     {"name": "podcast-prep-sweep", "expected_cadence": "15min", "stale_after_minutes": 30, "log_glob": "prep-sweep-*.log"},
     {"name": "podcast-context-watch", "expected_cadence": "hourly", "stale_after_minutes": 120, "evidence": "timer_only"},
-    {"name": "obe-scheduled-intent-sweeper", "expected_cadence": "daily", "stale_after_minutes": 1560, "ledger_path": "scheduled-intent-sweeper-ledger.jsonl"},
+    {"name": "obe-scheduled-intent-sweeper", "expected_cadence": "daily", "stale_after_minutes": 1560, "evidence": "timer_only"},
     {"name": "obe-draft-bridge", "expected_cadence": "30min", "ledger_path": "send-approval-bridge-ledger.jsonl"},
     {"name": "obe-approved-send-executor", "expected_cadence": "10min", "ledger_path": "send-approval-bridge-ledger.jsonl"}
   ],

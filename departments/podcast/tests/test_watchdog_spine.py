@@ -1,6 +1,7 @@
 """Negative and contract tests for the podcast watchdog spine."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -214,7 +215,7 @@ def test_service_failure_overrides_successful_timer(tmp_path):
     assert candidate["severity"] == "high"
 
 
-def test_ledger_mtime_drives_freshness(tmp_path):
+def test_sweeper_idle_day_does_not_produce_receipt_stale(tmp_path):
     estate = _estate(
         tmp_path,
         [
@@ -222,14 +223,14 @@ def test_ledger_mtime_drives_freshness(tmp_path):
                 "name": "obe-scheduled-intent-sweeper",
                 "expected_cadence": "daily",
                 "stale_after_minutes": 60,
-                "ledger_path": "scheduled-intent-sweeper-ledger.jsonl",
+                "evidence": "timer_only",
             }
         ],
     )
     ledger = tmp_path / "logs" / "scheduled-intent-sweeper-ledger.jsonl"
     ledger.write_text("{}\n", encoding="utf-8")
     now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
-    modified = now - timedelta(minutes=15)
+    modified = now - timedelta(days=7)
     os.utime(ledger, (modified.timestamp(), modified.timestamp()))
 
     observation = sense_estate.collect_observations(
@@ -237,8 +238,8 @@ def test_ledger_mtime_drives_freshness(tmp_path):
     )[0]
 
     assert observation["status"] == "ok"
-    assert observation["metrics"]["evidence_kind"] == "ledger"
-    assert observation["metrics"]["receipt_age_minutes"] == 15.0
+    assert "receipt_age_minutes" not in observation["metrics"]
+    assert compare_charter.compare_observations([observation], _charter()) == []
 
 
 def test_timer_only_skips_artifact_freshness(tmp_path):
@@ -309,10 +310,7 @@ def test_default_estate_has_one_explicit_evidence_spec_per_timer():
         "podcast-loop-proof-improvement": ("receipt_glob", "proof-improvement-*.md"),
         "podcast-prep-sweep": ("log_glob", "prep-sweep-*.log"),
         "podcast-context-watch": ("evidence", "timer_only"),
-        "obe-scheduled-intent-sweeper": (
-            "ledger_path",
-            "scheduled-intent-sweeper-ledger.jsonl",
-        ),
+        "obe-scheduled-intent-sweeper": ("evidence", "timer_only"),
         "obe-draft-bridge": ("ledger_path", "send-approval-bridge-ledger.jsonl"),
         "obe-approved-send-executor": (
             "ledger_path",
@@ -371,6 +369,99 @@ def test_same_open_fingerprint_twice_is_one_incident_and_one_outbox_row(tmp_path
     rows = [json.loads(line) for line in outbox.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 1
     assert rows[0]["context"]["fingerprint"] == incident["fingerprint"]
+
+
+def test_failure_class_changes_merge_into_one_stable_incident():
+    unknown = {
+        **_candidate("2026-07-22T12:00:00+00:00"),
+        "sensor": "timer",
+        "subject": "obe-scheduled-intent-sweeper",
+        "failure_class": "timer_unknown",
+        "severity": "med",
+        "observed": {"Result": None},
+        "evidence": ["fixture://confined"],
+    }
+    failed = {
+        **unknown,
+        "ts": "2026-07-22T12:05:00+00:00",
+        "failure_class": "timer_failed",
+        "severity": "high",
+        "observed": {"Result": "exit-code"},
+        "evidence": ["fixture://unconfined"],
+    }
+
+    incidents, stats = fingerprint_dedup.merge_candidates([unknown, failed])
+
+    assert len(incidents) == 1
+    incident = next(iter(incidents.values()))
+    assert stats == {"new": 1, "deduplicated": 1, "department_defects": 0}
+    assert incident["fingerprint"] == fingerprint_dedup.fingerprint(
+        "timer", "obe-scheduled-intent-sweeper"
+    )
+    assert incident["failure_class"] == "timer_failed"
+    assert incident["severity"] == "high"
+    assert incident["observed"] == {"Result": "exit-code"}
+    assert incident["evidence"] == ["fixture://confined", "fixture://unconfined"]
+
+
+def test_old_fingerprint_variants_collapse_idempotently_on_load(tmp_path):
+    sensor = "timer"
+    subject = "obe-scheduled-intent-sweeper"
+    older = {
+        "fingerprint": hashlib.sha256(
+            f"{sensor}|{subject}|timer_unknown".encode("utf-8")
+        ).hexdigest()[:12],
+        "failure_class": "timer_unknown",
+        "first_seen": "2026-07-20T12:00:00+00:00",
+        "last_seen": "2026-07-21T12:00:00+00:00",
+        "state": "department_defect",
+        "severity": "critical",
+        "setpoint": "timer healthy",
+        "observed": {"Result": None},
+        "evidence": ["fixture://older"],
+        "one_question": "Repair?",
+        "count": 2,
+        "escalated": True,
+        "escalated_at": "2026-07-20T12:01:00+00:00",
+    }
+    newer = {
+        **older,
+        "fingerprint": hashlib.sha256(
+            f"{sensor}|{subject}|timer_failed".encode("utf-8")
+        ).hexdigest()[:12],
+        "failure_class": "timer_failed",
+        "first_seen": "2026-07-21T13:00:00+00:00",
+        "last_seen": "2026-07-22T12:00:00+00:00",
+        "state": "open",
+        "severity": "high",
+        "observed": {"Result": "exit-code"},
+        "evidence": ["fixture://newer"],
+        "count": 3,
+        "escalated": False,
+        "escalated_at": None,
+    }
+    path = tmp_path / "incidents.json"
+    record.atomic_write_json(path, {older["fingerprint"]: older, newer["fingerprint"]: newer})
+
+    first = fingerprint_dedup.load_incidents(path)
+    after_first = path.read_bytes()
+    second = fingerprint_dedup.load_incidents(path)
+
+    assert first == second
+    assert path.read_bytes() == after_first
+    assert len(first) == 1
+    incident = next(iter(first.values()))
+    assert incident["fingerprint"] == fingerprint_dedup.fingerprint(sensor, subject)
+    assert incident["sensor"] == sensor
+    assert incident["subject"] == subject
+    assert incident["first_seen"] == "2026-07-20T12:00:00+00:00"
+    assert incident["last_seen"] == "2026-07-22T12:00:00+00:00"
+    assert incident["failure_class"] == "timer_failed"
+    assert incident["severity"] == "critical"
+    assert incident["state"] == "department_defect"
+    assert incident["evidence"] == ["fixture://older", "fixture://newer"]
+    assert incident["count"] == 5
+    assert incident["escalated"] is True
 
 
 def test_resolved_fingerprint_recurring_is_department_defect():
