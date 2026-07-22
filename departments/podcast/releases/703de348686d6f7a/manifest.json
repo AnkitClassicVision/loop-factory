@@ -1,0 +1,86 @@
+{
+  "hash": "703de348686d6f7a",
+  "source_ref": "da76ba1eaa180edc66647f4b1dc89e92b713f828",
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "45ef06878baaedeec443deb4cda441a71851986e0aaeddd4c385f8017f174adb"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "e3a4d7444f82b1b5f2dd193c4678a3c59159976ffcf58e7807f9e33b4fda1849"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "ffe5e404bb7deead088da60e937ef1ebdf3557033aae2b3e082bf47ea74d6ba6"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "2d360b1896b00b23952a98d4804ec9a5680b27d0447057a19125ed98fb4e28f8"
+    },
+    {
+      "path": "runtime/compare_charter.py",
+      "sha256": "035c1efefdcf86684a222a4eb5fe4dbbb54658df8ddc2148f6c02e2b2072d3ce"
+    },
+    {
+      "path": "runtime/escalate_outbox.py",
+      "sha256": "af93cd816fc59cd8e076e509ca9704896f4fd7e7eb62e95a19aab16cd7e4760e"
+    },
+    {
+      "path": "runtime/estate.json",
+      "sha256": "f6a06e2c2c610068cbc78231b99a390eb169de4035d3c42eb16ad1475911fc1a"
+    },
+    {
+      "path": "runtime/fingerprint_dedup.py",
+      "sha256": "7064e48b9b8b404d8e42e733b4c81dee3306fbd4366b3b715eaef5529552b62f"
+    },
+    {
+      "path": "runtime/heal_apply.py",
+      "sha256": "7ed399733b556dd443d78b16de24369caf192b7c5ff3667db094fc376c525b32"
+    },
+    {
+      "path": "runtime/heal_select.py",
+      "sha256": "4829c90fb5c108a1bcf0efa67796a280aa1151c005982130bfd8cb5a50fc800c"
+    },
+    {
+      "path": "runtime/heal_verify.py",
+      "sha256": "b85099f4b89fde29ad9e4edfb0a0b271761c04eebeddd9ea6d92f31cbdaf53c9"
+    },
+    {
+      "path": "runtime/kernel_bridge.py",
+      "sha256": "1808f257a0133c5d1c6b9170b25a315487fce972b57c2f8bb7f1c6afa94e2d6f"
+    },
+    {
+      "path": "runtime/manifest_sensor.py",
+      "sha256": "28142ef7b3d79873204e5bbe216a108b55e3803166bc57ceacd4803106bd7396"
+    },
+    {
+      "path": "runtime/pipeline_sensor.py",
+      "sha256": "b23aae1802f866d43b2d794259e1c0bfea034cc87ac2f532ae5f1620878d019b"
+    },
+    {
+      "path": "runtime/playbooks.json",
+      "sha256": "b718a328e0c538258ead24c79760e4ff84dc6b95b3da5fd42e88a49c8c2f1110"
+    },
+    {
+      "path": "runtime/podcast_daily.sh",
+      "sha256": "318c546486a11330d2b5404728629204fb1532ea6bbf72705c3f1640b9e3517f"
+    },
+    {
+      "path": "runtime/publish_verifier.py",
+      "sha256": "9e566d2be8d9e3f22116ea5314affe6f1e353edb2834ec9efc7abc26349bcb1c"
+    },
+    {
+      "path": "runtime/record.py",
+      "sha256": "188881e7ab8f5c820bbcb1f9500bdf8300bf338ffaa51bc99da0ae6107571f29"
+    },
+    {
+      "path": "runtime/sense_estate.py",
+      "sha256": "027e545a9c611ef72f741c455d38618567cbad9f70d5e73fbf3f87f4474eecbe"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "1166a51dc7f14a1e59a800b1a5a26ff7ce86c50d69476144c1de771aed6c2f13"
+    }
+  ]
+}
