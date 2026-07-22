@@ -111,6 +111,11 @@ def _collapse_incident_group(
         for row in variants
         if row.get("escalated_at")
     )
+    escalated_defect_at_values = sorted(
+        str(row["escalated_defect_at"])
+        for row in variants
+        if row.get("escalated_defect_at")
+    )
     newest.update(
         {
             "fingerprint": key,
@@ -124,6 +129,17 @@ def _collapse_incident_group(
             "count": sum(int(row.get("count", 1)) for row in variants),
             "escalated": any(bool(row.get("escalated")) for row in variants),
             "escalated_at": escalated_at_values[0] if escalated_at_values else None,
+            "escalated_defect": any(
+                bool(row.get("escalated_defect")) for row in variants
+            ),
+            "escalated_defect_at": (
+                escalated_defect_at_values[0]
+                if escalated_defect_at_values
+                else None
+            ),
+            "defect_recurrence_count": max(
+                int(row.get("defect_recurrence_count", 0)) for row in variants
+            ),
         }
     )
     if state == "department_defect":
@@ -248,12 +264,15 @@ def merge_candidates(
         current["count"] = int(current.get("count", 0)) + 1
         current["sensor"] = sensor
         current["subject"] = subject
+        current["severity"] = max(
+            (str(current.get("severity", "low")), str(candidate["severity"])),
+            key=lambda value: SEVERITY_RANK.get(value, -1),
+        )
         incoming_is_newest = _timestamp_key(seen_at) >= _timestamp_key(
             current.get("last_seen", "")
         )
         if incoming_is_newest:
             current["failure_class"] = failure_class
-            current["severity"] = candidate["severity"]
             current["last_seen"] = seen_at
             current["observed"] = candidate.get("observed")
             current["setpoint"] = str(candidate["setpoint"])
@@ -266,6 +285,11 @@ def merge_candidates(
             )
         if current.get("state") == "resolved":
             current["state"] = "department_defect"
+            current["defect_recurrence_count"] = int(
+                current.get("defect_recurrence_count", 0)
+            ) + 1
+            current["escalated_defect"] = False
+            current["escalated_defect_at"] = None
             current["one_question"] = (
                 "This resolved fingerprint recurred. What root-cause control failed, "
                 "and what permanent department fix is required?"
@@ -321,13 +345,45 @@ def merge_candidates(
 
 def run_dedup(state_dir: str | Path, *, shadow: bool = True) -> dict[str, dict[str, Any]]:
     state_dir = Path(state_dir)
-    candidates = load_json(state_dir / "incident_candidates.json", [])
-    observations = load_jsonl(state_dir / "observations.jsonl")
-    incidents = load_incidents(state_dir / "incidents.json")
+    candidates_path = state_dir / "incident_candidates.json"
+    candidates_error: str | None = None
+    try:
+        candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        candidates = None
+        candidates_error = f"{type(exc).__name__}: {exc}"
+
+    if candidates_error is not None:
+        with record_node.records_lock(state_dir):
+            incidents = load_incidents(state_dir / "incidents.json")
+        note = (
+            "incident candidates evidence unavailable; froze all incident health "
+            f"accrual and state transitions: {candidates_path}: {candidates_error}"
+        )
+        print(f"fingerprint_dedup: {note}", file=sys.stderr)
+        record_node.write_record(
+            state_dir,
+            "fingerprint_dedup",
+            {
+                "new": 0,
+                "deduplicated": 0,
+                "department_defects": 0,
+                "evidence_available": False,
+                "note": note,
+            },
+            shadow=shadow,
+        )
+        return incidents
+
     if not isinstance(candidates, list):
         raise ValueError("incident_candidates.json must contain a list")
-    merged, stats = merge_candidates(candidates, incidents, observations=observations)
-    record_node.atomic_write_json(state_dir / "incidents.json", merged)
+    observations = load_jsonl(state_dir / "observations.jsonl")
+    with record_node.records_lock(state_dir):
+        incidents = load_incidents(state_dir / "incidents.json")
+        merged, stats = merge_candidates(
+            candidates, incidents, observations=observations
+        )
+        record_node.atomic_write_json(state_dir / "incidents.json", merged)
     record_node.write_record(state_dir, "fingerprint_dedup", stats, shadow=shadow)
     return merged
 

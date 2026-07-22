@@ -801,6 +801,7 @@ def test_shadow_escalation_has_local_outbox_and_zero_external_effects(tmp_path):
     }
     assert outbox_path.exists()
     assert {path.name for path in tmp_path.iterdir()} == {
+        ".records.lock",
         "incidents.json",
         "decisions_outbox.jsonl",
     }

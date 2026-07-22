@@ -30,6 +30,50 @@ def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
     return value
 
 
+def _load_outbox_markers(path: Path) -> dict[tuple[str, str], str | None]:
+    """Return durable escalation markers already appended to the outbox."""
+    if not path.exists():
+        return {}
+    markers: dict[tuple[str, str], str | None] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ValueError(f"cannot read escalation outbox: {path}: {exc}") from exc
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            packet = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"malformed escalation outbox row {line_number}: {path}: {exc}"
+            ) from exc
+        if not isinstance(packet, dict):
+            continue
+        context = packet.get("context", {})
+        if not isinstance(context, dict) or not context.get("fingerprint"):
+            continue
+        fingerprint = str(context["fingerprint"])
+        # Rows written before state markers existed were initial-open escalations.
+        marker = str(context.get("escalation_marker") or "open")
+        markers[(fingerprint, marker)] = str(packet["ts"]) if packet.get("ts") else None
+    return markers
+
+
+def _escalation_state(incident: dict[str, Any]) -> tuple[str, str, str]:
+    state = str(incident.get("state", ""))
+    if state == "open":
+        return "open", "escalated", "escalated_at"
+    if state == "department_defect":
+        recurrence = max(1, int(incident.get("defect_recurrence_count", 1)))
+        return (
+            f"department_defect:{recurrence}",
+            "escalated_defect",
+            "escalated_defect_at",
+        )
+    raise ValueError(f"incident state is not escalation-eligible: {state!r}")
+
+
 def escalate_new_incidents(
     incidents_path: str | Path,
     outbox_path: str | Path,
@@ -38,34 +82,57 @@ def escalate_new_incidents(
     escalate_fn: EscalateFn = escalate,
     now: str | None = None,
 ) -> dict[str, Any]:
-    """Write local escalation packets for un-escalated open incidents only."""
+    """Write each open or defect-state escalation packet exactly once."""
     incidents_path = Path(incidents_path)
-    incidents = _load_incidents(incidents_path)
+    outbox_path = Path(outbox_path)
     escalated_count = 0
     timestamp = now or datetime.now(timezone.utc).isoformat()
-    for key in sorted(incidents):
-        incident = incidents[key]
-        if incident.get("state") != "open" or incident.get("escalated"):
-            continue
-        evidence = [str(value) for value in incident.get("evidence", [])]
-        question = str(incident.get("one_question", "What owner decision is required?"))
-        issue = f"{incident.get('failure_class')}: {question}"
-        escalate_fn(
-            department="podcast",
-            issue=issue,
-            outbox_path=outbox_path,
-            context={
-                "fingerprint": incident["fingerprint"],
-                "evidence": evidence,
-                "one_question": question,
-            },
-        )
-        incident["escalated"] = True
-        incident["escalated_at"] = timestamp
-        escalated_count += 1
+    with record_node.records_lock(incidents_path.parent):
+        incidents = _load_incidents(incidents_path)
+        durable_markers = _load_outbox_markers(outbox_path)
+        state_changed = False
+        for key in sorted(incidents):
+            incident = incidents[key]
+            if incident.get("state") not in {"open", "department_defect"}:
+                continue
+            marker, escalated_field, escalated_at_field = _escalation_state(incident)
+            fingerprint = str(incident["fingerprint"])
+            durable_key = (fingerprint, marker)
 
-    if escalated_count:
-        record_node.atomic_write_json(incidents_path, incidents)
+            if durable_key in durable_markers:
+                if not incident.get(escalated_field):
+                    incident[escalated_field] = True
+                    incident[escalated_at_field] = durable_markers[durable_key] or timestamp
+                    state_changed = True
+                continue
+            if incident.get(escalated_field):
+                continue
+
+            evidence = [str(value) for value in incident.get("evidence", [])]
+            question = str(
+                incident.get("one_question", "What owner decision is required?")
+            )
+            issue = f"{incident.get('failure_class')}: {question}"
+            escalate_fn(
+                department="podcast",
+                issue=issue,
+                outbox_path=outbox_path,
+                context={
+                    "fingerprint": fingerprint,
+                    "incident_state": incident["state"],
+                    "escalation_marker": marker,
+                    "evidence": evidence,
+                    "one_question": question,
+                },
+            )
+            durable_markers[durable_key] = timestamp
+            incident[escalated_field] = True
+            incident[escalated_at_field] = timestamp
+            state_changed = True
+            escalated_count += 1
+
+        if state_changed:
+            record_node.atomic_write_json(incidents_path, incidents)
     return {
         "outbox_rows": escalated_count,
         "delivered_count": 0,
