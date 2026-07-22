@@ -53,6 +53,15 @@ def _candidate(ts="2026-07-22T12:00:00+00:00"):
     }
 
 
+def _observation(status="ok", ts="2026-07-22T12:00:00+00:00"):
+    return {
+        "ts": ts,
+        "sensor": "receipt",
+        "subject": "podcast-loop-health",
+        "status": status,
+    }
+
+
 def _healthy_systemctl(_unit):
     return {
         "ActiveState": "active",
@@ -477,6 +486,81 @@ def test_resolved_fingerprint_recurring_is_department_defect():
     assert recurring[key]["state"] == "department_defect"
     assert recurring[key]["count"] == 2
     assert "resolved fingerprint recurred" in recurring[key]["one_question"]
+
+
+def test_three_healthy_cycles_resolve_open_incident_and_preserve_escalated():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    incidents[key]["escalated"] = True
+    incidents[key]["escalated_at"] = "2026-07-22T12:01:00+00:00"
+
+    for day in range(23, 26):
+        ts = f"2026-07-{day}T12:00:00+00:00"
+        incidents, _ = fingerprint_dedup.merge_candidates(
+            [], incidents, observations=[_observation(ts=ts)]
+        )
+
+    assert incidents[key]["state"] == "resolved"
+    assert incidents[key]["consecutive_healthy"] == 3
+    assert incidents[key]["resolved_at"] == "2026-07-25T12:00:00+00:00"
+    assert incidents[key]["resolution"] == "observed_healthy_3_cycles"
+    assert incidents[key]["escalated"] is True
+    assert incidents[key]["escalated_at"] == "2026-07-22T12:01:00+00:00"
+
+
+def test_candidate_resets_healthy_counter_before_resolution():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [], incidents, observations=[_observation(ts="2026-07-23T12:00:00+00:00")]
+    )
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [], incidents, observations=[_observation(ts="2026-07-23T12:00:00+00:00")]
+    )
+    assert incidents[key]["consecutive_healthy"] == 1
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [_candidate("2026-07-24T12:00:00+00:00")],
+        incidents,
+        observations=[_observation("fail", "2026-07-24T12:00:00+00:00")],
+    )
+    for day in (25, 26):
+        incidents, _ = fingerprint_dedup.merge_candidates(
+            [], incidents, observations=[_observation(ts=f"2026-07-{day}T12:00:00+00:00")]
+        )
+    assert incidents[key]["state"] == "open"
+    assert incidents[key]["consecutive_healthy"] == 2
+
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [], incidents, observations=[_observation(ts="2026-07-27T12:00:00+00:00")]
+    )
+    assert incidents[key]["state"] == "resolved"
+
+
+def test_auto_resolved_fingerprint_recurring_becomes_department_defect():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    for day in range(23, 26):
+        incidents, _ = fingerprint_dedup.merge_candidates(
+            [], incidents, observations=[_observation(ts=f"2026-07-{day}T12:00:00+00:00")]
+        )
+
+    incidents, stats = fingerprint_dedup.merge_candidates(
+        [_candidate("2026-07-26T12:00:00+00:00")], incidents
+    )
+    assert stats["department_defects"] == 1
+    assert incidents[key]["state"] == "department_defect"
+    assert incidents[key]["consecutive_healthy"] == 0
+
+
+def test_subject_without_current_observation_does_not_accrue_health():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    other = {**_observation(), "sensor": "timer", "subject": "another-loop"}
+
+    incidents, _ = fingerprint_dedup.merge_candidates([], incidents, observations=[other])
+
+    assert incidents[key]["state"] == "open"
+    assert incidents[key]["consecutive_healthy"] == 0
 
 
 def test_record_refuses_epoch_that_does_not_increase(tmp_path):

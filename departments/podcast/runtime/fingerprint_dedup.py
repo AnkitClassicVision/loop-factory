@@ -40,6 +40,17 @@ def load_json(path: str | Path, default: Any) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 def _recent_evidence(*groups: list[Any]) -> list[str]:
     """Return the ten most recent unique non-empty evidence entries."""
     newest_first: list[str] = []
@@ -193,6 +204,7 @@ def merge_candidates(
     candidates: list[dict[str, Any]],
     incidents: dict[str, dict[str, Any]] | None = None,
     *,
+    observations: list[dict[str, Any]] | None = None,
     now: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """Merge candidates without creating duplicate incident threads."""
@@ -261,17 +273,60 @@ def merge_candidates(
             stats["department_defects"] += 1
         else:
             stats["deduplicated"] += 1
+        current["consecutive_healthy"] = 0
         merged[key] = current
+
+    candidate_identities = {
+        (str(candidate["sensor"]), str(candidate["subject"]))
+        for candidate in candidates
+    }
+    observation_rows = observations or []
+    newest_observation_ts = max(
+        (str(row.get("ts", "")) for row in observation_rows),
+        key=_timestamp_key,
+        default=None,
+    )
+    current_observations = {
+        (str(row.get("sensor", "")), str(row.get("subject", ""))): row
+        for row in observation_rows
+        if str(row.get("ts", "")) == newest_observation_ts
+    }
+    for key, stored in list(merged.items()):
+        if stored.get("state") not in {"open", "department_defect"}:
+            continue
+        incident = dict(stored)
+        incident.setdefault("consecutive_healthy", 0)
+        identity = (str(incident.get("sensor", "")), str(incident.get("subject", "")))
+        observation = current_observations.get(identity)
+        healthy = (
+            identity not in candidate_identities
+            and observation is not None
+            and observation.get("status") == "ok"
+        )
+        observation_ts = str(observation.get("ts", "")) if observation else ""
+        if healthy and observation_ts != incident.get("last_healthy_observation_at"):
+            incident["consecutive_healthy"] = int(
+                incident.get("consecutive_healthy", 0)
+            ) + 1
+            incident["last_healthy_observation_at"] = observation_ts
+        elif not healthy:
+            incident["consecutive_healthy"] = 0
+        if incident["consecutive_healthy"] >= 3:
+            incident["state"] = "resolved"
+            incident["resolved_at"] = observation_ts
+            incident["resolution"] = "observed_healthy_3_cycles"
+        merged[key] = incident
     return merged, stats
 
 
 def run_dedup(state_dir: str | Path, *, shadow: bool = True) -> dict[str, dict[str, Any]]:
     state_dir = Path(state_dir)
     candidates = load_json(state_dir / "incident_candidates.json", [])
+    observations = load_jsonl(state_dir / "observations.jsonl")
     incidents = load_incidents(state_dir / "incidents.json")
     if not isinstance(candidates, list):
         raise ValueError("incident_candidates.json must contain a list")
-    merged, stats = merge_candidates(candidates, incidents)
+    merged, stats = merge_candidates(candidates, incidents, observations=observations)
     record_node.atomic_write_json(state_dir / "incidents.json", merged)
     record_node.write_record(state_dir, "fingerprint_dedup", stats, shadow=shadow)
     return merged
