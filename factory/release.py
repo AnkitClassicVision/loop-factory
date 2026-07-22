@@ -20,13 +20,21 @@ import os
 from pathlib import Path
 
 
-# Artifacts that define a release. Missing ones are simply skipped.
+# Artifacts that define a release. Missing ones are simply skipped (globs);
+# broadened per Codex review #9 to cover every behavior-bearing artifact class:
+# maps, interview/intent, runbooks, skills, and shell entrypoints.
 ARTIFACT_GLOBS = (
     "charter.yaml",
     "procedural-graph.md",
     "subgraphs.json",
+    "knowledge/*.md",
+    "knowledge/*.json",
+    "interview/*.md",
+    "runbooks/*.md",
+    "skills/*.md",
     "runtime/*.py",
     "runtime/*.json",
+    "runtime/*.sh",
 )
 
 

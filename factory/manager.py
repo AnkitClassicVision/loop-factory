@@ -171,11 +171,15 @@ def sense(
             conversions += 1
 
     budget_used: dict[str, Any] = {}
+    budget_unreadable = False
     if budget_path and Path(budget_path).exists():
         try:
             budget_used = json.loads(Path(budget_path).read_text(encoding="utf-8"))
         except (ValueError, OSError):
+            # Codex review #13: missing/corrupt cost telemetry must surface as a
+            # breach, never silently read as a healthy zero-spend baseline.
             budget_used = {}
+            budget_unreadable = True
 
     return {
         "now": now_dt.isoformat(),
@@ -190,6 +194,7 @@ def sense(
         "run_errors": run_errors,
         "conversions": conversions,
         "budget_used": budget_used,
+        "budget_unreadable": budget_unreadable,
     }
 
 
@@ -260,6 +265,14 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
                          observed=used, setpoint=cap)
             )
 
+    # breach: cost telemetry present but unreadable (fail-closed visibility)
+    if sensed.get("budget_unreadable"):
+        findings.append(
+            _finding("budget_telemetry_unreadable", "breach",
+                     "budget telemetry exists but could not be parsed — spend is unverifiable",
+                     observed=None, setpoint=None)
+        )
+
     # breach: last worker run errored
     if sensed.get("last_run_ok") is False:
         findings.append(
@@ -286,9 +299,12 @@ def gate_actions(actions: Iterable[dict], autonomy_state: str,
     """Enforce the two hard rules on any proposed action list.
 
     1. No action may target an immutable safety invariant -> ImmutableInvariantError.
-    2. In shadow, a gated-live-only verb is redirected to an escalation; any verb
-       outside the shadow subset that is not otherwise known is also redirected.
+    2. In shadow, a gated-live-only verb is redirected to an escalation.
+    3. A verb outside the known playbook (SHADOW_ACTS | GATED_LIVE_ONLY_ACTS) is
+       redirected to an escalation at EVERY autonomy state — the manager cannot
+       invent actions (Codex review #5: unknown acts must not pass at gated-live).
     """
+    known = SHADOW_ACTS | GATED_LIVE_ONLY_ACTS
     gated: list[dict] = []
     for action in actions:
         target = action.get("target")
@@ -297,6 +313,14 @@ def gate_actions(actions: Iterable[dict], autonomy_state: str,
                 f"action {action.get('act')!r} may not modify immutable invariant {target!r}"
             )
         act = action.get("act")
+        if act not in known:
+            gated.append({
+                "act": "escalate",
+                "reason": "unknown_act",
+                "finding_code": action.get("finding_code"),
+                "detail": f"'{act}' is not in the ratified playbook; escalating",
+            })
+            continue
         if autonomy_state == "shadow" and act not in SHADOW_ACTS:
             gated.append({
                 "act": "escalate",
@@ -398,6 +422,9 @@ def act(
             epoch = 0
 
     escalations = [a for a in actions if a["act"] == "escalate"]
+    # Codex review #13: escalations with no transport are UNDELIVERED, and that
+    # must be visible in STATE/heartbeat rather than silently counted as sent.
+    escalations_undelivered = len(escalations) if escalate_fn is None else 0
     for a in escalations:
         if escalate_fn is not None:
             issue = f"[{department}] {a.get('finding_code') or a.get('reason')}: {a.get('detail', '')}".strip()
@@ -431,6 +458,7 @@ def act(
             "sensed": sensed,
             "open_findings": findings,
             "escalations": len(escalations),
+            "escalations_undelivered": escalations_undelivered,
         }, indent=2) + "\n")
 
     # RECORD 4: heartbeat (append)
@@ -441,14 +469,16 @@ def act(
             fh.write(json.dumps({
                 "ts": now_iso,
                 "epoch": epoch,
-                "ok": True,
+                "ok": escalations_undelivered == 0,
                 "findings": len(findings),
                 "escalations": len(escalations),
+                "escalations_undelivered": escalations_undelivered,
             }) + "\n")
 
     return {
         "epoch": epoch,
         "escalations": len(escalations),
+        "escalations_undelivered": escalations_undelivered,
         "brief_path": str(brief_path) if brief_path else None,
         "ok": True,
     }
@@ -465,11 +495,18 @@ def run_manager_cycle(
     escalate_fn: Callable[..., Any] | None = None,
     department: str = "department",
     now: str | datetime | None = None,
+    sense_fn: Callable[..., dict] | None = None,
     **telemetry_paths,
 ) -> dict[str, Any]:
-    """One full Sense -> Compare -> Decide -> Act -> Record cycle."""
+    """One full Sense -> Compare -> Decide -> Act -> Record cycle.
+
+    The default sense() implements the factory-standard outreach-shaped
+    telemetry contract (approval queue, touches, conversions). A department
+    with a different worker shape supplies its own sense_fn returning the same
+    flat snapshot keys — the compare/decide/act discipline is what is fixed.
+    """
     state_dir = Path(state_dir)
-    sensed = sense(state_dir, now=now, **telemetry_paths)
+    sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(
@@ -502,7 +539,7 @@ def _load_charter_config(repo_root: Path, department: str):
     spec = importlib.util.spec_from_file_location("charter_loader", loader_path)
     loader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loader)
-    charter = loader.load_charter(charter_path)
+    charter = loader.load_charter(charter_path, expect_department=department)
     return {
         "thresholds": loader.thresholds(charter),
         "autonomy_state": loader.autonomy_state(charter),
@@ -527,7 +564,15 @@ def main() -> None:
 
     config = _load_charter_config(root, args.department)
     thresholds = config["thresholds"] if config else None
-    autonomy = args.autonomy_state or (config["autonomy_state"] if config else "shadow")
+    # Codex review #5: when a charter exists it is the SOLE authority on
+    # autonomy — a CLI flag must not promote past it. The flag applies only to
+    # charterless (scaffold/test) departments.
+    if config:
+        autonomy = config["autonomy_state"]
+        if args.autonomy_state and args.autonomy_state != autonomy:
+            print(json.dumps({"note": "ignored --autonomy-state; the charter is authoritative"}))
+    else:
+        autonomy = args.autonomy_state or "shadow"
 
     escalate_fn = None
     if args.outbox:

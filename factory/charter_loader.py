@@ -45,8 +45,10 @@ class CharterError(RuntimeError):
     """The charter is missing, unparseable, or invalid. Fail closed."""
 
 
-def load_charter(path) -> dict:
-    """Parse + validate a charter.yaml. Raises CharterError on any problem."""
+def load_charter(path, expect_department=None) -> dict:
+    """Parse + validate a charter.yaml. Raises CharterError on any problem.
+    Pass expect_department (normally the directory name) so a charter cannot
+    silently govern a department it does not name."""
     if yaml is None:
         raise CharterError("PyYAML is required to load charters (pip install pyyaml)")
     path = Path(path)
@@ -69,6 +71,10 @@ def load_charter(path) -> dict:
     invariants = (data.get("immutable_safety_invariants") or {}).get("heal_may_not_modify")
     if not invariants:
         raise CharterError(f"charter immutable_safety_invariants.heal_may_not_modify empty: {path}")
+    if expect_department is not None and data.get("department") != expect_department:
+        raise CharterError(
+            f"charter names department {data.get('department')!r} but lives in "
+            f"'{expect_department}': {path}")
     return data
 
 
@@ -94,7 +100,8 @@ def autonomy_state(charter: dict) -> str:
 def human_gates(charter: dict) -> frozenset[str]:
     """Action classes that always require a human decision. The factory floor
     (external effects + governance) applies even if the charter lists fewer."""
-    floor = {"external_send", "crm_write", "publish", "charter_change", "promotion"}
+    floor = {"external_send", "crm_write", "ehr_write", "finance_write", "publish",
+             "spend_over_ceiling", "charter_change", "promotion"}
     listed = set((charter.get("escalation") or {}).get("human_gates") or [])
     return frozenset(floor | listed)
 

@@ -94,15 +94,27 @@ def cmd_release(args) -> int:
     release = _load("release", "factory/release.py")
     graphs = _load("graphs", "factory/graphs.py")
     if args.action == "pin":
-        # process-change QA gate: a release can only pin a valid map state
+        # release-eligibility gate (Codex review #6): valid charter + clean maps.
+        loader = _load("charter_loader", "factory/charter_loader.py")
+        try:
+            loader.load_charter(dept_dir / "charter.yaml", expect_department=args.name)
+        except loader.CharterError as exc:
+            print(json.dumps({"ok": False, "blocked_by_charter": str(exc)}))
+            return 1
         verdict = graphs.qa(dept_dir)
         if not (not verdict["lint"] and not verdict["traceability"]):
             print(json.dumps({"ok": False, "blocked_by_map_qa": verdict}, indent=2))
             return 1
+        # Intent-lock visibility: pinning an unlocked department is allowed for
+        # shadow mechanics, but the state is stamped on the output so it can
+        # never masquerade as a locked release.
+        interview = dept_dir / "interview" / "intent-interview.md"
+        locked = interview.exists() and "NOT LOCKED" not in interview.read_text(encoding="utf-8")
         h = release.pin_release(dept_dir, releases, source_ref=args.source_ref)
         if args.flip:
             release.flip_current(releases, h)
-        print(json.dumps({"ok": True, "hash": h, "current": release.read_current(releases)}))
+        print(json.dumps({"ok": True, "hash": h, "current": release.read_current(releases),
+                          "intent_locked": locked}))
         return 0
     current = release.read_current(releases)
     if current is None:
@@ -123,7 +135,10 @@ def cmd_manager(args) -> int:
 def cmd_estate(args) -> int:
     root = Path(args.root or ROOT)
     argv = ["--registry-dir", str(root / "estate" / "registry.d"),
-            "--estate-state-dir", str(root / "estate" / "state")]
+            "--estate-state-dir", str(root / "estate" / "state"),
+            # reality inventory (Codex review #14): departments on disk that are
+            # not registered must surface as registry drift
+            "--departments-dir", str(root / "departments")]
     if args.outbox:
         argv += ["--outbox", args.outbox]
     return _run_module("factory/estate_manager.py", argv)

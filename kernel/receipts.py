@@ -21,8 +21,8 @@ class LocalSigner(Signer):
     def __init__(self, key=None):
         if key is None:
             key = os.environ.get("OE_KERNEL_SIGNING_KEY")
-        if key is None:
-            raise ValueError("missing OE_KERNEL_SIGNING_KEY")
+        if not key:
+            raise ValueError("missing/empty OE_KERNEL_SIGNING_KEY")
         if isinstance(key, str):
             key = key.encode()
         self._key = key

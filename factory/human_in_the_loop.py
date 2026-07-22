@@ -71,22 +71,39 @@ def apply(queue_path, decision_id: str, verdict: str, on_approved=None) -> dict:
     seam that lets a department act on an approval (e.g. run its send
     connector) without coupling this generic bridge to any department. The hook
     fires only on approval, only when provided, and never on reject or no-match.
+
+    Hardened per Codex review P0 #1: the verdict must be EXACTLY "APPROVE" or
+    "REJECT" (case-insensitive, whole token; "APPROVE_ALL" is not an approval);
+    only a row still in pending_approval can transition (a replayed decision_id
+    is a no-op); and the hook outcome is recorded on the row: a failed hook
+    leaves status "approved_hook_failed", never a silent success.
     """
     queue = Path(queue_path)
+    word = verdict.strip().upper()
+    if word not in {"APPROVE", "REJECT"}:
+        return {"applied": False, "error": f"unknown verdict {verdict!r}"}
+    approved = word == "APPROVE"
     rows = _load(queue)
-    applied = False
-    approved = False
+    target = None
     for row in rows:
         if row.get("decision_id") == decision_id:
-            approved = verdict.upper().startswith("APPROVE")
-            row["status"] = "approved" if approved else "rejected"
-            applied = True
+            if row.get("status") != "pending_approval":
+                return {"applied": False, "error": "not pending (replay or already decided)"}
+            target = row
             break
-    if applied:
-        _save(queue, rows)
-        if approved and on_approved is not None:
+    if target is None:
+        return {"applied": False}
+    target["status"] = "approved" if approved else "rejected"
+    _save(queue, rows)  # the decision is durable before any side effect
+    if approved and on_approved is not None:
+        try:
             on_approved(str(queue))
-    return {"applied": applied}
+            target["hook"] = "ok"
+        except Exception as exc:  # visible, never silent
+            target["status"] = "approved_hook_failed"
+            target["hook"] = f"failed: {exc}"
+        _save(queue, rows)
+    return {"applied": True, "status": target["status"]}
 
 
 def _run_cmd_hook(command: str):

@@ -14,8 +14,8 @@ def prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode()).hexdigest()
 
 
-def model_binding(prompt) -> dict:
-    return {"prompt_hash": prompt_hash(prompt), "sanitized": True}
+def model_binding(prompt, sanitized=True) -> dict:
+    return {"prompt_hash": prompt_hash(prompt), "sanitized": bool(sanitized)}
 
 
 def call_model(prompt, receipt, *, signer, now, seen_nonces, revoked=frozenset(), runner) -> str:

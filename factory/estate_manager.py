@@ -8,8 +8,9 @@ from the raw stores with a staleness banner, and escalates breaches to Hermes.
 Model-free. Spec §7.2-7.4, §13.12 (alive-not-working), §13.13 (registry drift).
 
 Cycle: Sense -> Compare -> Decide -> Act -> Record (runs.db-style tick ->
-STATE.json atomic epoch -> heartbeat), mirroring the department manager. The
-estate manager may park a department; unpark is a human-only D10 decision.
+STATE.json atomic epoch -> heartbeat), mirroring the department manager.
+v1 (shadow) escalates every breach to a human; parking a department is a
+gated-live estate verb not yet emitted here, and unpark is human-only always.
 """
 from __future__ import annotations
 
@@ -272,17 +273,22 @@ def _departments_from_registry(registry_dir):
     """Load department entries from the estate registry (surface == 'department').
 
     Each such entry supplies a state_dir (explicit key, or the parent dir of its
-    heartbeat_path)."""
+    heartbeat_path). Relative paths are resolved against the registry's ROOT
+    (registry.d's grandparent), not the process cwd — a registry written by the
+    scaffold must read identically from any working directory."""
     import importlib.util
     reg_path = Path(__file__).resolve().parent / "estate_registry.py"
     spec = importlib.util.spec_from_file_location("estate_registry", reg_path)
     reg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reg)
+    root = Path(registry_dir).resolve().parent.parent
     departments = []
     for entry in reg.load_registry(registry_dir):
         if entry.get("surface") != "department":
             continue
         state_dir = entry.get("state_dir") or str(Path(entry["heartbeat_path"]).parent)
+        if not Path(state_dir).is_absolute():
+            state_dir = str(root / state_dir)
         departments.append({"id": entry["id"], "state_dir": state_dir})
     return departments
 
@@ -291,6 +297,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Estate manager cycle (watchdog over department managers)")
     parser.add_argument("--registry-dir", default="estate/registry.d")
     parser.add_argument("--estate-state-dir", default="estate/state")
+    parser.add_argument("--departments-dir", default=None,
+                        help="scan this dir for on-disk departments; unregistered ones surface as registry drift")
     parser.add_argument("--outbox", default=None)
     args = parser.parse_args()
 
@@ -306,7 +314,16 @@ def main() -> None:
             hil.escalate("estate", issue, args.outbox, context=context)
 
     departments = _departments_from_registry(args.registry_dir)
-    report = run_estate_cycle(departments, args.estate_state_dir, escalate_fn=escalate_fn)
+    actual_ids = None
+    if args.departments_dir:
+        dep_root = Path(args.departments_dir)
+        if dep_root.is_dir():
+            actual_ids = sorted(
+                p.name for p in dep_root.iterdir()
+                if p.is_dir() and not p.name.startswith(".")
+            ) + [d["id"] for d in departments]
+    report = run_estate_cycle(departments, args.estate_state_dir, escalate_fn=escalate_fn,
+                              actual_dept_ids=actual_ids)
     print(json.dumps({
         "epoch": report["epoch"],
         "watched": len(departments),

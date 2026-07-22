@@ -141,13 +141,20 @@ class LockService:
         )
         return {"receipt": receipt, "slot": slot, "nonce": nonce}
 
-    def request_model(self, prompt, *, ttl_s=MAX_TTL_S) -> dict:
+    def request_model(self, prompt, *, sanitized=False, ttl_s=MAX_TTL_S) -> dict:
+        # Codex review P0 #2: the caller must ATTEST the privacy preflight (S3)
+        # ran over exactly this prompt — the lock service never labels a raw
+        # prompt sanitized on its own. False/absent attestation = no receipt.
+        # (Full trusted-sanitizer separation is a documented known limit.)
+        if not sanitized:
+            raise model.GatewayDenied(
+                "prompt lacks a privacy-preflight attestation (sanitized=True)")
         # reserve the model-call spend first — raises BudgetExceeded /
         # BudgetReviewRequired on/near the ceiling, so no receipt is minted for a
         # call that would breach budget (GLM P0 #3, budget half).
         self.budget.reserve("model_calls", 1, self._now())
         nonce = self._nonce()
-        binding = model.model_binding(prompt)
+        binding = model.model_binding(prompt, sanitized=True)
         receipt = receipts.issue_receipt(
             "model_call", binding, self._ttl(ttl_s), self.signer, self._now(), nonce
         )

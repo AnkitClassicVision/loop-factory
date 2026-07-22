@@ -1,0 +1,4 @@
+# Runtime: Python 3.12+ stdlib plus:
+pyyaml>=6.0
+# Development / self-test:
+pytest>=8.0

@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
+
+# Safe slug: filesystem-, YAML-, and systemd-unit-safe. Rejects path traversal,
+# quotes, spaces, and shell metacharacters by construction (Codex review #18).
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 
 
 _CHARTER_TEMPLATE = """# {name} department charter — TEMPLATE (F0 scaffold)
@@ -109,9 +114,23 @@ release. Department-SPECIFIC node code lives here; factory machinery does not.
 
 def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
     """Create the standard department skeleton. Returns a summary including a
-    factory-standard registry entry ready to add to estate/registry.d."""
+    factory-standard registry entry, which is also persisted to
+    estate/registry.d/<name>.yaml when that directory exists.
+
+    Refuses an invalid name and refuses to overwrite an existing charter —
+    the charter is a human governance file once F1 has touched it."""
+    if not _NAME_RE.match(name):
+        raise ValueError(
+            f"invalid department name {name!r}: use a lowercase slug "
+            "(letters, digits, '-', '_'; 2-41 chars)")
+    if not _NAME_RE.match(owner) and not re.match(r"^[A-Za-z][A-Za-z0-9 ._-]{0,60}$", owner):
+        raise ValueError(f"invalid owner {owner!r}")
     root = Path(root)
     dept = root / "departments" / name
+    if (dept / "charter.yaml").exists():
+        raise FileExistsError(
+            f"department '{name}' already has a charter — refusing to overwrite "
+            "a governance file (delete it deliberately if you really mean to)")
     (dept / "state").mkdir(parents=True, exist_ok=True)
     (dept / "runtime").mkdir(parents=True, exist_ok=True)
     (dept / "interview").mkdir(parents=True, exist_ok=True)
@@ -133,10 +152,25 @@ def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
         "state_dir": f"departments/{name}/state",
         "kill_switch": f"systemctl --user disable --now {name}-loop.timer",
     }
+
+    # Persist the registry partition so the estate watchdog actually sees the
+    # new department (Codex review #18: a returned-but-unpersisted entry is a
+    # registration that never happens). One file per department, refuse clobber.
+    registry_dir = root / "estate" / "registry.d"
+    registry_file = None
+    if registry_dir.is_dir() and not (registry_dir / f"{name}.yaml").exists():
+        lines = ["entries:", f"  - id: {name}"]
+        for key in ("owner", "surface", "schedule", "health_check",
+                    "heartbeat_path", "state_dir", "kill_switch"):
+            lines.append(f"    {key}: {json.dumps(registry_entry[key])}")
+        (registry_dir / f"{name}.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        registry_file = str(registry_dir / f"{name}.yaml")
+
     return {
         "department": name,
         "created": [str(dept / "charter.yaml"), str(dept / "state"), str(dept / "runtime")],
         "registry_entry": registry_entry,
+        "registry_file": registry_file,
         "next_human_step": (
             "F1 intent interview + intent lock (owner), then F2 charter setpoints + funnels"
         ),

@@ -87,8 +87,11 @@ def validate_subgraph(sg) -> list[str]:
             positions = [before.index(g) for g in SEND_ORDER if g in before]
             if positions != sorted(positions):
                 fails.append(f"{sid}/{nid}: send guards out of order (need S1,S2,S3,S5,S4)")
-            if not (HEALTH & set(before)):
-                fails.append(f"{sid}/{nid}: external dispatch missing fresh S6/S7 controller health")
+            # Codex review #8: BOTH controllers must be live before dispatch —
+            # kill controller and circuit breaker cover different failure modes.
+            for g in sorted(HEALTH):
+                if g not in before and g not in na:
+                    fails.append(f"{sid}/{nid}: external dispatch missing fresh {g} controller health")
         if node.get("crm_write") and "crm_auth" not in before:
             fails.append(f"{sid}/{nid}: CRM write not preceded by crm_authorization")
 
@@ -110,6 +113,11 @@ def validate_subgraph(sg) -> list[str]:
     for g, reason in na.items():
         if not reason or not str(reason).strip():
             fails.append(f"{sid}: not_applicable[{g}] has empty rationale")
+    # Intent traceability (review finding): every subgraph must cite the locked
+    # concept-map nodes it implements — a graph that traces to nothing is
+    # untraceable to the interview.
+    if not sg.get("concept_refs"):
+        fails.append(f"{sid}: missing concept_refs (must cite locked concept-map nodes)")
     return fails
 
 
@@ -137,13 +145,22 @@ def check_traceability(dept_dir) -> list[str]:
 
     fails: list[str] = []
     declared_impls: set[str] = set()
+    dept_resolved = dept_dir.resolve()
     for sg in data.get("subgraphs", []):
         for node in sg.get("nodes", []):
             impl = node.get("impl")
             if not impl:
                 continue
             declared_impls.add(impl)
-            if not (dept_dir / impl).exists():
+            # Codex review #8: an impl path must resolve INSIDE the department —
+            # no absolute paths, no '..' escapes into factory or other depts.
+            impl_path = (dept_dir / impl)
+            if Path(impl).is_absolute() or not str(impl_path.resolve()).startswith(
+                    str(dept_resolved) + "/"):
+                fails.append(
+                    f"{sg.get('id','?')}/{node.get('id','?')}: impl '{impl}' escapes the department directory")
+                continue
+            if not impl_path.exists():
                 fails.append(
                     f"{sg.get('id','?')}/{node.get('id','?')}: impl '{impl}' does not exist on disk")
 
@@ -154,7 +171,12 @@ def check_traceability(dept_dir) -> list[str]:
 
     runtime_dir = dept_dir / "runtime"
     if runtime_dir.is_dir():
-        for path in sorted(runtime_dir.glob("*.py")):
+        # *.py, *.json, *.sh are all release artifacts (review finding: a .json
+        # config or .sh entrypoint can change behavior as much as code can).
+        candidates: list[Path] = []
+        for pattern in ("*.py", "*.json", "*.sh"):
+            candidates.extend(runtime_dir.glob(pattern))
+        for path in sorted(candidates):
             rel = f"runtime/{path.name}"
             if path.name in _ALWAYS_UNTRACED:
                 continue

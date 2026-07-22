@@ -24,7 +24,8 @@ REL = _load("release", "factory/release.py")
 
 
 def _send_subgraph(nodes):
-    return {"subgraphs": [{"id": "SG-T", "not_applicable": {"S8": "no cost nodes"}, "nodes": nodes}]}
+    return {"subgraphs": [{"id": "SG-T", "concept_refs": ["C3"],
+                           "not_applicable": {"S8": "no cost nodes"}, "nodes": nodes}]}
 
 
 GOOD_SEND_NODES = [
@@ -57,13 +58,15 @@ def test_model_node_without_privacy_preflight_fails():
 
 def test_cost_node_without_budget_reserve_fails():
     nodes = list(GOOD_SEND_NODES) + [{"id": "N9", "cost_incurring": True}]
-    data = {"subgraphs": [{"id": "SG-T", "not_applicable": {}, "nodes": nodes}]}
+    data = {"subgraphs": [{"id": "SG-T", "concept_refs": ["C3"], "not_applicable": {},
+                           "nodes": nodes}]}
     fails = G.validate_subgraphs(data)
     assert any("not preceded by S8" in f for f in fails)
 
 
 def test_read_only_funnel_must_justify_skipped_send_guards():
-    data = {"subgraphs": [{"id": "SG-RO", "not_applicable": {"S8": "read only"},
+    data = {"subgraphs": [{"id": "SG-RO", "concept_refs": ["C2"],
+                           "not_applicable": {"S8": "read only"},
                            "nodes": [{"id": "S1", "guard": "S1"}, {"id": "S2", "guard": "S2"},
                                      {"id": "S3", "guard": "S3"}]}]}
     fails = G.validate_subgraphs(data)
@@ -71,10 +74,30 @@ def test_read_only_funnel_must_justify_skipped_send_guards():
 
 
 def test_empty_rationale_is_rejected():
-    data = {"subgraphs": [{"id": "SG-T", "not_applicable": {"S8": "  "},
+    data = {"subgraphs": [{"id": "SG-T", "concept_refs": ["C3"],
+                           "not_applicable": {"S8": "  "},
                            "nodes": GOOD_SEND_NODES}]}
     fails = G.validate_subgraphs(data)
     assert any("empty rationale" in f for f in fails)
+
+
+def test_missing_concept_refs_fails():
+    data = {"subgraphs": [{"id": "SG-T", "not_applicable": {"S8": "no cost nodes"},
+                           "nodes": GOOD_SEND_NODES}]}
+    fails = G.validate_subgraphs(data)
+    assert any("missing concept_refs" in f for f in fails)
+
+
+def test_dispatch_requires_both_controllers():
+    nodes = [n for n in GOOD_SEND_NODES if n["id"] != "S7"]
+    fails = G.validate_subgraphs(_send_subgraph(nodes))
+    assert any("missing fresh S7" in f for f in fails)
+
+
+def test_crm_write_without_crm_auth_fails():
+    nodes = list(GOOD_SEND_NODES) + [{"id": "N9", "crm_write": True}]
+    fails = G.validate_subgraphs(_send_subgraph(nodes))
+    assert any("CRM write not preceded by crm_authorization" in f for f in fails)
 
 
 # --------------------------------------------------------------------------- #

@@ -68,8 +68,8 @@ def test_apply_maps_verdict_to_queue(tmp_path):
     human_loop.push(queue, department="sales", outbox_path=outbox)
     decision_ids = [row["decision_id"] for row in _read_jsonl(queue)]
 
-    assert human_loop.apply(queue, decision_ids[0], verdict="APPROVE") == {"applied": True}
-    assert human_loop.apply(queue, decision_ids[1], verdict="REJECT") == {"applied": True}
+    assert human_loop.apply(queue, decision_ids[0], verdict="APPROVE") == {"applied": True, "status": "approved"}
+    assert human_loop.apply(queue, decision_ids[1], verdict="REJECT") == {"applied": True, "status": "rejected"}
     before_unknown = _read_jsonl(queue)
     assert human_loop.apply(queue, "unknown-id", verdict="APPROVE") == {"applied": False}
     assert _read_jsonl(queue) == before_unknown

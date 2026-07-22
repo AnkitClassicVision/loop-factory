@@ -86,10 +86,10 @@ def test_p0_3_budget_enforced_in_model_issuance(tmp_path):
         nonce_ledger=tmp_path / "n.jsonl",
         clock=_Clock(),
     )
-    ls.request_model("p1")  # 1 model_call reserved, under ceiling
+    ls.request_model("p1", sanitized=True)  # 1 model_call reserved, under ceiling
     # the next reservation crosses the ceiling/review threshold -> no receipt
     with pytest.raises((LS.budget_mod.BudgetExceeded, LS.budget_mod.BudgetReviewRequired)):
-        ls.request_model("p2")
+        ls.request_model("p2", sanitized=True)
 
 
 # --- P0 #4: single-use + revocation survive a restart --------------------- #
