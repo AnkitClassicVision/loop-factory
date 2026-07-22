@@ -17,11 +17,31 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from factory.heal_ladder import ImmutableHealError, assert_heal_target_allowed
+from factory.charter_loader import CharterError, immutable_invariants, load_charter
+from factory.heal_ladder import (
+    ImmutableHealError,
+    assert_heal_target_allowed as assert_factory_heal_target_allowed,
+)
 
 
 DEFAULT_STATE_DIR = ROOT / "departments/podcast/state"
 DEFAULT_PLAYBOOKS_PATH = Path(__file__).with_name("playbooks.json")
+DEFAULT_CHARTER_PATH = Path(__file__).resolve().parents[1] / "charter.yaml"
+
+
+def assert_heal_target_allowed(target: str) -> None:
+    """Enforce both the factory floor and podcast's stricter charter floor."""
+    assert_factory_heal_target_allowed(target)
+    try:
+        charter = load_charter(DEFAULT_CHARTER_PATH, expect_department="podcast")
+    except CharterError as exc:
+        raise ImmutableHealError(
+            f"charter invariant allowlist unavailable: {exc}"
+        ) from exc
+    if target in immutable_invariants(charter):
+        raise ImmutableHealError(
+            f"heal may not modify immutable invariant: {target}"
+        )
 
 
 def _timestamp(now: datetime | None = None) -> str:
@@ -116,7 +136,9 @@ def select_heal(
         return None
 
     incident = incidents.get(fingerprint) if isinstance(incidents, dict) else None
-    if not isinstance(incident, dict) or incident.get("state") != "open":
+    if not isinstance(incident, dict) or incident.get("state") not in {
+        "open", "department_defect",
+    }:
         append_heal_receipt(
             state_dir,
             fingerprint=fingerprint,
@@ -124,7 +146,7 @@ def select_heal(
             mode="proposed",
             commands=[],
             result="refused",
-            detail="incident is missing or not open — escalate",
+            detail="incident is missing or not healable — escalate",
             now=now,
         )
         return None

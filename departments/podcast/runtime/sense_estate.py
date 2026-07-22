@@ -29,21 +29,48 @@ class CoverageError(RuntimeError):
 
 
 def load_estate(path: str | Path = DEFAULT_ESTATE_PATH) -> dict[str, Any]:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    inventory_path = Path(path)
+    try:
+        value = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"estate inventory is unreadable: {inventory_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"estate inventory is malformed: {inventory_path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError("estate inventory must be a JSON object")
+    inventory_items(value)
     return value
 
 
 def inventory_items(estate: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten timer, channel, and VPS inventory into uniquely named items."""
+    timers = estate.get("systemd_user_timers", [])
+    channels = estate.get("channels", [])
+    vps = estate.get("vps", {})
+    if vps is None:
+        vps = {}
+    if not isinstance(timers, list):
+        raise ValueError("estate systemd_user_timers must be a list")
+    if not isinstance(channels, list):
+        raise ValueError("estate channels must be a list")
+    if not isinstance(vps, dict):
+        raise ValueError("estate vps must be an object")
+    services = vps.get("services", [])
+    if not isinstance(services, list):
+        raise ValueError("estate vps.services must be a list")
+
     items: list[dict[str, Any]] = []
-    for timer in estate.get("systemd_user_timers", []):
+    for timer in timers:
+        if not isinstance(timer, dict):
+            raise ValueError("every systemd timer inventory item must be an object")
         items.append({"kind": "timer", **timer})
-    for channel in estate.get("channels", []):
+    for channel in channels:
+        if not isinstance(channel, dict):
+            raise ValueError("every channel inventory item must be an object")
         items.append({"kind": "channel", **channel})
-    vps = estate.get("vps") or {}
-    for service in vps.get("services", []):
+    for service in services:
+        if not isinstance(service, str) or not service.strip():
+            raise ValueError("every VPS service inventory item must be a nonempty string")
         items.append(
             {
                 "kind": "vps",
@@ -52,6 +79,8 @@ def inventory_items(estate: dict[str, Any]) -> list[dict[str, Any]]:
                 "shadow_rule": vps.get("shadow_rule", ""),
             }
         )
+    if not items:
+        raise ValueError("estate inventory contains no units")
     names = [str(item.get("name", "")) for item in items]
     if any(not name for name in names):
         raise ValueError("every estate inventory item must have a name")
@@ -121,13 +150,10 @@ def _matching_files(directory: Path, pattern: str) -> list[Path]:
 
 
 def _tail_has_error(path: Path, limit: int = 65536) -> bool:
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, 2)
-            handle.seek(max(0, handle.tell() - limit))
-            tail = handle.read().decode("utf-8", errors="replace")
-    except OSError:
-        return False
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - limit))
+        tail = handle.read().decode("utf-8", errors="replace")
     return any(ERROR_PATTERN.search(line) for line in tail.splitlines()[-200:])
 
 
@@ -202,6 +228,7 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
     artifact_kind = ""
     artifacts: list[Path] = []
     artifact_location = ""
+    log_read_errors: list[str] = []
     if len(evidence_specs) != 1:
         unknowns.append(
             "missing evidence spec; expected exactly one of receipt_glob, "
@@ -238,6 +265,21 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
                 "receipt_age_minutes": round(age_minutes, 3),
             }
         )
+        if artifact_kind == "receipt":
+            try:
+                receipt_text = newest.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                unknowns.append(f"receipt read failed for {newest}: {exc}")
+            else:
+                if not receipt_text.strip():
+                    metrics["failure_hint"] = "receipt_hollow"
+                    failures.append(
+                        (
+                            "receipt",
+                            "receipt_hollow: matched receipt contains no non-whitespace content",
+                            str(newest),
+                        )
+                    )
         if threshold is None:
             unknowns.append(f"{artifact_kind} freshness threshold is not defined")
         elif age_minutes > float(threshold):
@@ -252,9 +294,20 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
         unknowns.append(f"no {artifact_kind} matched configured evidence: {artifact_location}")
 
     log_files = artifacts if artifact_kind == "log" else []
-    error_logs = [path for path in log_files if _tail_has_error(path)]
+    error_logs: list[Path] = []
+    for path in log_files:
+        try:
+            if _tail_has_error(path):
+                error_logs.append(path)
+        except Exception as exc:
+            log_read_errors.append(f"log read failed for {path}: {exc}")
+    unknowns.extend(log_read_errors)
     metrics.update(
-        {"log_files_checked": len(log_files), "log_error_files": len(error_logs)}
+        {
+            "log_files_checked": len(log_files),
+            "log_error_files": len(error_logs),
+            "log_read_errors": len(log_read_errors),
+        }
     )
     if error_logs:
         failures.append(("log", "error pattern found in log tail", str(error_logs[0])))
@@ -263,7 +316,14 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
         sensor, detail, evidence = failures[0]
         status = "fail"
     elif unknowns:
-        sensor = "receipt" if artifact_kind and not artifacts else "timer"
+        if log_read_errors:
+            sensor = "log"
+        elif artifact_kind and not artifacts:
+            sensor = "receipt" if artifact_kind == "receipt" else artifact_kind
+        elif any(message.startswith("receipt read failed") for message in unknowns):
+            sensor = "receipt"
+        else:
+            sensor = "timer"
         detail = "; ".join(unknowns)[:240]
         evidence = artifact_location or f"systemd://{timer_unit}"
         status = "unknown"
@@ -284,16 +344,18 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
 
 def _channel_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     metadata_present = bool(item.get("via") and item.get("shadow_check"))
+    if metadata_present and context.get("shadow", True):
+        detail = "config present; reachability unchecked in shadow"
+    elif metadata_present:
+        detail = "config present; no live reachability probe configured"
+    else:
+        detail = "channel configuration metadata is incomplete"
     return {
         "sensor": "channel",
         "subject": item["name"],
-        "status": "ok" if metadata_present else "unknown",
+        "status": "unknown",
         "evidence": str(context["estate_path"]),
-        "detail": (
-            "channel configuration metadata present; no message sent"
-            if metadata_present
-            else "channel configuration metadata is incomplete"
-        ),
+        "detail": detail,
         "metrics": {
             "config_present": metadata_present,
             "reachability_checked": False,
@@ -442,12 +504,16 @@ def main() -> None:
     mode.add_argument("--shadow", dest="shadow", action="store_true", default=True)
     mode.add_argument("--live", dest="shadow", action="store_false")
     args = parser.parse_args()
-    observations = run_sense(
-        args.state_dir,
-        estate_path=args.estate,
-        shadow=args.shadow,
-        probe_vps=args.probe_vps,
-    )
+    try:
+        observations = run_sense(
+            args.state_dir,
+            estate_path=args.estate,
+            shadow=args.shadow,
+            probe_vps=args.probe_vps,
+        )
+    except (CoverageError, OSError, TypeError, ValueError) as exc:
+        print(f"estate sensing failed: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
     print(json.dumps({"observations": len(observations), "shadow": args.shadow}))
 
 

@@ -8,7 +8,11 @@ set -euo pipefail
 
 REPO="/mnt/d_drive/repos/loop-factory"
 DEPARTMENT="podcast"
+# Sensors import factory.* as a package; PYTHONPATH is on the kernel env
+# allowlist, so the confined launcher passes it through.
+export PYTHONPATH="${REPO}"
 STATE_DIR="${REPO}/departments/${DEPARTMENT}/state"
+SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
@@ -18,6 +22,9 @@ mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
 #    (factory/launch.py) so the department holds no credentials, and stays in
 #    shadow. These nodes are authored by a concurrent lane; referenced by path.
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/sense_estate.py" --shadow
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/pipeline_sensor.py" --shadow --sources "${SOURCES}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/compare_charter.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/fingerprint_dedup.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/escalate_outbox.py" --shadow

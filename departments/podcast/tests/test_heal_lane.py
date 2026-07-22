@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from departments.podcast.runtime import heal_apply, heal_select, heal_verify
 
 
@@ -24,7 +26,7 @@ def _incident(fingerprint="fp-1", failure_class="timer_failed", **changes):
         "severity": "error",
         "setpoint": "active",
         "observed": "failed",
-        "evidence": {"probe": "systemctl_is_active", "unit": "podcast.timer"},
+        "evidence": ["systemd://podcast.timer"],
         "one_question": "Can the known playbook clear this?",
         "count": 1,
     }
@@ -67,10 +69,10 @@ def test_unknown_failure_class_is_refused_without_execution(tmp_path, monkeypatc
     assert _receipts(state_dir)[-1]["detail"] == "unknown pattern — escalate"
 
 
-def test_immutable_heal_target_is_refused(tmp_path):
+def test_charter_only_immutable_heal_target_is_refused(tmp_path):
     state_dir = tmp_path / "state"
     _write_incidents(state_dir, _incident())
-    playbooks = _custom_playbooks(tmp_path, target="autonomy_state")
+    playbooks = _custom_playbooks(tmp_path, target="escalation_dedup_policy")
 
     selected = heal_select.select_heal(
         state_dir, "fp-1", playbooks_path=playbooks, now=NOW
@@ -79,11 +81,15 @@ def test_immutable_heal_target_is_refused(tmp_path):
     assert selected is None
     receipt = _receipts(state_dir)[-1]
     assert receipt["result"] == "refused"
-    assert "heal may not modify immutable invariant: autonomy_state" == receipt["detail"]
+    assert (
+        "heal may not modify immutable invariant: escalation_dedup_policy"
+        == receipt["detail"]
+    )
 
 
 def test_shadow_apply_executes_nothing_and_writes_proposal(tmp_path, monkeypatch):
     state_dir = tmp_path / "state"
+    _write_incidents(state_dir, _incident())
 
     def forbidden(*args, **kwargs):
         raise AssertionError("shadow apply must never call subprocess")
@@ -104,40 +110,128 @@ def test_shadow_apply_executes_nothing_and_writes_proposal(tmp_path, monkeypatch
     assert not (state_dir / "heal_attempts.json").exists()
 
 
-def test_attempts_over_daily_cap_are_refused(tmp_path):
+def test_attempts_over_daily_cap_are_refused(tmp_path, monkeypatch):
     state_dir = tmp_path / "state"
-    playbooks = _custom_playbooks(tmp_path, cap=1)
+    _write_incidents(state_dir, _incident())
     calls = []
 
     def succeeded(argv, **kwargs):
         calls.append(argv)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    first = heal_apply.apply_heal(
-        state_dir,
-        "fp-1",
-        "restart_user_timer",
-        {"unit": "podcast.timer"},
-        shadow=False,
-        playbooks_path=playbooks,
-        executor=succeeded,
-        now=NOW,
+    monkeypatch.setattr(
+        heal_apply.kernel_bridge, "require_shadow", lambda live=False: None
     )
-    second = heal_apply.apply_heal(
+    receipts = [
+        heal_apply.apply_heal(
+            state_dir,
+            "fp-1",
+            "restart_user_timer",
+            {"unit": "podcast.timer"},
+            shadow=False,
+            executor=succeeded,
+            now=NOW,
+        )
+        for _ in range(3)
+    ]
+
+    assert [receipt["result"] for receipt in receipts] == [
+        "proposed", "proposed", "refused",
+    ]
+    assert "max attempts per day reached" in receipts[-1]["detail"]
+    assert calls == [
+        ["systemctl", "--user", "restart", "podcast.timer"],
+        ["systemctl", "--user", "restart", "podcast.timer"],
+    ]
+
+
+def test_live_playbooks_override_is_refused_without_execution(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    _write_incidents(state_dir, _incident())
+    playbooks = _custom_playbooks(tmp_path)
+
+    monkeypatch.setattr(
+        heal_apply.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("a live playbook override must never execute")
+        ),
+    )
+    receipt = heal_apply.apply_heal(
         state_dir,
         "fp-1",
         "restart_user_timer",
         {"unit": "podcast.timer"},
         shadow=False,
         playbooks_path=playbooks,
-        executor=succeeded,
         now=NOW,
     )
 
-    assert first["result"] == "proposed"
-    assert second["result"] == "refused"
-    assert "max attempts per day reached" in second["detail"]
-    assert calls == [["systemctl", "--user", "restart", "podcast.timer"]]
+    assert receipt["result"] == "refused"
+    assert "canonical podcast playbook allowlist" in receipt["detail"]
+    assert not (state_dir / "heal_attempts.json").exists()
+
+
+def test_live_missing_incident_fingerprint_is_refused_without_execution(
+    tmp_path, monkeypatch
+):
+    state_dir = tmp_path / "state"
+    _write_incidents(state_dir, _incident(fingerprint="different-fingerprint"))
+
+    monkeypatch.setattr(
+        heal_apply.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("an unbound live heal must never execute")
+        ),
+    )
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        "absent-fingerprint",
+        "restart_user_timer",
+        {"unit": "podcast.timer"},
+        shadow=False,
+        now=NOW,
+    )
+
+    assert receipt["result"] == "refused"
+    assert receipt["detail"] == "fingerprint does not name an existing incident"
+    assert not (state_dir / "heal_attempts.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("incident_changes", "expected_detail"),
+    [
+        ({"state": "resolved"}, "incident is not open or a department defect"),
+        (
+            {"failure_class": "receipt_stale"},
+            "incident failure class does not match the selected playbook",
+        ),
+    ],
+)
+def test_live_heal_requires_healable_state_and_matching_failure_class(
+    tmp_path, monkeypatch, incident_changes, expected_detail
+):
+    state_dir = tmp_path / "state"
+    _write_incidents(state_dir, _incident(**incident_changes))
+
+    monkeypatch.setattr(
+        heal_apply.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("an incident mismatch must not execute"),
+    )
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        "fp-1",
+        "restart_user_timer",
+        {"unit": "podcast.timer"},
+        shadow=False,
+        now=NOW,
+    )
+
+    assert receipt["result"] == "refused"
+    assert receipt["detail"] == expected_detail
+    assert not (state_dir / "heal_attempts.json").exists()
 
 
 def test_verify_marks_failed_when_condition_persists(tmp_path):
@@ -158,20 +252,49 @@ def test_verify_marks_failed_when_condition_persists(tmp_path):
     assert receipt["detail"] == "timer remains failed"
 
 
-def test_verify_marks_verified_only_after_clearance(tmp_path):
+def test_default_verify_derives_systemd_unit_from_real_incident_evidence(
+    tmp_path, monkeypatch
+):
     state_dir = tmp_path / "state"
-    _write_incidents(state_dir, _incident())
+    _write_incidents(
+        state_dir,
+        _incident(evidence=["systemd://podcast-production.timer"]),
+    )
+    probed = []
+
+    def cleared(unit):
+        probed.append(unit)
+        return False, f"systemctl is-active {unit}: active"
+
+    monkeypatch.setattr(heal_verify, "_systemctl_inactive", cleared)
 
     receipt = heal_verify.verify_heal(
         state_dir,
         "fp-1",
         "restart_user_timer",
-        prober=lambda incident: False,
         shadow=False,
         now=NOW,
     )
 
     assert receipt["result"] == "verified"
+    assert probed == ["podcast-production.timer"]
+
+
+def test_default_verify_tolerates_legacy_dict_evidence(monkeypatch):
+    probed = []
+    monkeypatch.setattr(
+        heal_verify,
+        "_systemctl_inactive",
+        lambda unit: (probed.append(unit) or (False, "active")),
+    )
+
+    persists, detail = heal_verify.default_condition_persists(
+        _incident(evidence={"probe": "systemctl_is_active", "unit": "legacy.timer"})
+    )
+
+    assert persists is False
+    assert detail == "active"
+    assert probed == ["legacy.timer"]
 
 
 def test_render_rejects_parameter_that_could_add_argv_tokens():

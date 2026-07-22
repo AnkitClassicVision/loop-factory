@@ -7,11 +7,14 @@ Pins the three guarantees the bridge exists to hold:
   * podcast_daily.sh stays shadow-only (valid bash syntax, no live flag).
 """
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from departments.podcast.runtime import heal_apply
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -110,6 +113,38 @@ def test_require_shadow_allows_live_once_promoted(monkeypatch):
                         lambda: _synth_charter(autonomy_state="gated_live"))
     # not shadow anymore -> a live request is permitted (no raise)
     KB.require_shadow(live=True)
+
+
+def test_live_heal_path_refuses_shadow_charter_before_execution(
+    tmp_path, monkeypatch
+):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    incident = {
+        "fingerprint": "fp-live-shadow",
+        "failure_class": "timer_failed",
+        "state": "open",
+        "evidence": ["systemd://podcast.timer"],
+    }
+    (state_dir / "incidents.json").write_text(
+        json.dumps({incident["fingerprint"]: incident}), encoding="utf-8"
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("shadow charter must refuse before subprocess execution")
+
+    monkeypatch.setattr(heal_apply.subprocess, "run", forbidden)
+    receipt = heal_apply.apply_heal(
+        state_dir,
+        incident["fingerprint"],
+        "restart_user_timer",
+        {"unit": "podcast.timer"},
+        shadow=False,
+    )
+
+    assert receipt["result"] == "refused"
+    assert "autonomy_state is 'shadow'" in receipt["detail"]
+    assert not (state_dir / "heal_attempts.json").exists()
 
 
 # --------------------------------------------------------------------------- #

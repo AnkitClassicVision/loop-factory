@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,23 +65,56 @@ def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
         _append(state_dir, obs)
         return obs
 
-    contacts_by_email = {email: row for row in contacts if (email := _key(row)[0])}
-    contacts_by_name = {name: row for row in contacts if (name := _key(row)[1])}
+    contact_email_counts = Counter(_key(row)[0] for row in contacts if _key(row)[0])
+    duplicate_emails = {
+        email for email, count in contact_email_counts.items() if count > 1
+    }
+    contacts_by_email = {
+        email: row
+        for row in contacts
+        if (email := _key(row)[0]) and email not in duplicate_emails
+    }
+    emails_by_name: dict[str, list[str]] = defaultdict(list)
+    for contact in contacts:
+        email, name = _key(contact)
+        if name:
+            emails_by_name[name].append(email)
+    ambiguous_names = {
+        name
+        for name, emails in emails_by_name.items()
+        if len(emails) > 1
+        and (any(not email for email in emails) or len(set(emails)) != len(emails))
+    }
+
     counted = []
     seen = set()
+    identity_issues = Counter()
+    if duplicate_emails:
+        identity_issues["duplicate_hubspot_email"] += len(duplicate_emails)
+    if ambiguous_names:
+        identity_issues["duplicate_display_name_without_distinct_emails"] += len(
+            ambiguous_names
+        )
     for event in calendar:
         event_type = str(event.get("event_type") or "").casefold()
         if "record" not in event_type and "podcast" not in event_type:
             continue
         email, name = _key(event)
-        contact = contacts_by_email.get(email) if email else contacts_by_name.get(name)
+        if not email:
+            identity_issues["calendar_guest_missing_email"] += 1
+            continue
+        if email in duplicate_emails:
+            identity_issues["calendar_email_matches_duplicate_contact"] += 1
+            continue
+        contact = contacts_by_email.get(email)
         if contact is None:
+            identity_issues["calendar_email_unmatched"] += 1
             continue
         status = str(contact.get("podcast_status") or "").strip().casefold()
         if status not in {"active", "booked", "recording_pipeline", "scheduled"}:
             continue
-        identity = email or name
-        if not identity or identity in seen:
+        identity = email
+        if identity in seen:
             continue
         seen.add(identity)
         counted.append({
@@ -94,14 +128,23 @@ def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
                     "email": contact.get("email"), "name": contact.get("name"),
                     "podcast_status": contact.get("podcast_status"),
                 },
-                "join": "email" if email and email == _key(contact)[0] else "name",
+                "join": "email",
             },
         })
     count = len(counted)
-    status = "ok" if count >= setpoint else "fail"
-    metrics = {"count": count, "setpoint": setpoint, "counted_guests": counted}
-    obs = _observation(status, f"{calendar_path},{contacts_path}",
-                       f"recording pipeline has {count} of {setpoint} guests", metrics)
+    metrics = {
+        "count": count,
+        "setpoint": setpoint,
+        "counted_guests": counted,
+        "identity_issue_counts": dict(sorted(identity_issues.items())),
+    }
+    if identity_issues:
+        status = "unknown"
+        detail = "unresolved identity — suppress + review"
+    else:
+        status = "ok" if count >= setpoint else "fail"
+        detail = f"recording pipeline has {count} of {setpoint} guests"
+    obs = _observation(status, f"{calendar_path},{contacts_path}", detail, metrics)
     _append(state_dir, obs)
     return obs
 

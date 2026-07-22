@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,18 @@ FAILURE_CLASSES = {
     ("log", "warn"): ("log_warning", "low"),
     ("channel", "warn"): ("channel_warning", "med"),
     ("vps", "warn"): ("vps_warning", "med"),
+    ("pipeline", "fail"): ("pipeline_below_target", "high"),
+    ("pipeline", "warn"): ("pipeline_warn", "med"),
+    ("pipeline", "unknown"): ("pipeline_unknown", "med"),
+    ("publishday", "fail"): ("publish_missing", "high"),
+    ("publishday", "unknown"): ("publish_unknown", "med"),
+    ("manifest", "fail"): ("manifest_incomplete", "high"),
+    ("manifest", "warn"): ("manifest_gap", "med"),
+    ("manifest", "unknown"): ("manifest_unknown", "med"),
+}
+
+FAILURE_HINT_CLASSES = {
+    ("receipt", "fail", "receipt_hollow"): ("receipt_hollow", "high"),
 }
 
 QUESTIONS = {
@@ -43,22 +56,59 @@ QUESTIONS = {
     "log": "Which versioned repair playbook should handle this logged failure?",
     "channel": "Which owner-approved path should restore escalation-channel liveness?",
     "vps": "Should the VPS service be repaired through an approved playbook or escalated?",
+    "pipeline": "Which unresolved or missing guest evidence is keeping the pipeline below target?",
+    "publishday": "Which expected publish artifact is missing, and who owns its recovery?",
+    "manifest": "Which required guest-manifest fields must be completed before publish?",
 }
+
+
+class ObservationEvidenceError(RuntimeError):
+    """Raised when the comparison input is missing, unreadable, or hollow."""
 
 
 def load_observations(path: str | Path) -> list[dict[str, Any]]:
     path = Path(path)
     if not path.exists():
-        return []
+        raise ObservationEvidenceError(f"observations evidence is missing: {path}")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise ObservationEvidenceError(
+            f"observations evidence is unreadable: {path}: {exc}"
+        ) from exc
     rows = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
-        value = json.loads(line)
+        try:
+            value = json.loads(line)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ObservationEvidenceError(
+                f"observations evidence is malformed at {path}:{line_number}: {exc}"
+            ) from exc
         if not isinstance(value, dict):
-            raise ValueError(f"observation line {line_number} is not an object")
+            raise ObservationEvidenceError(
+                f"observations evidence is malformed at {path}:{line_number}: "
+                "row is not an object"
+            )
         rows.append(value)
+    if not rows:
+        raise ObservationEvidenceError(f"observations evidence contains no rows: {path}")
     return rows
+
+
+def _evidence_missing_candidate(path: Path, detail: str) -> dict[str, Any]:
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "sensor": "evidence",
+        "subject": "observations.jsonl",
+        "failure_class": "evidence_missing",
+        "severity": "high",
+        "setpoint": "readable, nonempty observations.jsonl required",
+        "observed": detail,
+        "evidence": [str(path)],
+        "one_question": "What removed or made the watchdog observation evidence unreadable?",
+    }
 
 
 def charter_setpoints(charter: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +160,12 @@ def _setpoint_for(row: dict[str, Any], setpoints: dict[str, Any]) -> str:
         return f"configured escalation channel; <= {ceiling} pings/day"
     if sensor == "vps":
         return "service state observable and active"
+    if sensor == "pipeline":
+        return f"recording pipeline guests >= {setpoints.get('pipeline_guests')}"
+    if sensor == "publishday":
+        return "all due publish artifacts verified"
+    if sensor == "manifest":
+        return "required guest manifest complete by publish"
     return "no error pattern in the inspected log tail"
 
 
@@ -149,7 +205,10 @@ def compare_observations(
                 status = "fail"
         if status == "ok":
             continue
-        transition = FAILURE_CLASSES.get((sensor, status))
+        failure_hint = (row.get("metrics") or {}).get("failure_hint")
+        transition = FAILURE_HINT_CLASSES.get((sensor, status, failure_hint))
+        if transition is None:
+            transition = FAILURE_CLASSES.get((sensor, status))
         if transition is None:
             raise ValueError(f"no charter comparison transition for sensor={sensor!r}, status={status!r}")
         failure_class, severity = transition
@@ -181,8 +240,14 @@ def run_compare(
 ) -> list[dict[str, Any]]:
     state_dir = Path(state_dir)
     charter = load_charter(charter_path, expect_department="podcast")
-    observations = load_observations(state_dir / "observations.jsonl")
-    candidates = compare_observations(observations, charter)
+    observations_path = state_dir / "observations.jsonl"
+    try:
+        observations = load_observations(observations_path)
+    except ObservationEvidenceError as exc:
+        observations = []
+        candidates = [_evidence_missing_candidate(observations_path, str(exc))]
+    else:
+        candidates = compare_observations(observations, charter)
     write_candidates(state_dir / "incident_candidates.json", candidates)
     record_node.write_record(
         state_dir,

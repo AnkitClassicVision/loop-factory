@@ -17,18 +17,22 @@ try:
     from .heal_select import (
         DEFAULT_PLAYBOOKS_PATH,
         DEFAULT_STATE_DIR,
+        ImmutableHealError,
         append_heal_receipt,
+        assert_heal_target_allowed,
         load_playbooks,
     )
+    from . import kernel_bridge
 except ImportError:  # direct script execution
     from heal_select import (
         DEFAULT_PLAYBOOKS_PATH,
         DEFAULT_STATE_DIR,
+        ImmutableHealError,
         append_heal_receipt,
+        assert_heal_target_allowed,
         load_playbooks,
     )
-
-from factory.heal_ladder import ImmutableHealError, assert_heal_target_allowed
+    import kernel_bridge
 
 
 _SAFE_PARAMETER = re.compile(r"^[A-Za-z0-9_.@:/+-]+$")
@@ -111,6 +115,28 @@ def _find_playbook(playbook_id: str, path) -> dict[str, Any] | None:
     )
 
 
+def _incident_refusal(
+    state_dir: Path,
+    fingerprint: str,
+    playbook: dict[str, Any],
+) -> str | None:
+    """Return why this playbook is not bound to a healable incident."""
+    try:
+        incidents = json.loads(
+            (state_dir / "incidents.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        return f"incident data unavailable: {exc}"
+    incident = incidents.get(fingerprint) if isinstance(incidents, dict) else None
+    if not isinstance(incident, dict):
+        return "fingerprint does not name an existing incident"
+    if incident.get("state") not in {"open", "department_defect"}:
+        return "incident is not open or a department defect"
+    if incident.get("failure_class") != playbook.get("matches_failure_class"):
+        return "incident failure class does not match the selected playbook"
+    return None
+
+
 def apply_heal(
     state_dir,
     fingerprint: str,
@@ -127,6 +153,16 @@ def apply_heal(
     mode = "proposed" if shadow else "applied"
     params = params or {}
     now = now or datetime.now(timezone.utc)
+    if (
+        not shadow
+        and Path(playbooks_path).resolve() != DEFAULT_PLAYBOOKS_PATH.resolve()
+    ):
+        return append_heal_receipt(
+            state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,
+            commands=[], result="refused",
+            detail="live mode requires the canonical podcast playbook allowlist",
+            now=now,
+        )
     try:
         playbook = _find_playbook(playbook_id, playbooks_path)
     except (OSError, ValueError) as exc:
@@ -139,6 +175,12 @@ def apply_heal(
         return append_heal_receipt(
             state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,
             commands=[], result="refused", detail="playbook id is not allowlisted", now=now,
+        )
+    incident_refusal = _incident_refusal(state_dir, fingerprint, playbook)
+    if incident_refusal is not None:
+        return append_heal_receipt(
+            state_dir, fingerprint=fingerprint, playbook=playbook_id, mode=mode,
+            commands=[], result="refused", detail=incident_refusal, now=now,
         )
     try:
         assert_heal_target_allowed(playbook["heal_target"])
@@ -154,6 +196,15 @@ def apply_heal(
             state_dir, fingerprint=fingerprint, playbook=playbook_id,
             mode="proposed", commands=commands, result="proposed",
             detail="shadow mode; commands not executed", now=now,
+        )
+
+    try:
+        kernel_bridge.require_shadow(live=True)
+    except RuntimeError as exc:
+        return append_heal_receipt(
+            state_dir, fingerprint=fingerprint, playbook=playbook_id,
+            mode="applied", commands=commands, result="refused",
+            detail=str(exc), now=now,
         )
 
     reserved, detail = _reserve_attempt(

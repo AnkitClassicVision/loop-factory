@@ -1,4 +1,5 @@
 """Capability and environment boundaries for department processes."""
+from __future__ import annotations
 
 
 DANGEROUS_EFFECTS = frozenset(
@@ -26,17 +27,15 @@ _ALLOWED_ENV = frozenset(
         "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
         "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
         "OE_KERNEL_ONLY", "PLACEHOLDER_MODE",
-        # XDG_RUNTIME_DIR is a path (/run/user/<uid>), not a secret. Without it
-        # `systemctl --user` cannot reach the session bus, so watchdog-style
-        # departments sense every unit as unknown under confinement (observed
-        # podcast shadow run 2026-07-22: 8 real candidates ballooned to 15).
-        # Acknowledged widening: the session bus becomes reachable, so a dept
-        # process COULD invoke unit actions — that action class stays governed
-        # by the heal playbook allowlist, shadow mode, and the systemd unit
-        # sandbox (NoNewPrivileges, ProtectSystem=strict).
-        "XDG_RUNTIME_DIR",
     }
 )
+
+# Capability env widens the strict global allowlist only for a department whose
+# human-owned charter declares the capability. XDG_RUNTIME_DIR exposes the user
+# session bus, so it must never become ambient for every confined department.
+CAPABILITY_ENV = {
+    "systemd_user_probe": ("XDG_RUNTIME_DIR",),
+}
 
 # Retained only for assert_no_ambient_credentials' best-effort leak naming.
 _CRED_SUBSTRINGS = ("token", "secret", "key", "password", "credential", "passwd",
@@ -51,20 +50,45 @@ def _is_cred(name):
     )
 
 
-def department_env(base):
+def _capability_env_names(capabilities):
+    if isinstance(capabilities, (str, bytes)):
+        raise ValueError("capabilities must be a sequence of capability names")
+    try:
+        declared = tuple(capabilities)
+    except TypeError as exc:
+        raise ValueError("capabilities must be a sequence of capability names") from exc
+    invalid = [name for name in declared if not isinstance(name, str)]
+    if invalid:
+        raise ValueError(
+            "capability names must be strings: "
+            + ",".join(repr(name) for name in invalid)
+        )
+    unknown = sorted({name for name in declared if name not in CAPABILITY_ENV})
+    if unknown:
+        raise ValueError("unknown department capability: " + ",".join(unknown))
+    return frozenset(
+        env_name
+        for capability in declared
+        for env_name in CAPABILITY_ENV[capability]
+    )
+
+
+def department_env(base, capabilities=()):
     """Return the env a department may run with: an allowlist only, plus the
     kernel markers. Everything not explicitly allowed (credentials or not) is
     dropped, so a credential named in any scheme cannot leak in."""
-    clean = {k: v for k, v in base.items() if k in _ALLOWED_ENV}
+    allowed = _ALLOWED_ENV | _capability_env_names(capabilities)
+    clean = {k: v for k, v in base.items() if k in allowed}
     clean["OE_KERNEL_ONLY"] = "1"
     clean["PLACEHOLDER_MODE"] = "1"
     return clean
 
 
-def assert_no_ambient_credentials(env):
+def assert_no_ambient_credentials(env, capabilities=()):
     """Fail closed if anything outside the allowlist is present (a stricter check
     than name-matching); names matching known credential shapes are reported."""
-    disallowed = [k for k in env if k not in _ALLOWED_ENV]
+    allowed = _ALLOWED_ENV | _capability_env_names(capabilities)
+    disallowed = [k for k in env if k not in allowed]
     if disallowed:
         creds = sorted(k for k in disallowed if _is_cred(k)) or sorted(disallowed)
         raise AmbientCredentialError(

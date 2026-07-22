@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,9 @@ except ImportError:  # direct script execution
 
 
 Probe = Callable[[dict[str, Any]], bool | tuple[bool, str]]
+_RECEIPT_AGE_LIMIT = re.compile(
+    r"^receipt age <= (?P<minutes>\d+(?:\.\d+)?) minutes$"
+)
 
 
 def _last_commands(state_dir: Path, fingerprint: str, playbook_id: str) -> list[str]:
@@ -47,10 +51,33 @@ def _systemctl_inactive(unit: str) -> tuple[bool, str]:
     return not active, f"systemctl is-active {unit}: {completed.stdout.strip() or completed.returncode}"
 
 
+def _verification_evidence(incident: dict[str, Any]) -> dict[str, Any]:
+    """Normalize real list evidence and the legacy structured evidence shape."""
+    evidence = incident.get("evidence")
+    if isinstance(evidence, dict):
+        return evidence
+    if not isinstance(evidence, list):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    entries = [item for item in evidence if isinstance(item, str) and item]
+    for entry in reversed(entries):
+        if entry.startswith("systemd://") and "unit" not in normalized:
+            unit = entry.removeprefix("systemd://")
+            if unit:
+                normalized["unit"] = unit
+        elif "://" not in entry and "path" not in normalized:
+            normalized["path"] = entry
+
+    match = _RECEIPT_AGE_LIMIT.fullmatch(str(incident.get("setpoint", "")))
+    if match:
+        normalized["max_age_seconds"] = float(match.group("minutes")) * 60
+    return normalized
+
+
 def default_condition_persists(incident: dict[str, Any]) -> tuple[bool, str]:
     """Repeat only fixed read-only checks described by incident evidence."""
-    evidence = incident.get("evidence")
-    evidence = evidence if isinstance(evidence, dict) else {}
+    evidence = _verification_evidence(incident)
     failure_class = incident.get("failure_class")
     probe_kind = evidence.get("probe") or evidence.get("check")
 

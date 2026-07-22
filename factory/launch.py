@@ -29,10 +29,36 @@ def _capabilities():
     return module
 
 
-def build_env(base=None):
+def _charter_loader():
+    spec = importlib.util.spec_from_file_location(
+        "charter_loader", ROOT / "factory" / "charter_loader.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _department_capabilities(department, root=None):
+    repo_root = Path(root) if root is not None else ROOT
+    charter_path = repo_root / "departments" / department / "charter.yaml"
+    loader = _charter_loader()
+    charter = loader.load_charter(charter_path, expect_department=department)
+    declared = charter.get("capabilities", ())
+    if not isinstance(declared, (list, tuple)):
+        raise loader.CharterError(
+            f"charter capabilities must be a list: {charter_path}")
+    return tuple(declared)
+
+
+def build_env(base=None, *, department=None, root=None):
+    capabilities = (
+        _department_capabilities(department, root=root)
+        if department is not None
+        else ()
+    )
     caps = _capabilities()
-    env = caps.department_env(dict(base if base is not None else os.environ))
-    caps.assert_no_ambient_credentials(env)
+    env = caps.department_env(
+        dict(base if base is not None else os.environ), capabilities=capabilities)
+    caps.assert_no_ambient_credentials(env, capabilities=capabilities)
     return env
 
 
@@ -47,7 +73,7 @@ def main() -> int:
     if not command:
         print("no command given", file=sys.stderr)
         return 2
-    env = build_env()
+    env = build_env(department=args.department)
     env["OE_DEPARTMENT"] = args.department
     return subprocess.run(command, env=env).returncode
 

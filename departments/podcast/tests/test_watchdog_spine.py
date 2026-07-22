@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,9 @@ from departments.podcast.runtime import compare_charter
 from departments.podcast.runtime import fingerprint_dedup
 from departments.podcast.runtime import record
 from departments.podcast.runtime import sense_estate
+
+
+POISONED_FIXTURES = Path(__file__).with_name("fixtures") / "poisoned"
 
 
 def _estate(tmp_path, timers):
@@ -110,7 +115,50 @@ def test_missing_fake_provider_output_emits_unknown_and_drop_fails_coverage(tmp_
         sense_estate.assert_inventory_coverage(estate, observations[:-1])
 
 
+def test_empty_estate_inventory_exits_nonzero_with_clear_error(
+    tmp_path, monkeypatch, capsys
+):
+    estate_path = tmp_path / "estate.json"
+    estate_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sense_estate.py",
+            "--estate",
+            str(estate_path),
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--shadow",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        sense_estate.main()
+
+    assert raised.value.code != 0
+    assert "estate inventory contains no units" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("content", "error_text"),
+    [(None, "unreadable"), ("{", "malformed")],
+)
+def test_unreadable_and_malformed_estate_inventory_fail_closed(
+    tmp_path, content, error_text
+):
+    estate_path = tmp_path / "estate.json"
+    if content is not None:
+        estate_path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error_text):
+        sense_estate.load_estate(estate_path)
+
+
 def test_stale_daily_receipt_produces_fail_observation(tmp_path):
+    poisoned = json.loads(
+        (POISONED_FIXTURES / "stale_receipt.json").read_text(encoding="utf-8")
+    )
     estate = _estate(
         tmp_path,
         [
@@ -124,8 +172,8 @@ def test_stale_daily_receipt_produces_fail_observation(tmp_path):
     )
     receipt = tmp_path / "receipts" / "health-2026-07-22.md"
     receipt.write_text("{}\n", encoding="utf-8")
-    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
-    stale = now - timedelta(hours=27)
+    now = datetime.fromisoformat(poisoned["now"])
+    stale = datetime.fromisoformat(poisoned["receipt"]["ts"])
     os.utime(receipt, (stale.timestamp(), stale.timestamp()))
 
     observations = sense_estate.collect_observations(
@@ -138,6 +186,89 @@ def test_stale_daily_receipt_produces_fail_observation(tmp_path):
     assert observations[0]["sensor"] == "receipt"
     assert observations[0]["status"] == "fail"
     assert observations[0]["metrics"]["receipt_age_minutes"] == 1620.0
+
+
+def test_log_read_error_is_unknown_with_exception_detail(tmp_path, monkeypatch):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-prep-sweep",
+                "expected_cadence": "15min",
+                "stale_after_minutes": 30,
+                "log_glob": "prep-sweep-*.log",
+            }
+        ],
+    )
+    log_path = tmp_path / "logs" / "prep-sweep-current.log"
+    log_path.write_text("healthy\n", encoding="utf-8")
+    real_open = Path.open
+
+    def permission_lost(path, *args, **kwargs):
+        if path == log_path:
+            raise PermissionError("fixture permission loss")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", permission_lost)
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["sensor"] == "log"
+    assert observation["status"] == "unknown"
+    assert "fixture permission loss" in observation["detail"]
+    assert observation["metrics"]["log_read_errors"] == 1
+
+
+def test_hollow_receipt_fails_as_receipt_hollow(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [
+            {
+                "name": "podcast-loop-health",
+                "expected_cadence": "daily",
+                "stale_after_minutes": 1560,
+                "receipt_glob": "health-*.md",
+            }
+        ],
+    )
+    receipt = tmp_path / "receipts" / "health-2026-07-22.md"
+    receipt.write_text(" \n\t", encoding="utf-8")
+
+    observation = sense_estate.collect_observations(
+        estate, systemctl_runner=_healthy_systemctl
+    )[0]
+    candidate = compare_charter.compare_observations([observation], _charter())[0]
+
+    # forged_receipt.json targets kernel-signed receipts and is out of scope for
+    # these Markdown loop-receipt content checks.
+    assert observation["status"] == "fail"
+    assert observation["metrics"]["failure_hint"] == "receipt_hollow"
+    assert "receipt_hollow" in observation["detail"]
+    assert candidate["failure_class"] == "receipt_hollow"
+    assert candidate["severity"] == "high"
+
+
+def test_shadow_channel_is_unknown_until_reachability_is_checked(tmp_path):
+    estate = {
+        "systemd_user_timers": [],
+        "channels": [
+            {
+                "name": "telegram-escalation",
+                "via": "telegram",
+                "shadow_check": "config_presence",
+            }
+        ],
+        "vps": {"host": "test.invalid", "services": []},
+    }
+
+    observation = sense_estate.collect_observations(
+        estate, estate_path=tmp_path / "estate.json", shadow=True
+    )[0]
+
+    assert observation["status"] == "unknown"
+    assert observation["detail"] == "config present; reachability unchecked in shadow"
+    assert observation["metrics"]["reachability_checked"] is False
 
 
 def test_receipt_glob_matches_short_loop_receipt_name(tmp_path):
@@ -357,6 +488,86 @@ def test_compare_uses_daily_limit_from_charter_not_inventory_value():
     assert len(candidates) == 1
     assert candidates[0]["failure_class"] == "receipt_stale"
     assert candidates[0]["setpoint"] == "receipt age <= 1500 minutes"
+
+
+def test_missing_observations_emits_evidence_missing_candidate(tmp_path):
+    missing_path = tmp_path / "observations.jsonl"
+
+    candidates = compare_charter.run_compare(tmp_path)
+
+    assert len(candidates) == 1
+    assert candidates[0]["failure_class"] == "evidence_missing"
+    assert candidates[0]["severity"] == "high"
+    assert candidates[0]["evidence"] == [str(missing_path)]
+    assert "missing" in candidates[0]["observed"]
+
+
+def test_unreadable_observations_emits_evidence_missing_candidate(
+    tmp_path, monkeypatch
+):
+    observations_path = tmp_path / "observations.jsonl"
+    observations_path.write_text('{"sensor":"timer"}\n', encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def permission_lost(path, *args, **kwargs):
+        if path == observations_path:
+            raise PermissionError("fixture observations permission loss")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", permission_lost)
+    candidates = compare_charter.run_compare(tmp_path)
+
+    assert candidates[0]["failure_class"] == "evidence_missing"
+    assert candidates[0]["severity"] == "high"
+    assert candidates[0]["evidence"] == [str(observations_path)]
+    assert "fixture observations permission loss" in candidates[0]["observed"]
+
+
+@pytest.mark.parametrize(
+    ("sensor", "status", "failure_class", "severity"),
+    [
+        ("pipeline", "fail", "pipeline_below_target", "high"),
+        ("pipeline", "warn", "pipeline_warn", "med"),
+        ("pipeline", "unknown", "pipeline_unknown", "med"),
+        ("publishday", "fail", "publish_missing", "high"),
+        ("publishday", "unknown", "publish_unknown", "med"),
+        ("manifest", "fail", "manifest_incomplete", "high"),
+        ("manifest", "warn", "manifest_gap", "med"),
+        ("manifest", "unknown", "manifest_unknown", "med"),
+    ],
+)
+def test_independent_sensor_transitions_are_enumerated(
+    sensor, status, failure_class, severity
+):
+    observation = {
+        "ts": "2026-07-22T12:00:00+00:00",
+        "sensor": sensor,
+        "subject": f"fixture-{sensor}",
+        "status": status,
+        "evidence": "fixture://sensor",
+        "detail": "fixture",
+        "metrics": {},
+    }
+
+    candidate = compare_charter.compare_observations([observation], _charter())[0]
+
+    assert candidate["failure_class"] == failure_class
+    assert candidate["severity"] == severity
+
+
+@pytest.mark.parametrize("sensor", ["pipeline", "publishday", "manifest"])
+def test_independent_sensor_ok_has_no_candidate(sensor):
+    observation = {
+        "ts": "2026-07-22T12:00:00+00:00",
+        "sensor": sensor,
+        "subject": f"fixture-{sensor}",
+        "status": "ok",
+        "evidence": "fixture://sensor",
+        "detail": "fixture",
+        "metrics": {},
+    }
+
+    assert compare_charter.compare_observations([observation], _charter()) == []
 
 
 def test_same_open_fingerprint_twice_is_one_incident_and_one_outbox_row(tmp_path):
