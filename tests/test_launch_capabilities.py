@@ -123,6 +123,49 @@ def test_capability_launch_allows_department_runtime_python_and_grants_env(
     assert calls[0][1]["OE_DEPARTMENT"] == department
 
 
+@pytest.mark.parametrize("executable", ["python3", sys.executable])
+def test_capability_launch_accepts_exact_python_interpreters(tmp_path, executable):
+    department = "confined"
+    _write_charter(tmp_path, department, capabilities_marker="declared")
+    runtime = tmp_path / "departments" / department / "runtime"
+    runtime.mkdir()
+    script = runtime / "sensor.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+
+    result = LAUNCH.launch_command(
+        department,
+        [executable, str(script)],
+        base={"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1000"},
+        root=tmp_path,
+        runner=lambda command, env: SimpleNamespace(returncode=0),
+    )
+
+    assert result == 0
+
+
+def test_capability_launch_refuses_python3_prefixed_non_interpreter(tmp_path):
+    department = "confined"
+    _write_charter(tmp_path, department, capabilities_marker="declared")
+    runtime = tmp_path / "departments" / department / "runtime"
+    runtime.mkdir()
+    script = runtime / "sensor.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    fake_interpreter = tmp_path / "python3-html2text"
+    fake_interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_interpreter.chmod(0o755)
+
+    with pytest.raises(LAUNCH.LaunchRefused, match="capability-bearing"):
+        LAUNCH.launch_command(
+            department,
+            [str(fake_interpreter), str(script)],
+            base={"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1000"},
+            root=tmp_path,
+            runner=lambda *args, **kwargs: pytest.fail(
+                "a refused command must not execute"
+            ),
+        )
+
+
 @pytest.mark.parametrize("command_kind", ["out-of-tree", "non-python"])
 def test_capability_launch_refuses_untrusted_command(tmp_path, command_kind):
     department = "confined"

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -78,7 +79,8 @@ def _assert_capability_command(
     repo_root = Path(root) if root is not None else ROOT
     executable = Path(command[0])
     python_allowed = (
-        executable.name.startswith("python3")
+        executable.name == "python3"
+        or re.fullmatch(r"python3\.\d+", executable.name) is not None
         or executable.resolve() == Path(sys.executable).resolve()
     )
     if not python_allowed:

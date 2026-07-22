@@ -42,11 +42,11 @@ def _outbox_warning(path: Path, line_number: int, detail: str) -> None:
 
 def _load_outbox_markers(
     path: Path,
-) -> dict[tuple[str, str, str], str | None]:
+) -> dict[tuple[str, str], str | None]:
     """Return durable escalation markers already appended to the outbox."""
     if not path.exists():
         return {}
-    markers: dict[tuple[str, str, str], str | None] = {}
+    markers: dict[tuple[str, str], str | None] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -101,7 +101,7 @@ def _load_outbox_markers(
         if not structurally_valid:
             _outbox_warning(path, line_number, "packet does not match podcast escalation schema")
             continue
-        markers[(fingerprint, marker, issue)] = timestamp
+        markers[(fingerprint, marker)] = timestamp
     return markers
 
 
@@ -147,7 +147,7 @@ def escalate_new_incidents(
                 incident.get("one_question", "What owner decision is required?")
             )
             issue = f"{incident.get('failure_class')}: {question}"
-            durable_key = (fingerprint, marker, issue)
+            durable_key = (fingerprint, marker)
 
             if durable_key in durable_markers:
                 if not incident.get(escalated_field):

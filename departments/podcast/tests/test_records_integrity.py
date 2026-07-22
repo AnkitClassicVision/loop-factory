@@ -235,6 +235,40 @@ def test_outbox_append_survives_state_write_crash_without_duplicate(
     assert repaired[key]["escalated"] is True
 
 
+def test_outbox_replay_dedupe_ignores_mutated_incident_description(
+    tmp_path, monkeypatch
+):
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    incidents_path = tmp_path / "incidents.json"
+    outbox_path = tmp_path / "decisions_outbox.jsonl"
+    record.atomic_write_json(incidents_path, incidents)
+    real_atomic_write = record.atomic_write_json
+
+    def fail_incident_update(path, value):
+        if Path(path) == incidents_path:
+            raise OSError("simulated crash after outbox append")
+        return real_atomic_write(path, value)
+
+    monkeypatch.setattr(record, "atomic_write_json", fail_incident_update)
+    with pytest.raises(OSError, match="simulated crash"):
+        escalate_outbox.escalate_new_incidents(incidents_path, outbox_path)
+
+    persisted = json.loads(incidents_path.read_text(encoding="utf-8"))
+    persisted[key]["failure_class"] = "receipt_unknown"
+    persisted[key]["one_question"] = "Why did the failure class change?"
+    real_atomic_write(incidents_path, persisted)
+    monkeypatch.setattr(record, "atomic_write_json", real_atomic_write)
+
+    retry = escalate_outbox.escalate_new_incidents(incidents_path, outbox_path)
+
+    assert retry["outbox_rows"] == 0
+    assert len(_jsonl_rows(outbox_path)) == 1
+    repaired = json.loads(incidents_path.read_text(encoding="utf-8"))
+    assert repaired[key]["escalated"] is True
+    assert repaired[key]["escalated_at"] == _jsonl_rows(outbox_path)[0]["ts"]
+
+
 def test_forged_foreign_outbox_marker_does_not_suppress_escalation(
     tmp_path, capsys
 ):
