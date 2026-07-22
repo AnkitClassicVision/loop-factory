@@ -1,0 +1,19 @@
+{
+  "run_name": "podcast-loop-hardening",
+  "workdir": "/home/ankit114/ringer-work/podcast-loop-hardening-r5",
+  "max_parallel": 1,
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "tasks": [
+    {
+      "key": "auto-resolve",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "spec": "You are a fix worker on the loop-factory repo. Your current working directory IS a git worktree of /mnt/d_drive/repos/loop-factory - edit files here directly. Do NOT git commit, branch, or push; leave changes uncommitted. Do not load skills or call MCP/Apps. No network access. Python stdlib only.\n\nCONTEXT: the podcast watchdog's incidents (state/incidents.json, dict keyed by 12-char fingerprint of sensor|subject) currently never leave state 'open': after a noisy shadow run, 16 threads stay open while only 7 candidates are current. The charter's escalate-once rule depends on incidents reaching 'resolved' so that RECURRENCE can be detected (resolved fingerprint recurring -> department_defect). Missing piece: auto-resolve on sustained healthy observation.\n\nOWNERSHIP: you own ONLY departments/podcast/runtime/fingerprint_dedup.py and departments/podcast/tests/test_watchdog_spine.py. Everything else is frozen; the module already receives the full observation list (or can load observations.jsonl from --state-dir) plus candidates.\n\nFIX (in fingerprint_dedup.py):\n1. Each cycle, for every OPEN or DEPARTMENT_DEFECT incident whose subject+sensor has a current observation with status 'ok' AND no candidate this cycle: increment an incident field consecutive_healthy (default 0). Any cycle where the subject has a candidate, a non-ok observation, or no observation at all resets consecutive_healthy to 0.\n2. When consecutive_healthy reaches 3: set state='resolved', add resolved_at (ISO from the newest observation ts, never wall-clock-free invention), resolution='observed_healthy_3_cycles', keep escalated flag and full history fields intact. A resolved incident later recurring must still follow the existing rule (reopen as department_defect).\n3. Idempotent and atomic as before; no changes to fingerprint computation, migration, escalated semantics, or any other module.\n4. Tests (test_watchdog_spine.py): add (a) three consecutive healthy cycles resolve an open incident and preserve escalated; (b) a candidate on cycle 2 resets the counter (still open after two more healthy cycles, resolves on the third); (c) resolved-then-recurring still becomes department_defect; (d) subject with NO observation does not accrue healthy cycles. Keep all existing tests passing.\n\nHOW TO RUN: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest departments/podcast/tests/ -q\n\nOUTPUT CONTRACT: leave changes uncommitted; write ./fix-summary.md ('# Fix Summary', '## Summary', '## Files Changed', '## Verification', '## Assumptions', <700 words).",
+      "check": "python3 '/home/ankit114/repos/ringer/templates/fix-swarm/checks/fix-swarm.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest departments/podcast/tests/ -q' --patch '/home/ankit114/ringer-work/podcast-loop-hardening-r5/auto-resolve.patch' --summary fix-summary.md --exported-summary '/home/ankit114/ringer-work/podcast-loop-hardening-r5/auto-resolve.summary.md' --owned-files 'departments/podcast/runtime/fingerprint_dedup.py,departments/podcast/tests/test_watchdog_spine.py'",
+      "expect_files": [],
+      "verified": "full department pytest passed including resolve-after-3-healthy, counter-reset, recurrence-after-resolve, and no-observation tests"
+    }
+  ]
+}

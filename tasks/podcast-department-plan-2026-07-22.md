@@ -57,6 +57,20 @@ manifest; one `run_name` per job; every check executes and prints WHY it
 failed; review-swarm before fix-swarm; read-only lanes on worktrees; no worker
 gets send/publish tools; coordinator spot-checks ≥1 passing artifact per run.
 
+## Shadow-week tuning backlog (observed during A3, non-blocking)
+
+- Orphaned-incident rule: when a subject/sensor pair stops being sensed (config
+  change), its open thread never accrues healthy cycles — add auto-resolve as
+  'subject_retired'. (One legacy thread manually retired 2026-07-22.)
+- log_error evidence should cite the NEWEST matching log, not the glob's first.
+- pipeline_sensor qualifying HubSpot statuses are hardcoded placeholders —
+  move to config and map to real podcast_status values when the fetch seam is
+  wired.
+- Ratify provisional setpoints + manifest completeness target from a week of
+  shadow data (charter says TBD_MEASURE_IN_SHADOW).
+- OB writing-guide drift: local validator (phone number) is ahead of the OB
+  canonical XML — run sync_writing_guide.py --push in hubspot-daily-2.
+
 ## Out of scope (explicitly)
 
 - Enabling the department's systemd timer (F5) — owner step after shadow burn-in.
