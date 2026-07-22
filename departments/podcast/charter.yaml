@@ -1,0 +1,168 @@
+# podcast department charter — v1.0 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-07-22, Claude Code).
+department: podcast
+version: v1.0
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-07-22"
+  surface: claude-code-askuserquestion-readback-r3
+owner: ankit
+mission: >-
+  Govern the existing OBE podcast loop estate (7 governed loops, support lanes,
+  VPS live layer) as its watchdog/manager: sense every loop, send lane, publish
+  outcome, guest manifest, and the alert channel itself; auto-heal known failure
+  patterns (logged); escalate unknown ones exactly once with root-cause
+  follow-through. Outcomes owed over 90 days (co-equal): episodes ship on <=1
+  hour of owner time; zero silent failures; recording pipeline >=6 guests; every
+  guest/episode has a complete info manifest + promotional manifest tracked in
+  HubSpot as the central source of truth.
+
+# Capability declarations (owner-authored; consumed by factory/launch.py).
+# Codex pre-merge review 2026-07-22 finding: XDG_RUNTIME_DIR must not be in the
+# GLOBAL kernel allowlist — it exposes the user session bus to every confined
+# department. It is now granted per-department, only when the charter declares
+# the capability below. For podcast this implements the locked interview's
+# watchdog sensing scope (Q3/C3: timer/receipt/log liveness via systemd user
+# units). Mutating unit actions remain governed by the heal playbook allowlist,
+# shadow mode, and the systemd unit sandbox.
+capabilities:
+  - systemd_user_probe
+
+# The DEPARTMENT starts in shadow (factory hard rule — sensing runs, escalations
+# land in the local outbox, heals are propose-only, delivered_count==0).
+# NOTE: the owner's autosend-NOW decision applies to the PODCAST ESTATE's own
+# gateway (implemented in the podcast repo per the hardening plan, owner
+# authorization recorded in the interview); it is not a promotion of THIS
+# department, which never sends outreach at any autonomy level.
+autonomy_state: shadow
+
+setpoints:
+  operational:
+    metric: escalation_pings_per_day        # ceiling, not quota (Q4)
+    target: 5                               # above this, batch into digest
+    sense_cycle_minutes: 30
+  outcome:
+    metric: silent_failure_detection_latency_minutes
+    target: 30                              # 15-min loops; 26h for daily loops
+    provisional: true                       # ratify after one shadow week
+  outcome_additional:
+    - {metric: detection_latency_daily_loops_hours, target: 26, provisional: true}
+    - {metric: pipeline_guests, target: 6, sensor: independent_calendar_hubspot_join}
+    - {metric: publish_day_verified_by_et, target: "10:30"}
+    - {metric: repeat_escalations_of_resolved_fingerprint, target: 0}   # C12 priority
+    - {metric: founder_minutes_per_episode, target: TBD_MEASURE_IN_SHADOW}
+    - {metric: manifest_completeness_pct, target: TBD_MEASURE_IN_SHADOW}
+
+thresholds:
+  weekly_touch_ceiling: 300
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 50
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+budget:
+  engine_policy: subscription_oauth_only    # Q6: "$0 API"
+  api_spend_rule: forbidden_escalate_instead
+  weekly_ceilings:
+    model_calls: 900
+    dollars: 0                              # subscription-only; any API spend fails closed
+    worker_minutes: 1680                    # 4 h/day wall-clock ceiling
+  estate_send_caps:                         # existing caps adopted as send budget (Q6)
+    outbound_per_day: 12
+    new_contacts_per_day: 5
+    per_contact_cadence_floor_days: 4
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+    - escalation_dedup_policy               # C12: one incident = one thread, forever
+    - vps_deploy_guard                      # C11: no master redeploy while v2 unmerged
+
+never:  # department hard floors (Q5 amended at readback; human-only, forever)
+  - department_never_sends_outreach_or_publishes__outbound_is_escalations_only
+  - no_live_hand_patching_of_vps_or_estate_runtime__heals_are_known_playbooks_logged
+  - no_vps_redeploy_from_master_while_v2_branch_unmerged
+  - never_suppress_downgrade_or_auto_ack_a_red_signal
+  - escalation_ttl_expiry_refiles_louder_never_auto_approves
+  - governance_files_human_only
+  - phi_out_of_domain__its_appearance_in_inputs_is_itself_an_escalation
+
+kill_if:  # backstops (Q7) — kill = non-restartable without a new human charter decision
+  - reputation_damaging_autosend: kill that send class back to draft+approve; owner re-promotion required
+  - watchdog_false_green: independent sensor contradicts a green report; watchdog killed + re-authored
+  - plate_load_net_positive_2_weeks: department adds more owner work than it removes
+  - floor_breach_on_external_action: kill the breaching class
+
+escalation:
+  default: fully_automated_with_escalation
+  dedup: incident_fingerprint_one_thread    # C12 part 1
+  recurrence_rule: every_escalation_spawns_root_cause_item__repeat_of_resolved_fingerprint_is_department_defect  # C12 part 2
+  channels: [telegram_ping, linear_card]
+  no_reply_ttl_hours: 24
+  no_reply_action: refile_louder_same_thread_never_auto_approve
+  human_gates:
+    - external_send        # for the department itself; estate autosend is estate-side
+    - crm_write
+    - publish
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+
+estate_decisions:  # owner-authorized changes to the PODCAST ESTATE (provenance: intent interview 2026-07-22)
+  autosend_promotion: >-
+    Outreach/guest email send classes promoted to autosend behind the full QA
+    gateway chain (fact_pack -> deterministic gate -> QA -> ledger -> idempotency
+    -> receipt -> reconcile); the Linear human-APPROVE step is removed for
+    QA-passed sends. Send caps and kill switch stay. ("full auto with sends now
+    ... qa gates beof autosends")
+  hubspot_source_of_truth: >-
+    Guest/episode manifest data, requirement completeness, statuses, and notes
+    tracked in HubSpot via scoped podcast_* properties/notes; sales-owned fields
+    out of scope. VPS remains media/pipeline runtime truth.
+  manifest_goal: >-
+    Every guest/episode gets a complete information manifest (headshot, links,
+    bio, ...) AND a promotional manifest, gathered automatically with chasing.
+    At publish deadline, missing items use deterministic fallback assets; the
+    episode and its promo always ship on schedule when QA passes.
+  writing_style_gate: >-
+    All estate-drafted content is governed by the OB_mybcat writing rules
+    (MyBCAT Writing Style Graph v1; WRITING_GUIDE_CANONICAL rev 2; tropes.fyi
+    anti-AI-writing decision 2026-07-15). Because sends are autosend, the
+    deterministic pre-send gate includes a style validator (zero em dashes,
+    banned-phrase scan, signature block, one CTA, length by warmth) and the
+    cross-model QA judge is instructed from the Style Graph. A style-violating
+    poisoned draft must BLOCK in negative tests. Agents query OB_mybcat for the
+    newest versions at draft time. (Owner addendum 2026-07-22.)
+
+seams:  # C17 — pluggable, wired only by owner-level estate decisions
+  sales_handoff_packets: future_sales_department_consumer
+  future_departments: estate_registry_event_required
+
+funnels:
+  entries:
+    - SG-WATCHDOG
+    - SG-PIPELINE
+    - SG-PUBLISHDAY
+    - SG-MANIFEST
+    - SG-HEAL
+
+memory:
+  local: departments/podcast/state
+  backends: []            # HubSpot is the ESTATE's business truth, not a department memory backend
+  never_recorded: [credentials, phi, raw_message_bodies]

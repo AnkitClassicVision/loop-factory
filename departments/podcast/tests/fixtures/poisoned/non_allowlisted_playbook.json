@@ -1,0 +1,10 @@
+{
+  "playbook_allowlist": [
+    "playbook-abc123",
+    "playbook-def456"
+  ],
+  "heal_request": {
+    "playbook": "playbook-nonexistent-xyz",
+    "fingerprint": "fingerprint-xyz789"
+  }
+}
