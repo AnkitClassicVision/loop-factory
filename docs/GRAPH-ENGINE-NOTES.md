@@ -1,9 +1,9 @@
 # Relationship to graph_agent (the knowledge-graph engine)
 
-`/mnt/d_drive/repos/graph_agent` is the deeper, SQLite-backed graph engine this
-factory's map process descends from (concept + procedural maps, typed
-nodes/edges, governance fields, run cards). A read-only scout pass (2026-07-21)
-established the division of labor:
+`graph_agent` (a separate private repo) is the deeper, SQLite-backed graph
+engine this factory's map process descends from (concept + procedural maps,
+typed nodes/edges, governance fields, run cards). A read-only scout pass
+(2026-07-21) established the division of labor:
 
 ## What graph_agent already does well (adopt, don't rebuild)
 
@@ -33,7 +33,7 @@ loop-factory v0.1 keeps its maps as JSON (subgraphs.json) for zero-dependency
 portability. If/when a department needs the richer engine (typed edges,
 refuse-reachability, run-card telemetry), adopt graph_agent as the map store
 and keep loop-factory's interview, traceability, and release layers on top.
-Before reuse, strip graph_agent's owner/domain coupling (MyBCAT guideline
-blocks in its AGENTS.md/GEMINI.md, named-owner references, healthcare demo
+Before reuse, strip graph_agent's owner/domain coupling (org-specific
+guideline blocks in its AGENTS.md/GEMINI.md, named-owner references, demo
 strings) and note two documented-but-missing features there: the `rebuild`
 verb and CONTROL_STATE.json for non-dual maps.
