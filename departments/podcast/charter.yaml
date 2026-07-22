@@ -21,6 +21,17 @@ mission: >-
   guest/episode has a complete info manifest + promotional manifest tracked in
   HubSpot as the central source of truth.
 
+# Capability declarations (owner-authored; consumed by factory/launch.py).
+# Codex pre-merge review 2026-07-22 finding: XDG_RUNTIME_DIR must not be in the
+# GLOBAL kernel allowlist — it exposes the user session bus to every confined
+# department. It is now granted per-department, only when the charter declares
+# the capability below. For podcast this implements the locked interview's
+# watchdog sensing scope (Q3/C3: timer/receipt/log liveness via systemd user
+# units). Mutating unit actions remain governed by the heal playbook allowlist,
+# shadow mode, and the systemd unit sandbox.
+capabilities:
+  - systemd_user_probe
+
 # The DEPARTMENT starts in shadow (factory hard rule — sensing runs, escalations
 # land in the local outbox, heals are propose-only, delivered_count==0).
 # NOTE: the owner's autosend-NOW decision applies to the PODCAST ESTATE's own
