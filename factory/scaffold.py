@@ -52,10 +52,19 @@ thresholds:
   budget_near_frac: 0.8
 
 budget:
+  engine_policy: subscription_oauth_only   # owner decision 2026-07-23: OAuth/subscription
+  api_spend_rule: forbidden_escalate_instead  # plan lanes only; API spend escalates
   weekly_ceilings:
     model_calls: 900
-    dollars: 40
+    dollars: 0
     worker_minutes: 1200
+
+execution:  # owner decision (Ankit, 2026-07-23) — factory-wide defaults
+  headless: true                 # steps never depend on an interactive session
+  step_receipts: required        # every step proves completion with an executed
+                                 # artifact/output/receipt BEFORE the next step;
+                                 # missing receipt => manager + heal ladder fix,
+                                 # never advancement
 
 # Safety floors inherited from the factory standard; MUST NOT be weakened by a
 # heal. Fill department-specific funnels/subgraphs during F2 after intent lock.

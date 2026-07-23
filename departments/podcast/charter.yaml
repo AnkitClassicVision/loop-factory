@@ -64,8 +64,16 @@ thresholds:
   backlog_aging_min: 1
   budget_near_frac: 0.8
 
+execution:  # owner addendum (Ankit, 2026-07-23): factory-wide process discipline
+  headless: true            # every process step runs headless (Claude/Codex/Ringer),
+                            # never dependent on an interactive operator session
+  step_receipts: required   # every step proves completion with an executed
+                            # artifact/output/receipt BEFORE the next step runs;
+                            # a missing/failed receipt summons the manager (heal
+                            # ladder or human-in-the-loop) — never advancement
+
 budget:
-  engine_policy: subscription_oauth_only    # Q6: "$0 API"
+  engine_policy: subscription_oauth_only    # Q6: "$0 API"; reaffirmed factory-wide 2026-07-23
   api_spend_rule: forbidden_escalate_instead
   weekly_ceilings:
     model_calls: 900
