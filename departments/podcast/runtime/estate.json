@@ -11,7 +11,8 @@
     {"name": "podcast-context-watch", "expected_cadence": "hourly", "stale_after_minutes": 120, "evidence": "timer_only"},
     {"name": "obe-scheduled-intent-sweeper", "expected_cadence": "daily", "stale_after_minutes": 1560, "evidence": "timer_only"},
     {"name": "obe-draft-bridge", "expected_cadence": "30min", "ledger_path": "send-approval-bridge-ledger.jsonl"},
-    {"name": "obe-approved-send-executor", "expected_cadence": "10min", "ledger_path": "send-approval-bridge-ledger.jsonl"}
+    {"name": "obe-approved-send-executor", "expected_cadence": "10min", "ledger_path": "send-approval-bridge-ledger.jsonl"},
+    {"name": "obe-context-sync", "expected_cadence": "30min", "stale_after_minutes": 60, "ledger_path": "inbound-context-sync-receipt.jsonl"}
   ],
   "receipts_dir": "/mnt/d_drive/repos/podcast/episodes/_loop_receipts",
   "logs_dir": "/mnt/d_drive/repos/podcast/logs",
