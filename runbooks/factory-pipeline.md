@@ -37,3 +37,17 @@ new factory mechanism starts hand-executed and earns automation with evidence.
   pipeline) are ALWAYS human — never editable by a department, manager, or heal.
 - Deny-by-default: a missing/hollow/stale/forged receipt BLOCKS, never allows.
 - No secrets, PHI, or raw message bodies in departments, records, or memory.
+- **Receipt-gated steps (owner decision, Ankit 2026-07-23):** EVERY step of
+  every process — factory phases F0–F6 included — proves completion with an
+  executed artifact, output, or receipt before the next step may run. A step
+  without its receipt is NOT done, regardless of what any log or model claims.
+  A missing or failed receipt summons the MANAGER: the department manager (or
+  estate watchdog above it) detects the gap, drives the heal ladder to remediate
+  or escalates to the human-in-the-loop outbox — the pipeline never advances
+  past the gap and never silently skips it.
+- **Headless-only execution (owner decision, Ankit 2026-07-23):** processes run
+  headless under Claude, Codex, or Ringer workers — never dependent on an
+  interactive operator session to complete a step. When Ringer executes, ONLY
+  OAuth/subscription-plan engine lanes are permitted (Codex OAuth, GLM coding
+  plan, Claude subscription); per-token API lanes are forbidden — a lane that
+  cannot run on a subscription plan escalates instead of spending.

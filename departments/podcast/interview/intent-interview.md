@@ -286,3 +286,28 @@ QA judge is instructed from the Style Graph nodes (hook framework, lift-and-swap
 coffee-shop test). A style-violating poisoned draft joins the negative-test
 suite and must BLOCK. At draft time, agents query OB_mybcat for the newest
 versions of these artifacts (newer captures supersede).
+
+---
+
+## Post-lock owner addendum — receipt-gated steps + headless/subscription-only (2026-07-23)
+
+**Owner instruction (VERBATIM): "can we updat ehte loop-factory process.  every step needs verificaion with an artifact, output, or receipt of somekind no matter what to verify its done before moving forward.  if not then the manger n eeds to come and fix it.  this processes are run headless mode either claud eo rcodex or ringer etc if ringer then only use ouath plans"**
+
+Interviewer reading (owner charter addendum, human-made, provenance: Ankit,
+2026-07-23, Claude Code):
+1. RECEIPT-GATED STEPS: every step of every factory/department process proves
+   completion with an executed artifact, output, or receipt before the next
+   step may run — universally, "no matter what". A step without its receipt is
+   not done regardless of any claim.
+2. MANAGER REMEDIATION: a missing or failed step receipt summons the MANAGER —
+   the department manager / estate watchdog detects the gap and fixes it via
+   the heal ladder or escalates to the human-in-the-loop outbox; the process
+   never advances past the gap.
+3. HEADLESS EXECUTION: processes run headless under Claude, Codex, or Ringer
+   workers — never dependent on an interactive session.
+4. RINGER = OAUTH PLANS ONLY: Ringer lanes may use OAuth/subscription-plan
+   engines exclusively (Codex OAuth, GLM coding plan, Claude subscription);
+   metered API lanes are forbidden factory-wide — escalate instead of spend.
+Encoded in: runbooks/factory-pipeline.md hard rules, CLAUDE.md/AGENTS.md hard
+rules 8-9 (twins synchronized), charter execution block, and the scaffold
+charter template so every future department inherits it.

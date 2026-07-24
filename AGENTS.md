@@ -74,6 +74,18 @@ zero external effects.
    gates only where the charter or the always-human floor requires them —
    external sends, CRM/EHR/finance writes, publishes, spend over ceiling,
    charter changes, promotions.
+8. **Receipt-gated steps (owner decision, Ankit 2026-07-23).** Every step of
+   every process proves completion with an executed artifact, output, or
+   receipt BEFORE the next step runs — no step is "done" on a model's or
+   log's say-so. A missing or failed receipt summons the manager: the
+   department manager (or estate watchdog) detects the gap and drives the
+   heal ladder or the human-in-the-loop outbox; the process never advances
+   past an unverified step.
+9. **Headless-only, subscription-only (owner decision, Ankit 2026-07-23).**
+   Processes run headless under Claude, Codex, or Ringer workers — never
+   dependent on an interactive session. Ringer lanes use OAuth/subscription
+   plan engines ONLY (Codex OAuth, GLM coding plan, Claude subscription);
+   per-token API lanes are forbidden — escalate instead of spending.
 
 ## Verification before any "done" claim
 
