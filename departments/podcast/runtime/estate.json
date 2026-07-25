@@ -63,14 +63,14 @@
     {
       "name": "obe-draft-bridge",
       "expected_cadence": "30min",
-      "ledger_path": "send-approval-bridge-ledger.jsonl",
-      "stale_after_minutes": 60
+      "evidence": "timer_only",
+      "note": "event-driven: the ledger only gains entries when there is work, so ledger freshness measures activity, not liveness. Timer firing is the correct liveness proof; a quiet lane must not read as failed."
     },
     {
       "name": "obe-approved-send-executor",
       "expected_cadence": "10min",
-      "ledger_path": "send-approval-bridge-ledger.jsonl",
-      "stale_after_minutes": 30
+      "evidence": "timer_only",
+      "note": "event-driven: the ledger only gains entries when there is work, so ledger freshness measures activity, not liveness. Timer firing is the correct liveness proof; a quiet lane must not read as failed."
     },
     {
       "name": "obe-context-sync",
