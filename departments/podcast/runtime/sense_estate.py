@@ -400,7 +400,7 @@ def _normalize_observation(
         "detail": str(value.get("detail", ""))[:240],
         "metrics": value.get("metrics") if isinstance(value.get("metrics"), dict) else {},
     }
-    if row["sensor"] not in {"timer", "receipt", "log", "channel", "vps"}:
+    if row["sensor"] not in {"timer", "receipt", "log", "ledger", "channel", "vps"}:
         raise ValueError(f"invalid observation sensor: {row['sensor']!r}")
     if row["status"] not in {"ok", "warn", "fail", "unknown"}:
         raise ValueError(f"invalid observation status: {row['status']!r}")
