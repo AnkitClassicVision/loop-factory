@@ -59,7 +59,9 @@ SG-SENSE / SG-LEARN, charter v1.0.
 ## Promotion path (per runbooks/promotion-ladder.md; never self-served)
 
 shadow (now) → draft_only (weekly BATCH approval, one sitting) → gated_live →
-autonomous. 14 clean shadow days minimum before the first promotion counts.
+autonomous. 7 clean shadow days minimum before the first promotion counts
+(owner override of the factory 14-day default, Ankit 2026-07-28; failures
+still reset the streak).
 Demotion is automatic on any breach. The always-human floor never promotes:
 charter changes, promotions, kill decisions, this runbook.
 

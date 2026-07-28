@@ -32,6 +32,13 @@ mission: >-
 
 autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
 
+burn_in:  # owner override of the factory 14-day default (Ankit, 2026-07-28: "lets move it down to 7")
+  clean_shadow_days_required: 7
+  decided_by: ankit
+  date: "2026-07-28"
+  surface: claude-code-chat
+  note: failures still reset the streak; demotion rules unchanged
+
 # Lanes (C3). Item type (podcast/icaregrow/MyBCAT) is a dimension within lanes.
 lanes:
   v1_active:
