@@ -26,6 +26,18 @@ def _sender(tmp_path: Path, name: str, exit_code: int = 0) -> Path:
     return script
 
 
+def _card_sender_output(tmp_path: Path, name: str, output: str) -> Path:
+    script = tmp_path / f"{name}.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"p=pathlib.Path({str(tmp_path / (name + '.jsonl'))!r})\n"
+        "with p.open('a') as f: f.write('called\\n')\n"
+        f"sys.stdout.write({output!r})\n",
+        encoding="utf-8",
+    )
+    return script
+
+
 def _config(tmp_path: Path, watch: Path, ping: Path, card: Path, **changes) -> Path:
     value = {
         "cursor_file": str(tmp_path / "cursor.json"),
@@ -148,3 +160,62 @@ def test_dry_run_sends_nothing_and_advances_nothing(tmp_path):
     assert not (tmp_path / "ping.jsonl").exists()
     assert not (tmp_path / "card.jsonl").exists()
     assert not (tmp_path / "cursor.json").exists()
+
+
+def test_successful_card_send_appends_tracked_ledger_row(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"question": "Approve ledger entry?"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(
+        tmp_path,
+        "card_json",
+        'setup log\n{"identifier":"ANK-123","url":"https://example.test/ANK-123"}\n',
+    )
+    config = _config(
+        tmp_path,
+        watch,
+        ping,
+        card,
+        ledger_file=str(ledger),
+    )
+
+    assert _run(config).returncode == 0
+
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["card_identifier"] == "ANK-123"
+    assert rows[0]["card_url"] == "https://example.test/ANK-123"
+    assert rows[0]["department"] == "label"
+    assert rows[0]["kind"] == "approval"
+    assert rows[0]["summary"] == "Approve ledger entry?"
+    assert rows[0]["status"] == "open"
+    assert rows[0]["row_hash"]
+    assert rows[0]["ts"]
+
+
+def test_junk_card_stdout_appends_untracked_ledger_without_failing_push(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "Still delivered"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(tmp_path, "card_junk", "not json at all\n")
+    config = _config(
+        tmp_path,
+        watch,
+        ping,
+        card,
+        ledger_file=str(ledger),
+    )
+
+    result = _run(config)
+
+    assert result.returncode == 0
+    row = json.loads(ledger.read_text())
+    assert row["card_identifier"] is None
+    assert row["card_url"] is None
+    assert row["status"] == "untracked"
+    assert "untracked" in result.stderr
+    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)][
+        "offset_lines"
+    ] == 1

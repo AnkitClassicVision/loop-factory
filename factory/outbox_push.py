@@ -3,6 +3,7 @@
 Configuration YAML::
 
     cursor_file: path/to/cursor.json
+    ledger_file: path/to/card_ledger.jsonl  # optional
     watches:
       - path: path/to/decisions_outbox.jsonl
         department: department-label
@@ -33,6 +34,7 @@ import logging
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +82,11 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ConfigError("senders.card_enabled must be true or false")
     ping = _argv(senders.get("ping"), "ping", required=True)
     card = _argv(senders.get("card"), "card", required=card_enabled)
+    ledger_file = raw.get("ledger_file")
+    if ledger_file is not None and (
+        not isinstance(ledger_file, str) or not ledger_file
+    ):
+        raise ConfigError("ledger_file must be a non-empty path when configured")
     clean_watches = []
     for index, watch in enumerate(watches):
         if not isinstance(watch, dict):
@@ -102,6 +109,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
         "ping": ping,
         "card": card,
         "card_enabled": card_enabled,
+        "ledger_file": ledger_file,
     }
 
 
@@ -189,6 +197,76 @@ def _send(argv: list[str]) -> bool:
     return result.returncode == 0
 
 
+def _send_captured(argv: list[str]) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            argv,
+            check=False,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        LOGGER.error("sender could not start: %s", exc)
+        return False, ""
+    return result.returncode == 0, result.stdout
+
+
+def _last_json_object(output: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    last: dict[str, Any] | None = None
+    index = 0
+    while index < len(output):
+        start = output.find("{", index)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(output, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if isinstance(value, dict):
+            last = value
+        index = max(end, start + 1)
+    return last
+
+
+def _append_ledger(
+    path: str,
+    *,
+    digest: str,
+    department: str,
+    kind: str,
+    summary: str,
+    card_stdout: str,
+) -> None:
+    card = _last_json_object(card_stdout)
+    identifier = card.get("identifier") if isinstance(card, dict) else None
+    url = card.get("url") if isinstance(card, dict) else None
+    tracked = isinstance(identifier, str) and bool(identifier)
+    ledger_row = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "row_hash": digest,
+        "department": department,
+        "kind": kind,
+        "summary": summary,
+        "card_identifier": identifier if tracked else None,
+        "card_url": url if isinstance(url, str) and url else None,
+        "status": "open" if tracked else "untracked",
+    }
+    ledger_path = Path(path)
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with ledger_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(ledger_row, sort_keys=True) + "\n")
+    except OSError as exc:
+        LOGGER.warning("card ledger could not be appended: %s", exc)
+        return
+    if not tracked:
+        LOGGER.warning(
+            "card sender output had no usable identifier; ledger row is untracked"
+        )
+
+
 def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     cursor_path = Path(config["cursor_file"])
     cursor = _load_cursor(cursor_path)
@@ -251,8 +329,25 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
                 break
             ping_successes += 1
-            if card_argv and not _send(card_argv):
-                LOGGER.warning("card sender failed for %s line %d", source, line_index + 1)
+            if card_argv:
+                ledger_file = config.get("ledger_file")
+                if ledger_file:
+                    card_success, card_stdout = _send_captured(card_argv)
+                else:
+                    card_success, card_stdout = _send(card_argv), ""
+                if not card_success:
+                    LOGGER.warning(
+                        "card sender failed for %s line %d", source, line_index + 1
+                    )
+                elif ledger_file:
+                    _append_ledger(
+                        ledger_file,
+                        digest=digest,
+                        department=watch["department"],
+                        kind=watch["kind"],
+                        summary=summary_line,
+                        card_stdout=card_stdout,
+                    )
             state["last_hashes"] = (state["last_hashes"] + [digest])[-HASH_LIMIT:]
             state["offset_lines"] = line_index + 1
             changed = True
