@@ -311,7 +311,8 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 "body": (
                     "## YOUR MOVE (10 seconds)\n"
                     f"{summary_line}\n"
-                    "Reply with first line: APPROVE (confirm/apply) or SKIP (dismiss).\n\n"
+                    "Reply with first line: APPROVE (confirm/apply), SKIP (dismiss), "
+                    "or FIX: <what to change> (add notes on the lines below).\n\n"
                     "## Detail\n" + text
                 ),
                 "department": watch["department"],

@@ -269,3 +269,84 @@ def test_decisions_file_remains_append_only_across_ticks(tmp_path):
     decisions = _rows(tmp_path / "decisions.jsonl")
     assert [row["card_identifier"] for row in decisions] == ["ANK-108", "ANK-109"]
     assert [row["decision"] for row in decisions] == ["approve", "skip"]
+
+
+def test_fix_records_full_notes_stays_open_and_is_polled_again(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row("hash-fix", "ANK-110")])
+    reader, data = _reader(tmp_path)
+    body = "FIX: change the hook\nAsk a question.\n" + ("x" * 2100)
+    data.write_text(json.dumps({"ANK-110": [{"body": body}]}))
+    closer = _recorder(tmp_path, "closer")
+    ack = _recorder(tmp_path, "ack")
+    config = _config(tmp_path, ledger, reader, closer, ack)
+
+    assert _run(config).returncode == 0
+    decision = _rows(tmp_path / "decisions.jsonl")[0]
+    assert decision["decision"] == "fix"
+    assert decision["notes"] == body[:2000]
+    assert len(decision["notes"]) == 2000
+    assert _rows(ledger)[-1]["status"] == "fix_requested"
+    assert _rows(ledger)[-1]["notes_hash"]
+    assert _calls(tmp_path, "closer") == []
+    assert _calls(tmp_path, "ack") == [[
+        "ANK-110",
+        "AGENT UPDATE: fix request recorded and routed. Reply APPROVE or SKIP "
+        "after the revised payload lands.",
+    ]]
+
+    assert _run(config).returncode == 0
+    assert len(_calls(tmp_path, "reader")) == 2
+    assert len(_rows(tmp_path / "decisions.jsonl")) == 1
+    assert len(_calls(tmp_path, "ack")) == 1
+
+
+def test_bare_fix_then_different_fix_then_approve_closes(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row("hash-fixes", "ANK-111")])
+    reader, data = _reader(tmp_path)
+    closer = _recorder(tmp_path, "closer")
+    ack = _recorder(tmp_path, "ack")
+    config = _config(tmp_path, ledger, reader, closer, ack)
+
+    data.write_text(json.dumps({"ANK-111": [{"body": "FIX\nFirst notes"}]}))
+    assert _run(config).returncode == 0
+    data.write_text(json.dumps({"ANK-111": [{"body": "FIX\nSecond notes"}]}))
+    assert _run(config).returncode == 0
+    data.write_text(json.dumps({"ANK-111": [{"body": "APPROVE revised payload"}]}))
+    assert _run(config).returncode == 0
+
+    decisions = _rows(tmp_path / "decisions.jsonl")
+    assert [row["decision"] for row in decisions] == ["fix", "fix", "approve"]
+    assert decisions[0]["first_line"] == "FIX"
+    assert _rows(ledger)[-1]["status"] == "decided:approve"
+    assert _calls(tmp_path, "closer") == [["ANK-111", "Agent Done"]]
+    assert len(_calls(tmp_path, "ack")) == 3
+
+
+def test_agent_marked_fix_is_ignored(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row("hash-agent-fix", "ANK-112")])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-112": [{"body": "AGENT UPDATE: FIX the thing"}]}))
+    closer = _recorder(tmp_path, "closer")
+
+    assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
+    assert not (tmp_path / "decisions.jsonl").exists()
+    assert len(_rows(ledger)) == 1
+
+
+def test_newest_fix_wins_over_approve_and_skip(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row("hash-newest-fix", "ANK-113")])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-113": [
+        {"body": "APPROVE", "createdAt": "2026-07-28T10:00:00Z"},
+        {"body": "SKIP", "createdAt": "2026-07-28T11:00:00Z"},
+        {"body": "FIX: revise", "createdAt": "2026-07-28T12:00:00Z"},
+    ]}))
+    closer = _recorder(tmp_path, "closer")
+
+    assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
+    assert _rows(tmp_path / "decisions.jsonl")[0]["decision"] == "fix"
+    assert _calls(tmp_path, "closer") == []

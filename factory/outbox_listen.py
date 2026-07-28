@@ -31,6 +31,7 @@ one. Each comment must have a ``body``. ``closer`` uses ``{issue}`` and
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import re
@@ -43,7 +44,7 @@ import yaml
 
 
 LOGGER = logging.getLogger(__name__)
-DECISION_RE = re.compile(r"^(APPROVE|SKIP)\b")
+DECISION_RE = re.compile(r"^(APPROVE|SKIP|FIX)\b")
 AGENT_MARKERS = (
     "AGENT CLAIMED:",
     "AGENT UPDATE:",
@@ -169,6 +170,7 @@ def _latest_ledger_rows(path: str | Path) -> dict[str, dict[str, Any]] | None:
         LOGGER.error("ledger could not be read: %s", exc)
         return None
     latest: dict[str, dict[str, Any]] = {}
+    fix_hashes: dict[str, set[str]] = {}
     for line_number, line in enumerate(lines, start=1):
         try:
             row = json.loads(line)
@@ -184,6 +186,11 @@ def _latest_ledger_rows(path: str | Path) -> dict[str, dict[str, Any]] | None:
             LOGGER.error("ledger line %d lacks row_hash or status", line_number)
             return None
         latest[row_hash] = row
+        notes_hash = row.get("notes_hash")
+        if status == "fix_requested" and isinstance(notes_hash, str) and notes_hash:
+            fix_hashes.setdefault(row_hash, set()).add(notes_hash)
+    for row_hash, row in latest.items():
+        row["_fix_notes_hashes"] = fix_hashes.get(row_hash, set())
     return latest
 
 
@@ -280,7 +287,7 @@ def _newest_first(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [comment for _, comment in sorted(indexed, key=sort_key, reverse=True)]
 
 
-def _decision(comments: list[dict[str, Any]]) -> tuple[str, str] | None:
+def _decision(comments: list[dict[str, Any]]) -> tuple[str, str, str] | None:
     for comment in _newest_first(comments):
         body = comment.get("body")
         if not isinstance(body, str) or not body:
@@ -290,7 +297,7 @@ def _decision(comments: list[dict[str, Any]]) -> tuple[str, str] | None:
             continue
         match = DECISION_RE.match(first_line)
         if match:
-            return match.group(1).lower(), first_line[:120]
+            return match.group(1).lower(), first_line[:120], body
     return None
 
 
@@ -311,7 +318,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     reader_calls = 0
     reader_failures = 0
     for row_hash, card in latest.items():
-        if card.get("status") != "open":
+        if card.get("status") not in {"open", "fix_requested"}:
             continue
         identifier = card.get("card_identifier")
         if not isinstance(identifier, str) or not identifier:
@@ -326,7 +333,10 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
         found = _decision(comments)
         if found is None:
             continue
-        decision, first_line = found
+        decision, first_line, notes = found
+        notes_hash = hashlib.sha256(notes.encode("utf-8")).hexdigest()
+        if decision == "fix" and notes_hash in card.get("_fix_notes_hashes", set()):
+            continue
         if dry_run:
             LOGGER.warning(
                 "dry-run would record %s for %s from %r",
@@ -347,6 +357,8 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             "source": "linear-comment",
             "first_line": first_line,
         }
+        if decision == "fix":
+            decision_row["notes"] = notes[:2000]
         try:
             _append_jsonl(config["decisions_file"], decision_row)
             _append_jsonl(
@@ -357,23 +369,36 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                     "department": decision_row["department"],
                     "kind": decision_row["kind"],
                     "card_identifier": identifier,
-                    "status": f"decided:{decision}",
+                    "status": (
+                        "fix_requested" if decision == "fix" else f"decided:{decision}"
+                    ),
+                    **({"notes_hash": notes_hash} if decision == "fix" else {}),
                 },
             )
         except OSError as exc:
             LOGGER.error("decision files could not be appended: %s", exc)
             continue
-        values = {
-            "issue": identifier,
-            "body": (
-                f"AGENT DONE: decision recorded ({decision}). "
-                "This card's loop is closed."
-            ),
-            "state": "Agent Done",
-        }
+        if decision == "fix":
+            values = {
+                "issue": identifier,
+                "body": (
+                    "AGENT UPDATE: fix request recorded and routed. Reply APPROVE "
+                    "or SKIP after the revised payload lands."
+                ),
+                "state": "",
+            }
+        else:
+            values = {
+                "issue": identifier,
+                "body": (
+                    f"AGENT DONE: decision recorded ({decision}). "
+                    "This card's loop is closed."
+                ),
+                "state": "Agent Done",
+            }
         if config["ack"]:
             _run_optional(_render(config["ack"], values), "ack sender")
-        if config["close_enabled"]:
+        if decision != "fix" and config["close_enabled"]:
             _run_optional(_render(config["closer"], values), "card closer")
     if reader_calls and reader_failures == reader_calls:
         return 3

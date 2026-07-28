@@ -76,6 +76,11 @@ def test_new_rows_pushed_once_and_second_tick_uses_offset(tmp_path):
     assert _run(config).returncode == 0
     assert len(_calls(tmp_path / "ping.jsonl")) == 1
     assert len(_calls(tmp_path / "card.jsonl")) == 1
+    assert (
+        "Reply with first line: APPROVE (confirm/apply), SKIP (dismiss), or FIX: "
+        "<what to change> (add notes on the lines below)."
+        in _calls(tmp_path / "card.jsonl")[0][1]
+    )
 
 
 def test_duplicate_row_content_is_skipped_by_hash(tmp_path):
