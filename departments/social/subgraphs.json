@@ -1,0 +1,74 @@
+{
+  "_doc": "Machine form of departments/social/procedural-graph.md. Validated by factory/graphs.py. Derives from knowledge/concept-map.md (LOCKED 2026-07-28). V1 lanes only: SG-REPUBLISH (proving slice, external publish, full guard chain), SG-SENSE (read-only sensing), SG-LEARN (internal proposal lane). Phased lanes (podcast push, blog, insights, lead-magnet, icaregrow, engagement replies) enter ONLY via charter change + new entries here + re-lint + re-pin.",
+  "subgraphs": [
+    {
+      "id": "SG-REPUBLISH",
+      "concept_refs": ["C1", "C4", "C5", "C6", "C7", "C10", "C11", "C12", "C13", "C15"],
+      "not_applicable": {},
+      "nodes": [
+        {"id": "N1", "impl": "runtime/inventory_backcatalog.py"},
+        {"id": "S1", "guard": "S1"},
+        {"id": "N2", "impl": "runtime/select_candidate.py"},
+        {"id": "S2", "guard": "S2"},
+        {"id": "N3", "impl": "runtime/assemble_context.py"},
+        {"id": "S3", "guard": "S3"},
+        {"id": "S8", "guard": "S8"},
+        {"id": "N4", "model_capable": true, "cost_incurring": true, "impl": "runtime/draft_post.py"},
+        {"id": "N5", "model_capable": true, "impl": "runtime/qa_post.py"},
+        {"id": "S5", "guard": "S5"},
+        {"id": "S4", "guard": "S4"},
+        {"id": "S6", "guard": "S6"},
+        {"id": "S7", "guard": "S7"},
+        {"id": "N6", "external_dispatch": true, "impl": "runtime/dispatch.py"},
+        {"id": "N7", "impl": "runtime/delivery_verify.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-SENSE",
+      "concept_refs": ["C6", "C9", "C12", "C16", "C18", "C20"],
+      "not_applicable": {
+        "S2": "read-only sensing of already-published posts; no content targeting or eligibility decisions",
+        "S3": "no model-capable nodes; script-only sensing lane (C10)",
+        "S8": "no cost-incurring nodes; scripts on local host under subscription-only policy (C8)",
+        "S4": "read-only sensing funnel; no external dispatch",
+        "S5": "read-only sensing funnel; no external dispatch — cap LEDGER writes happen in SG-REPUBLISH's S5",
+        "S6": "read-only sensing funnel; no external dispatch — its outputs FEED the kill controller",
+        "S7": "read-only sensing funnel; no external dispatch"
+      },
+      "nodes": [
+        {"id": "S1", "guard": "S1"},
+        {"id": "N1", "impl": "runtime/pull_zernio_analytics.py"},
+        {"id": "N2", "impl": "runtime/pull_call_joins.py"},
+        {"id": "N3", "impl": "runtime/compare_charter.py"},
+        {"id": "N4", "impl": "runtime/assemble_weekly_digest.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    },
+    {
+      "id": "SG-LEARN",
+      "concept_refs": ["C10", "C11", "C14", "C17"],
+      "not_applicable": {
+        "S1": "operates on the department's own metric records, not person entities or content targeting",
+        "S2": "no content eligibility decisions; proposals only",
+        "S4": "internal proposal lane; no external dispatch — cards land in the human-in-the-loop outbox",
+        "S5": "internal proposal lane; no external dispatch",
+        "S6": "internal proposal lane; no external dispatch",
+        "S7": "internal proposal lane; no external dispatch"
+      },
+      "nodes": [
+        {"id": "N1", "impl": "runtime/read_metrics_records.py"},
+        {"id": "S3", "guard": "S3"},
+        {"id": "S8", "guard": "S8"},
+        {"id": "N2", "model_capable": true, "cost_incurring": true, "impl": "runtime/propose_insights.py"},
+        {"id": "N3", "impl": "runtime/proposal_card_to_outbox.py"},
+        {"id": "N9", "impl": "runtime/record.py"}
+      ]
+    }
+  ],
+  "untraced_allowed": {
+    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node",
+    "runtime/guards.py": "implements shared safety guards S1/S2/S3/S6/S7 (guard nodes carry no impl field); S4/S5/S8 route through kernel gateways via kernel_bridge",
+    "runtime/social_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one"
+  }
+}
