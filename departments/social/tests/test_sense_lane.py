@@ -418,6 +418,18 @@ def test_compare_charter_upstream_missing_marker_exits3_without_verdicts(tmp_pat
             90,
             "cap_near",
         ),
+        (
+            {"weekly_touch_ceiling": 110},
+            {"weekly_touch_ceiling": 100},
+            90,
+            "cap_near",
+        ),
+        (
+            {"faux_work_touch_floor": 80},
+            {"faux_work_touch_floor": 100},
+            90,
+            "faux_work_signal",
+        ),
     ],
 )
 def test_compare_charter_each_consumed_threshold_flips_signal(
@@ -435,7 +447,7 @@ def test_compare_charter_each_consumed_threshold_flips_signal(
                 }
                 for index in range(100)
             ]
-        elif signal == "cap_near":
+        elif signal in {"cap_near", "faux_work_signal"}:
             rows = [
                 {
                     "metric": "platform_verified", "value": 1.0, "source": "zernio",

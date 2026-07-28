@@ -319,6 +319,81 @@ def test_out_receipt_must_stay_inside_state_dir(tmp_path, monkeypatch):
         proposal_card_to_outbox._safe_out_path(state_dir, state_dir / "runbook-receipt.json")
 
 
+@pytest.mark.parametrize("protected_name", ["approval_queue.jsonl", ".approval_queue.lock"])
+def test_out_receipt_refuses_queue_and_lock_without_modifying_them(
+    tmp_path, monkeypatch, protected_name
+):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    queue = state_dir / "approval_queue.jsonl"
+    lock = state_dir / ".approval_queue.lock"
+    queue.write_text('{"existing": "queue row"}\n', encoding="utf-8")
+    lock.write_text("existing lock content\n", encoding="utf-8")
+    cards = tmp_path / "cards.json"
+    pack = tmp_path / "pack.json"
+    cards.write_text("[]", encoding="utf-8")
+    pack.write_text(json.dumps(_pack()), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proposal_card_to_outbox.py",
+            "--state-dir", str(state_dir),
+            "--cards", str(cards),
+            "--evidence-pack", str(pack),
+            "--out", str(state_dir / protected_name),
+        ],
+    )
+
+    assert proposal_card_to_outbox.main() == 2
+    assert queue.read_text(encoding="utf-8") == '{"existing": "queue row"}\n'
+    assert lock.read_text(encoding="utf-8") == "existing lock content\n"
+
+
+def test_corrupt_charter_blocks_with_receipt_and_does_not_append(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    queue = state_dir / "approval_queue.jsonl"
+    original_queue = '{"existing": "queue row"}\n'
+    queue.write_text(original_queue, encoding="utf-8")
+    cards = tmp_path / "cards.json"
+    pack = tmp_path / "pack.json"
+    charter = tmp_path / "corrupt-charter.yaml"
+    out = state_dir / "receipt.json"
+    cards.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "Approve updating the drafting prompt?",
+                    "kind": "approve",
+                    "class": "prompt_update",
+                    "evidence": ["sense-engagement-1"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    pack.write_text(json.dumps(_pack()), encoding="utf-8")
+    charter.write_text("department: [social\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proposal_card_to_outbox.py",
+            "--state-dir", str(state_dir),
+            "--cards", str(cards),
+            "--evidence-pack", str(pack),
+            "--charter", str(charter),
+            "--out", str(out),
+        ],
+    )
+
+    assert proposal_card_to_outbox.main() == 2
+    receipt = json.loads(out.read_text(encoding="utf-8"))
+    assert receipt["status"] == "blocked"
+    assert queue.read_text(encoding="utf-8") == original_queue
+
+
 def test_concurrent_dedup_queues_exactly_once(tmp_path):
     card = {
         "question": "Approve updating the drafting prompt?",

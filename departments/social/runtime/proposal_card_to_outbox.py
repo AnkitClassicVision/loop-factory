@@ -96,6 +96,12 @@ def _safe_out_path(state_dir: str | Path, out: str | Path) -> Path:
     target = Path(out).resolve()
     if target != state_path and state_path not in target.parents:
         raise ValueError("receipt path must remain inside state-dir")
+    protected_targets = {
+        (state_path / "approval_queue.jsonl").resolve(),
+        (state_path / ".approval_queue.lock").resolve(),
+    }
+    if target in protected_targets:
+        raise ValueError("receipt path may not target the approval queue or its lock")
     if any(part in target.name.lower() for part in PROTECTED_NAME_PARTS):
         raise ValueError("receipt path may not target a governance file name")
     return target
@@ -181,7 +187,7 @@ def main() -> int:
         if "out_path" in locals():
             _write_json(out_path, {"status": "missing", "reason": str(exc)})
         return 3
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         LOGGER.error("%s", exc)
         if "out_path" in locals():
             _write_json(out_path, {"status": "blocked", "reason": str(exc)})

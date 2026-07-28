@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+import pytest
 
 
 REPO = Path(__file__).resolve().parents[3]
@@ -158,6 +159,66 @@ def test_context_incomplete_for_todo_body_placeholder(tmp_path):
     assert result.returncode == 2
     assert manifest["complete"] is False
     assert "body_text" in manifest["missing"]
+
+
+@pytest.mark.parametrize(
+    ("field", "missing_entry"),
+    [("title", "item.title"), ("url", "item.url")],
+)
+def test_context_incomplete_for_todo_item_placeholder(tmp_path, field, missing_entry):
+    body = tmp_path / "body.txt"
+    candidate = tmp_path / "candidate.json"
+    brand = tmp_path / "brand.yaml"
+    out = tmp_path / "out.json"
+    body.write_text("Complete fake source body.", encoding="utf-8")
+    candidate_item = item("placeholder-item", body)
+    candidate_item[field] = f"TODO_{field.upper()}"
+    candidate.write_text(
+        json.dumps(
+            {
+                "item": candidate_item,
+                "rank_score": 1.0,
+                "rationale": "test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    brand.write_text(
+        yaml.safe_dump(
+            {
+                "podcast": {
+                    "brand": {
+                        "name": "Example Brand",
+                        "voice_notes": ["direct"],
+                        "audience": "fake owners",
+                    },
+                    "offer": {
+                        "name": "Example Call",
+                        "cta_url": "https://example.invalid/book",
+                        "description": "An obviously fake offer",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = invoke(
+        "assemble_context.py",
+        "--state-dir",
+        tmp_path / "state",
+        "--out",
+        out,
+        "--candidate",
+        candidate,
+        "--brand",
+        brand,
+    )
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+
+    assert result.returncode == 2
+    assert manifest["complete"] is False
+    assert missing_entry in manifest["missing"]
 
 
 def test_full_context_happy_path_embeds_body(tmp_path):
