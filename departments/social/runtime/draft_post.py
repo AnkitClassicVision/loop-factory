@@ -254,6 +254,25 @@ def _all_bundle_strings(value: Any) -> set[str]:
     return set()
 
 
+def _allowed_source_ids(bundle: Any) -> list[str]:
+    # Keep this derivation trivially identical to qa_post._allowed_source_ids.
+    if not isinstance(bundle, dict):
+        return []
+    item = bundle.get("item")
+    offer = bundle.get("offer")
+    candidates = [
+        item.get("url") if isinstance(item, dict) else None,
+        item.get("item_id") if isinstance(item, dict) else None,
+        item.get("title") if isinstance(item, dict) else None,
+        offer.get("cta_url") if isinstance(offer, dict) else None,
+    ]
+    allowed: list[str] = []
+    for value in candidates:
+        if isinstance(value, str) and value and value not in allowed:
+            allowed.append(value)
+    return allowed
+
+
 def _number_tokens(text: str) -> set[str]:
     return {match.group(0) for match in NUMBER_RE.finditer(text)}
 
@@ -346,7 +365,7 @@ def _normalize_draft(
             reasons.append(
                 "missing_sources: draft sources must contain at least one entry"
             )
-        bundle_strings = _all_bundle_strings(bundle)
+        allowed_source_ids = _allowed_source_ids(bundle)
         for index, source in enumerate(sources):
             if not isinstance(source, dict):
                 reasons.append(f"sources[{index}] must be an object")
@@ -359,8 +378,11 @@ def _normalize_draft(
             if not isinstance(source_ref, str) or not source_ref.strip():
                 reasons.append(f"sources[{index}].source must be a non-empty string")
                 continue
-            if source_ref not in bundle_strings:
-                reasons.append(f"sources[{index}].source is not present in the bundle")
+            if source_ref not in allowed_source_ids:
+                reasons.append(
+                    f"sources[{index}].source {source_ref!r} is not in "
+                    "ALLOWED_SOURCE_IDS"
+                )
                 continue
             valid_sources.append({"claim": claim, "source": source_ref})
         draft["sources"] = valid_sources
@@ -386,6 +408,11 @@ def _prompt(
     defects: list[dict] | None,
 ) -> str:
     hard_cap = SURFACE_LIMITS[surface]
+    allowed_source_ids = _allowed_source_ids(bundle)
+    enumerated_source_ids = "\n".join(
+        f"{index}. {json.dumps(source_id, ensure_ascii=False)}"
+        for index, source_id in enumerate(allowed_source_ids, start=1)
+    )
     preferred = (
         "Prefer 1300 characters or fewer; the absolute hard cap is 3000."
         if surface.startswith("linkedin_")
@@ -402,10 +429,14 @@ def _prompt(
         )
     return f"""You are drafting a governed back-catalog social post.
 Return exactly one JSON object with keys body, cta_url, and sources.
-sources must be a list of objects with keys claim and source. Map every factual
-claim and every number in body to an exact source value found in the sanitized
-bundle. Every draft must contain at least one source entry. Do not invent claims,
-statistics, testimonials, outcomes, or URLs.
+sources must be a list of objects with keys claim and source.
+every sources[].source MUST be exactly one of these identifiers; every factual claim and every number in the body must appear in a sources[].claim.
+Use the offer cta_url identifier only for CTA-related claims. Every draft must
+contain at least one source entry. Do not invent claims, statistics, testimonials,
+outcomes, or URLs.
+
+ALLOWED_SOURCE_IDS:
+{enumerated_source_ids}
 
 Surface: {surface}
 Round: {round_number}

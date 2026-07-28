@@ -255,6 +255,25 @@ def _number_tokens(text: str) -> set[str]:
     return {match.group(0) for match in NUMBER_RE.finditer(text)}
 
 
+def _allowed_source_ids(bundle: Any) -> list[str]:
+    # Keep this derivation trivially identical to draft_post._allowed_source_ids.
+    if not isinstance(bundle, dict):
+        return []
+    item = bundle.get("item")
+    offer = bundle.get("offer")
+    candidates = [
+        item.get("url") if isinstance(item, dict) else None,
+        item.get("item_id") if isinstance(item, dict) else None,
+        item.get("title") if isinstance(item, dict) else None,
+        offer.get("cta_url") if isinstance(offer, dict) else None,
+    ]
+    allowed: list[str] = []
+    for value in candidates:
+        if isinstance(value, str) and value and value not in allowed:
+            allowed.append(value)
+    return allowed
+
+
 def _source_claims(draft: dict) -> list[str]:
     raw = draft.get("sources")
     if not isinstance(raw, list):
@@ -339,6 +358,25 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
             "missing_sources",
             "draft sources must contain at least one entry",
         )
+    if isinstance(sources, list):
+        allowed_source_ids = _allowed_source_ids(bundle)
+        for index, source in enumerate(sources):
+            if not isinstance(source, dict):
+                add("invalid_source", f"sources[{index}] must be an object")
+                continue
+            source_ref = source.get("source")
+            if not isinstance(source_ref, str) or not source_ref.strip():
+                add(
+                    "invalid_source",
+                    f"sources[{index}].source must be a non-empty string",
+                )
+                continue
+            if source_ref not in allowed_source_ids:
+                add(
+                    "invalid_source",
+                    f"sources[{index}].source {source_ref!r} is not in "
+                    "ALLOWED_SOURCE_IDS",
+                )
 
     grounded: set[str] = set()
     for claim in _source_claims(draft):

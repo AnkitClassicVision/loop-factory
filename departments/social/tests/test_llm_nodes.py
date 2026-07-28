@@ -54,7 +54,7 @@ def _draft(body: str, **updates) -> dict:
         "sources": [
             {
                 "claim": "An archive item supports this draft.",
-                "source": "An invented fixture about careful business operations.",
+                "source": "https://example.test/archive",
             }
         ],
         "engine": "codex_oauth",
@@ -64,7 +64,13 @@ def _draft(body: str, **updates) -> dict:
     return value
 
 
-def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
+def _fake_engine(
+    tmp_path: Path,
+    *,
+    crash: bool = False,
+    source_ref: str = "https://example.test/archive",
+    prompt_capture: Path | None = None,
+) -> tuple[Path, Path]:
     script = tmp_path / ("crash_engine.py" if crash else "fake_engine.py")
     if crash:
         script.write_text(
@@ -74,10 +80,16 @@ def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
             encoding="utf-8",
         )
     else:
+        capture_line = (
+            f"pathlib.Path({str(prompt_capture)!r}).write_text(prompt, encoding='utf-8')\n"
+            if prompt_capture is not None
+            else ""
+        )
         script.write_text(
             "import json, pathlib, sys\n"
             "prompt = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
-            "if 'cross-model voice' in prompt:\n"
+            + capture_line
+            + "if 'cross-model voice' in prompt:\n"
             "    result = {'defects': []}\n"
             "else:\n"
             "    result = {\n"
@@ -85,7 +97,7 @@ def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
             "        'cta_url': 'https://example.test/book',\n"
             "        'sources': [\n"
             "            {'claim': 'A useful idea from the archive.',\n"
-            "             'source': 'An invented fixture about careful business operations.'}\n"
+            f"             'source': {source_ref!r}}}\n"
             "        ],\n"
             "    }\n"
             "sys.stdout.write(json.dumps(result))\n",
@@ -328,6 +340,104 @@ def test_draft_rejects_empty_sources(tmp_path):
     assert "missing_sources" in " ".join(output["reasons"])
 
 
+@pytest.mark.parametrize(
+    "source_ref",
+    [
+        "https://example.test/archive",
+        "fake-item-1",
+        "Obviously Fake Archive Item",
+    ],
+    ids=["item-url", "item-id", "item-title"],
+)
+def test_draft_accepts_each_allowed_source_identifier(tmp_path, source_ref):
+    _, engines_file = _fake_engine(tmp_path, source_ref=source_ref)
+
+    completed, output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+
+    assert completed.returncode == 0
+    assert output["sources"][0]["source"] == source_ref
+
+
+def test_draft_rejects_free_text_source_and_names_invalid_ref(tmp_path):
+    _, engines_file = _fake_engine(
+        tmp_path,
+        source_ref="episode description",
+    )
+
+    completed, output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+
+    assert completed.returncode == 2
+    assert output["status"] == "blocked"
+    assert "episode description" in " ".join(output["reasons"])
+
+
+def test_draft_prompt_enumerates_allowed_source_identifiers(tmp_path):
+    prompt_capture = tmp_path / "captured-prompt.txt"
+    _, engines_file = _fake_engine(tmp_path, prompt_capture=prompt_capture)
+
+    completed, _, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+
+    prompt = prompt_capture.read_text(encoding="utf-8")
+    assert completed.returncode == 0
+    assert "https://example.test/archive" in prompt
+    assert "fake-item-1" in prompt
+    assert "Obviously Fake Archive Item" in prompt
+    assert "https://example.test/book" in prompt
+    assert (
+        "every sources[].source MUST be exactly one of these identifiers; "
+        "every factual claim and every number in the body must appear in a "
+        "sources[].claim."
+    ) in prompt
+
+
+@pytest.mark.parametrize(
+    ("source_ref", "expected_pass"),
+    [
+        ("https://example.test/archive", True),
+        ("fake-item-1", True),
+        ("Obviously Fake Archive Item", True),
+        ("episode description", False),
+    ],
+    ids=["item-url", "item-id", "item-title", "free-text"],
+)
+def test_qa_source_identifier_contract_matches_draft(
+    tmp_path, source_ref, expected_pass
+):
+    draft = _draft(
+        "A specific archive idea. https://example.test/book",
+        sources=[
+            {
+                "claim": "A specific archive idea.",
+                "source": source_ref,
+            }
+        ],
+    )
+
+    completed, report, _ = _run_qa(tmp_path, draft)
+
+    assert completed.returncode == 0
+    assert report["pass"] is expected_pass
+    if expected_pass:
+        assert "invalid_source" not in _codes(report)
+    else:
+        invalid_source = next(
+            defect for defect in report["defects"] if defect["code"] == "invalid_source"
+        )
+        assert source_ref in invalid_source["detail"]
+
+
 def test_qa_marks_missing_sanitized_flag_without_calling_model(tmp_path):
     completed, report, _ = _run_qa(
         tmp_path,
@@ -341,7 +451,8 @@ def test_qa_marks_missing_sanitized_flag_without_calling_model(tmp_path):
 
 
 def test_revise_consumes_defects_and_increments_round(tmp_path):
-    _, engines_file = _fake_engine(tmp_path)
+    prompt_capture = tmp_path / "captured-revise-prompt.txt"
+    _, engines_file = _fake_engine(tmp_path, prompt_capture=prompt_capture)
     prior = _write_json(
         tmp_path / "prior.json",
         _draft(
@@ -374,6 +485,13 @@ def test_revise_consumes_defects_and_increments_round(tmp_path):
     assert completed.returncode == 0
     assert output["round"] == 1
     assert output["engine"] == "codex_oauth"
+    revise_prompt = prompt_capture.read_text(encoding="utf-8")
+    assert "ALLOWED_SOURCE_IDS:" in revise_prompt
+    assert "https://example.test/archive" in revise_prompt
+    assert (
+        "every sources[].source MUST be exactly one of these identifiers"
+        in revise_prompt
+    )
 
 
 def test_round_three_is_refused_and_quarantined(tmp_path):
