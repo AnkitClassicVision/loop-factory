@@ -43,6 +43,85 @@ def _write_json(path: Path, value: object) -> Path:
     return path
 
 
+def _write_jsonl(path: Path, rows: list[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _catalog_item(
+    item_id: str,
+    body_path: Path,
+    *,
+    published_at: str,
+    score: float,
+) -> dict:
+    return {
+        "item_id": item_id,
+        "source_type": "podcast",
+        "title": f"Source lesson {item_id}",
+        "url": f"https://example.invalid/source/{item_id}",
+        "published_at": published_at,
+        "body_path": str(body_path),
+        "last_resurfaced_at": None,
+        "prior_engagement": {"score": score},
+    }
+
+
+def _seed_daily_state(tmp_path: Path, state: Path) -> list[dict]:
+    state.mkdir(parents=True, exist_ok=True)
+    first_body = tmp_path / "source-a.txt"
+    second_body = tmp_path / "source-b.txt"
+    first_body.write_text(
+        "A durable operating lesson grounded in the original source.",
+        encoding="utf-8",
+    )
+    second_body.write_text(
+        "A second durable lesson grounded in its original source.",
+        encoding="utf-8",
+    )
+    items = [
+        _catalog_item(
+            "item-a",
+            first_body,
+            published_at="2024-01-01T00:00:00+00:00",
+            score=2.0,
+        ),
+        _catalog_item(
+            "item-b",
+            second_body,
+            published_at="2025-01-01T00:00:00+00:00",
+            score=0.0,
+        ),
+    ]
+    _write_jsonl(state / "backcatalog_index.json", items)
+    (state / "suppression.jsonl").write_text("", encoding="utf-8")
+    _write_json(state / "approvals.yaml", {"approved_names": []})
+    _write_json(state / "privacy_blocklist.yaml", {"tokens": []})
+    (state / "observations.jsonl").write_text("", encoding="utf-8")
+    _write_json(state / "surface_counts.json", _counts())
+    _write_json(
+        state / "brand.json",
+        {
+            "name": "MyBCAT",
+            "voice_notes": ["plain", "specific", "grounded"],
+            "audience": "independent practice owners",
+        },
+    )
+    _write_json(
+        state / "offer.json",
+        {
+            "name": "Discovery call",
+            "cta_url": "https://example.invalid/book",
+            "description": "A conversation about durable operating systems.",
+        },
+    )
+    return items
+
+
 def _fake_command(tmp_path: Path, payload: dict, marker: Path) -> Path:
     command = tmp_path / "fake-zernio"
     command.write_text(
@@ -55,6 +134,17 @@ def _fake_command(tmp_path: Path, payload: dict, marker: Path) -> Path:
     )
     command.chmod(0o755)
     return command
+
+
+def _fake_engine(path: Path, payload: dict) -> Path:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        f"print(json.dumps({payload!r}))\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
 
 
 def test_shadow_dispatch_uses_kernel_simulates_zero_and_never_calls_zernio(
@@ -259,6 +349,104 @@ def test_marker_created_after_token_mint_blocks_same_dispatch(
     assert gateway_called is False
 
 
+def test_daily_driver_runs_real_end_to_end_in_shadow(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    items = _seed_daily_state(tmp_path, state)
+    draft_engine = _fake_engine(
+        tmp_path / "fake-draft-engine",
+        {
+            "body": (
+                "A durable operating lesson from the original source. "
+                "https://example.invalid/book"
+            ),
+            "cta_url": "https://example.invalid/book",
+            "sources": [
+                {
+                    "claim": "A durable operating lesson from the original source.",
+                    "source": items[0]["url"],
+                }
+            ],
+        },
+    )
+    qa_engine = _fake_engine(
+        tmp_path / "fake-qa-engine",
+        {"pass": True, "defects": []},
+    )
+    engines_file = _write_json(
+        state / "engines.yaml",
+        {
+            "codex_oauth": [str(draft_engine), "{prompt_file}"],
+            "claude_subscription": [str(qa_engine), "{prompt_file}"],
+        },
+    )
+    marker = tmp_path / "zernio-called"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_zernio = _fake_command(
+        fake_bin,
+        {"id": "must-not-run"},
+        marker,
+    )
+    fake_zernio.rename(fake_bin / "zernio")
+
+    monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", "obviously-fake-test-key")
+    monkeypatch.setenv("SOCIAL_STATE_DIR", str(state))
+    monkeypatch.setenv("SOCIAL_ENGINES_FILE", str(engines_file))
+    monkeypatch.setenv(
+        "PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", "")
+    )
+    script = Path(__file__).parents[1] / "runtime" / "social_daily.sh"
+
+    completed = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    run_dir = next((state / "receipts").iterdir())
+    expected_receipts = {
+        "S6-kill.json",
+        "S7-breaker.json",
+        "N1-inventory-source.json",
+        "N1-inventory.json",
+        "N1-index-installed.json",
+        "N2-candidate.json",
+        "S1-index.json",
+        "S1-resolved.json",
+        "S2-eligible.json",
+        "N3-brand-offer.json",
+        "N3-context.json",
+        "S3-sanitized.json",
+        "S8-model-token.json",
+        "N4-draft-r1-raw.json",
+        "N4-draft-r1.json",
+        "N5-qa-r1.json",
+        "S4-S5-dispatch-token.json",
+        "S6-kill-pre-dispatch.json",
+        "S7-breaker-pre-dispatch.json",
+        "N6-dispatch.json",
+        "N7-delivery-verification.json",
+        "N9-record.json",
+    }
+    assert expected_receipts <= {path.name for path in run_dir.iterdir()}
+    dispatch_receipt = json.loads(
+        (run_dir / "N6-dispatch.json").read_text(encoding="utf-8")
+    )
+    assert dispatch_receipt["simulated"] is True
+    assert dispatch_receipt["delivered_count"] == 0
+    assert (run_dir / "simulate-delivery.jsonl").exists()
+    assert not marker.exists()
+    run_rows = [
+        json.loads(line)
+        for line in (state / "runs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(run_rows) == 1
+    assert run_rows[0]["node"] == "SG-REPUBLISH"
+
+
 def _fake_daily_python(
     tmp_path: Path,
     observations: Path,
@@ -295,11 +483,22 @@ if target == "-" or run_real_guard:
     raise SystemExit(completed.returncode)
 
 out = Path(args[args.index("--out") + 1])
-payload = (
-    {{"pass": True, "defects": [], "engine": "fake"}}
-    if target == "qa_post.py"
-    else {{"status": "ok", "node": target}}
-)
+if target == "qa_post.py":
+    payload = {{"pass": True, "defects": [], "engine": "fake-qa"}}
+elif target == "draft_post.py":
+    payload = {{
+        "surface": "linkedin_mybcat",
+        "body": "Fake grounded draft.",
+        "cta_url": "https://example.invalid/book",
+        "sources": [{{
+            "claim": "Fake grounded draft.",
+            "source": "https://example.invalid/source/item-a",
+        }}],
+        "engine": "fake-draft",
+        "round": 0,
+    }}
+else:
+    payload = {{"status": "ok", "node": target}}
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps(payload) + "\\n", encoding="utf-8")
 
@@ -337,10 +536,8 @@ def _run_daily(
     tmp_path: Path, monkeypatch, *, mode: str
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     state = tmp_path / "state"
-    state.mkdir()
+    _seed_daily_state(tmp_path, state)
     observations = state / "observations.jsonl"
-    observations.write_text("", encoding="utf-8")
-    _write_json(state / "surface_counts.json", _counts())
     fake_bin = _fake_daily_python(tmp_path, observations, mode=mode)
     monkeypatch.setenv("SOCIAL_STATE_DIR", str(state))
     monkeypatch.setenv("SOCIAL_OBSERVATIONS", str(observations))

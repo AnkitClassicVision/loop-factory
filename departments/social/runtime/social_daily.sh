@@ -15,6 +15,10 @@ OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
 SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
 BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
 OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
+DRAFT_ENGINE="${SOCIAL_DRAFT_ENGINE:-codex_oauth}"
+QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
+ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
+ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-300}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="${STATE_DIR}/receipts/${RUN_ID}"
 INCIDENTS="${STATE_DIR}/incident_candidates.json"
@@ -133,6 +137,13 @@ for node in inventory_backcatalog select_candidate assemble_context draft_post q
   require_node "${node}"
 done
 
+if test "${DRAFT_ENGINE}" = "${QA_ENGINE}"; then
+  incident_receipt_failure \
+    "engine-separation" "${ENGINES_FILE}" "draft_and_qa_engine_match"
+  echo "draft and QA engines must differ: ${DRAFT_ENGINE}" >&2
+  exit 2
+fi
+
 KILL_OUT="${RUN_DIR}/S6-kill.json"
 BREAKER_OUT="${RUN_DIR}/S7-breaker.json"
 run_step "S6-kill" "${KILL_OUT}" \
@@ -143,34 +154,147 @@ run_step "S7-breaker" "${BREAKER_OUT}" \
   --state-dir "${STATE_DIR}" --observations "${OBSERVATIONS}" \
   --surface "${SURFACE}" --out "${BREAKER_OUT}"
 
+INVENTORY_SOURCE="${RUN_DIR}/N1-inventory-source.json"
+run_step "N1-inventory-source" "${INVENTORY_SOURCE}" \
+  python3 - "${INDEX}" "${INVENTORY_SOURCE}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index = Path(sys.argv[1])
+out = Path(sys.argv[2])
+rows = [
+    json.loads(line)
+    for line in index.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if not rows or any(not isinstance(row, dict) for row in rows):
+    raise SystemExit("canonical inventory index must contain JSON object rows")
+out.write_text(
+    json.dumps({"status": "prepared", "items": rows}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
 INVENTORY_OUT="${RUN_DIR}/N1-inventory.json"
 run_step "N1-inventory" "${INVENTORY_OUT}" \
   python3 "${RUNTIME_DIR}/inventory_backcatalog.py" \
-  --state-dir "${STATE_DIR}" --index "${INDEX}" --out "${INVENTORY_OUT}"
+  --state-dir "${STATE_DIR}" --items "${INVENTORY_SOURCE}" \
+  --index "${INDEX}" --out "${INVENTORY_OUT}"
 
-RESOLVED_OUT="${RUN_DIR}/S1-resolved.json"
-run_step "S1-resolve" "${RESOLVED_OUT}" \
-  python3 "${RUNTIME_DIR}/guards.py" resolve \
-  --state-dir "${STATE_DIR}" --item "${INVENTORY_OUT}" --index "${INDEX}" \
-  --surface "${SURFACE}" --out "${RESOLVED_OUT}"
+INDEX_INSTALLED="${RUN_DIR}/N1-index-installed.json"
+run_step "N1-index-install" "${INDEX_INSTALLED}" \
+  python3 - "${INVENTORY_OUT}" "${INDEX}" "${INDEX_INSTALLED}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+index = Path(sys.argv[2])
+receipt = Path(sys.argv[3])
+rows = [
+    json.loads(line)
+    for line in source.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if not rows or any(not isinstance(row, dict) for row in rows):
+    raise SystemExit("refreshed inventory must contain JSON object rows")
+index.parent.mkdir(parents=True, exist_ok=True)
+temporary = index.with_name(f".{index.name}.{os.getpid()}.tmp")
+temporary.write_text(
+    "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+    encoding="utf-8",
+)
+os.replace(temporary, index)
+receipt.write_text(
+    json.dumps(
+        {"status": "installed", "index": index.name, "row_count": len(rows)},
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
 
 CANDIDATE_OUT="${RUN_DIR}/N2-candidate.json"
 run_step "N2-select" "${CANDIDATE_OUT}" \
   python3 "${RUNTIME_DIR}/select_candidate.py" \
-  --state-dir "${STATE_DIR}" --inventory "${RESOLVED_OUT}" --out "${CANDIDATE_OUT}"
+  --state-dir "${STATE_DIR}" --index "${INDEX}" \
+  --suppression "${SUPPRESSION}" --out "${CANDIDATE_OUT}"
+
+RESOLVE_INDEX="${RUN_DIR}/S1-index.json"
+run_step "S1-index-view" "${RESOLVE_INDEX}" \
+  python3 - "${INDEX}" "${RESOLVE_INDEX}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index = Path(sys.argv[1])
+out = Path(sys.argv[2])
+rows = [
+    json.loads(line)
+    for line in index.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if not rows or any(not isinstance(row, dict) for row in rows):
+    raise SystemExit("canonical identity index must contain JSON object rows")
+out.write_text(
+    json.dumps({"status": "prepared", "items": rows}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
+# guards.py resolve validates one selected candidate's item_id/source_type/url
+# against exactly one row in a single JSON index document. It cannot consume
+# N1's JSONL refresh receipt, so N2 selects from the canonical JSONL index first
+# and S1 then resolves that candidate through a JSON view of the same rows.
+RESOLVED_OUT="${RUN_DIR}/S1-resolved.json"
+run_step "S1-resolve" "${RESOLVED_OUT}" \
+  python3 "${RUNTIME_DIR}/guards.py" resolve \
+  --state-dir "${STATE_DIR}" --item "${CANDIDATE_OUT}" \
+  --index "${RESOLVE_INDEX}" --surface "${SURFACE}" --out "${RESOLVED_OUT}"
 
 ELIGIBLE_OUT="${RUN_DIR}/S2-eligible.json"
 run_step "S2-eligibility" "${ELIGIBLE_OUT}" \
   python3 "${RUNTIME_DIR}/guards.py" eligibility \
-  --state-dir "${STATE_DIR}" --item "${CANDIDATE_OUT}" \
+  --state-dir "${STATE_DIR}" --item "${RESOLVED_OUT}" \
   --suppression "${SUPPRESSION}" --approvals "${APPROVALS}" \
   --out "${ELIGIBLE_OUT}"
+
+CONTEXT_PACKET="${RUN_DIR}/N3-brand-offer.json"
+run_step "N3-brand-offer" "${CONTEXT_PACKET}" \
+  python3 - "${BRAND}" "${OFFER}" "${CONTEXT_PACKET}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+brand_source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+offer_source = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if not isinstance(brand_source, dict) or not isinstance(offer_source, dict):
+    raise SystemExit("brand and offer sources must be JSON objects")
+brand = brand_source.get("brand", brand_source)
+offer = offer_source.get("offer", offer_source)
+out = Path(sys.argv[3])
+out.write_text(
+    json.dumps(
+        {
+            "status": "prepared",
+            "brand": brand,
+            "offer": offer,
+        },
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
 
 CONTEXT_OUT="${RUN_DIR}/N3-context.json"
 run_step "N3-assemble-context" "${CONTEXT_OUT}" \
   python3 "${RUNTIME_DIR}/assemble_context.py" \
   --state-dir "${STATE_DIR}" --candidate "${ELIGIBLE_OUT}" \
-  --brand "${BRAND}" --offer "${OFFER}" --out "${CONTEXT_OUT}"
+  --brand "${CONTEXT_PACKET}" --out "${CONTEXT_OUT}"
 
 SANITIZED_OUT="${RUN_DIR}/S3-sanitized.json"
 run_step "S3-privacy" "${SANITIZED_OUT}" \
@@ -183,16 +307,40 @@ run_step "S8-budget" "${MODEL_TOKEN}" \
   python3 "${RUNTIME_DIR}/kernel_bridge.py" authorize-model \
   --state-dir "${STATE_DIR}" --bundle "${SANITIZED_OUT}" --out "${MODEL_TOKEN}"
 
+DRAFT_RAW="${RUN_DIR}/N4-draft-r1-raw.json"
+run_step "N4-draft-r1-raw" "${DRAFT_RAW}" \
+  python3 "${RUNTIME_DIR}/draft_post.py" \
+  --state-dir "${STATE_DIR}" --out "${DRAFT_RAW}" \
+  --bundle "${SANITIZED_OUT}" --surface "${SURFACE}" \
+  --engine "${DRAFT_ENGINE}" --engines-file "${ENGINES_FILE}" \
+  --engine-timeout "${ENGINE_TIMEOUT}"
+
+# draft_post numbers an initial draft as round 0, while dispatch.py requires a
+# positive round. Normalize the first completed draft to publishing round 1.
 DRAFT_OUT="${RUN_DIR}/N4-draft-r1.json"
 run_step "N4-draft-r1" "${DRAFT_OUT}" \
-  python3 "${RUNTIME_DIR}/draft_post.py" \
-  --state-dir "${STATE_DIR}" --bundle "${SANITIZED_OUT}" \
-  --model-token "${MODEL_TOKEN}" --round 1 --out "${DRAFT_OUT}"
+  python3 - "${DRAFT_RAW}" "${DRAFT_OUT}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(source, dict) or source.get("round") != 0:
+    raise SystemExit("initial draft must be a JSON object with round 0")
+source["round"] = 1
+Path(sys.argv[2]).write_text(
+    json.dumps(source, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
 
 QA_OUT="${RUN_DIR}/N5-qa-r1.json"
 run_step "N5-qa-r1" "${QA_OUT}" \
   python3 "${RUNTIME_DIR}/qa_post.py" \
-  --state-dir "${STATE_DIR}" --draft "${DRAFT_OUT}" --round 1 --out "${QA_OUT}"
+  --state-dir "${STATE_DIR}" --out "${QA_OUT}" \
+  --draft "${DRAFT_OUT}" --bundle "${SANITIZED_OUT}" \
+  --engine "${QA_ENGINE}" --engines-file "${ENGINES_FILE}" \
+  --engine-timeout "${ENGINE_TIMEOUT}"
 
 QA_PASS="$(python3 - "${QA_OUT}" <<'PY'
 import json
@@ -204,14 +352,19 @@ if test "${QA_PASS}" != "yes"; then
   EDITED_DRAFT="${RUN_DIR}/N4-draft-r2.json"
   run_step "N4-draft-r2" "${EDITED_DRAFT}" \
     python3 "${RUNTIME_DIR}/draft_post.py" \
-    --state-dir "${STATE_DIR}" --bundle "${SANITIZED_OUT}" \
-    --model-token "${MODEL_TOKEN}" --prior-draft "${DRAFT_OUT}" \
-    --defects "${QA_OUT}" --round 2 --out "${EDITED_DRAFT}"
+    --state-dir "${STATE_DIR}" --out "${EDITED_DRAFT}" \
+    --bundle "${SANITIZED_OUT}" --surface "${SURFACE}" \
+    --engine "${DRAFT_ENGINE}" --engines-file "${ENGINES_FILE}" \
+    --revise --prior-draft "${DRAFT_OUT}" --qa-report "${QA_OUT}" \
+    --engine-timeout "${ENGINE_TIMEOUT}"
   DRAFT_OUT="${EDITED_DRAFT}"
   QA_OUT="${RUN_DIR}/N5-qa-r2.json"
   run_step "N5-qa-r2" "${QA_OUT}" \
     python3 "${RUNTIME_DIR}/qa_post.py" \
-    --state-dir "${STATE_DIR}" --draft "${DRAFT_OUT}" --round 2 --out "${QA_OUT}"
+    --state-dir "${STATE_DIR}" --out "${QA_OUT}" \
+    --draft "${DRAFT_OUT}" --bundle "${SANITIZED_OUT}" \
+    --engine "${QA_ENGINE}" --engines-file "${ENGINES_FILE}" \
+    --engine-timeout "${ENGINE_TIMEOUT}"
   QA_PASS="$(python3 - "${QA_OUT}" <<'PY'
 import json
 import sys
@@ -242,11 +395,13 @@ run_step "S7-breaker-pre-dispatch" "${BREAKER_PRE_DISPATCH_OUT}" \
   --surface "${SURFACE}" --out "${BREAKER_PRE_DISPATCH_OUT}"
 
 DISPATCH_OUT="${RUN_DIR}/N6-dispatch.json"
+SIMULATE_SINK="${RUN_DIR}/simulate-delivery.jsonl"
 run_step "N6-dispatch" "${DISPATCH_OUT}" \
   python3 "${RUNTIME_DIR}/dispatch.py" \
   --state-dir "${STATE_DIR}" --draft "${DRAFT_OUT}" \
   --qa-report "${QA_OUT}" --token "${DISPATCH_TOKEN}" \
-  --surface-counts "${SURFACE_COUNTS}" --out "${DISPATCH_OUT}"
+  --surface-counts "${SURFACE_COUNTS}" --simulate-sink "${SIMULATE_SINK}" \
+  --out "${DISPATCH_OUT}"
 
 DISPATCH_STATUS="$(python3 - "${DISPATCH_OUT}" <<'PY'
 import json
@@ -265,7 +420,8 @@ fi
 VERIFY_OUT="${RUN_DIR}/N7-delivery-verification.json"
 run_step "N7-delivery-verify" "${VERIFY_OUT}" \
   python3 "${RUNTIME_DIR}/delivery_verify.py" \
-  --state-dir "${STATE_DIR}" --receipt "${DISPATCH_OUT}" --out "${VERIFY_OUT}"
+  --state-dir "${STATE_DIR}" --receipt "${DISPATCH_OUT}" \
+  --simulate-sink "${SIMULATE_SINK}" --out "${VERIFY_OUT}"
 
 RECORD_OUT="${RUN_DIR}/N9-record.json"
 run_step "N9-record" "${RECORD_OUT}" \
