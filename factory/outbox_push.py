@@ -141,6 +141,18 @@ def _state(cursor: dict[str, Any], watch_path: str) -> dict[str, Any]:
     return value
 
 
+def _row_summary(row: dict[str, Any]) -> str:
+    """The row's own one-line summary (eli5/issue/question), for titles."""
+    return next(
+        (
+            row.get(field)
+            for field in ("eli5", "issue", "question")
+            if isinstance(row.get(field), str) and row.get(field)
+        ),
+        "",
+    )
+
+
 def _sanitized_text(row: dict[str, Any], department: str, kind: str) -> str:
     message = next(
         (
@@ -211,10 +223,19 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 changed = True
                 continue
             text = _sanitized_text(row, watch["department"], watch["kind"])
+            # Card shape per open-engine-card-format-v1: single-line title from the
+            # row's own summary line; human-action body LEADS with YOUR MOVE and the
+            # exact reply strings (approval grammar itself stays human-only).
+            summary_line = " ".join(_row_summary(row).split())[:80] or f"{watch['kind']} row"
             values = {
                 "text": text,
-                "title": f"[{watch['department']}] {watch['kind']}: {text[:80]}",
-                "body": text + "\n\nReply on this card: first line APPROVE or SKIP.",
+                "title": f"[{watch['department']}] {watch['kind']}: {summary_line}",
+                "body": (
+                    "## YOUR MOVE (10 seconds)\n"
+                    f"{summary_line}\n"
+                    "Reply with first line: APPROVE (confirm/apply) or SKIP (dismiss).\n\n"
+                    "## Detail\n" + text
+                ),
                 "department": watch["department"],
                 "kind": watch["kind"],
             }
