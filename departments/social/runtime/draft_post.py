@@ -132,6 +132,7 @@ def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
 def _engine_argv(
     engine: str,
     engines_file: Path,
+    prompt: str,
     prompt_file: Path,
     allowed_engines: frozenset[str],
 ) -> list[str]:
@@ -143,10 +144,18 @@ def _engine_argv(
     engines = _load_engines(engines_file)
     if engine not in engines:
         raise GateBlocked(f"allowlisted engine {engine!r} is absent from engines file")
+    template = engines[engine]
+    if not any(
+        "{prompt}" in part or "{prompt_file}" in part
+        for part in template
+    ):
+        raise GateBlocked(
+            f"engine {engine!r} argv must contain {{prompt}} or {{prompt_file}}"
+        )
     try:
         return [
-            part.format(prompt_file=str(prompt_file))
-            for part in engines[engine]
+            part.format(prompt=prompt, prompt_file=str(prompt_file))
+            for part in template
         ]
     except (KeyError, ValueError) as exc:
         raise GateBlocked(f"engine {engine!r} has an invalid argv template: {exc}") from exc
@@ -196,7 +205,13 @@ def _call_engine(
     with tempfile.TemporaryDirectory(prefix="social-draft-", dir=state_dir) as temp_dir:
         prompt_file = Path(temp_dir) / "prompt.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
-        argv = _engine_argv(engine, engines_file, prompt_file, allowed_engines)
+        argv = _engine_argv(
+            engine,
+            engines_file,
+            prompt,
+            prompt_file,
+            allowed_engines,
+        )
 
         def runner(_prompt: str) -> str:
             return _run_argv(argv, timeout)

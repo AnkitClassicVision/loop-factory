@@ -147,6 +147,27 @@ def _fake_engine(path: Path, payload: dict) -> Path:
     return path
 
 
+def _fake_qa_sequence_engine(path: Path, responses: list[object]) -> tuple[Path, Path]:
+    count_path = path.with_name(path.name + ".count")
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "from pathlib import Path\n"
+        f"count_path = Path({str(count_path)!r})\n"
+        f"responses = {responses!r}\n"
+        "count = int(count_path.read_text(encoding='utf-8')) if count_path.exists() else 0\n"
+        "count_path.write_text(str(count + 1), encoding='utf-8')\n"
+        "response = responses[min(count, len(responses) - 1)]\n"
+        "if isinstance(response, str):\n"
+        "    print(response)\n"
+        "else:\n"
+        "    print(json.dumps(response))\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path, count_path
+
+
 def test_shadow_dispatch_uses_kernel_simulates_zero_and_never_calls_zernio(
     tmp_path, monkeypatch
 ):
@@ -375,8 +396,8 @@ def test_daily_driver_runs_real_end_to_end_in_shadow(tmp_path, monkeypatch):
     engines_file = _write_json(
         state / "engines.yaml",
         {
-            "codex_oauth": [str(draft_engine), "{prompt_file}"],
-            "claude_subscription": [str(qa_engine), "{prompt_file}"],
+            "codex_oauth": [str(draft_engine), "{prompt}"],
+            "claude_subscription": [str(qa_engine), "{prompt}"],
         },
     )
     marker = tmp_path / "zernio-called"
@@ -445,6 +466,127 @@ def test_daily_driver_runs_real_end_to_end_in_shadow(tmp_path, monkeypatch):
     ]
     assert len(run_rows) == 1
     assert run_rows[0]["node"] == "SG-REPUBLISH"
+
+
+def _run_real_daily_with_qa_responses(
+    tmp_path: Path,
+    monkeypatch,
+    responses: list[object],
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    state = tmp_path / "state"
+    items = _seed_daily_state(tmp_path, state)
+    draft_engine = _fake_engine(
+        tmp_path / "fake-draft-engine",
+        {
+            "body": (
+                "A durable operating lesson from the original source. "
+                "https://example.invalid/book"
+            ),
+            "cta_url": "https://example.invalid/book",
+            "sources": [
+                {
+                    "claim": "A durable operating lesson from the original source.",
+                    "source": items[0]["url"],
+                }
+            ],
+        },
+    )
+    qa_engine, qa_count = _fake_qa_sequence_engine(
+        tmp_path / "fake-qa-engine",
+        responses,
+    )
+    engines_file = _write_json(
+        state / "engines.yaml",
+        {
+            "codex_oauth": [str(draft_engine), "{prompt}"],
+            "claude_subscription": [str(qa_engine), "{prompt}"],
+        },
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_zernio = _fake_command(
+        fake_bin,
+        {"id": "must-not-run"},
+        tmp_path / "zernio-called",
+    )
+    fake_zernio.rename(fake_bin / "zernio")
+    monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", "obviously-fake-test-key")
+    monkeypatch.setenv("SOCIAL_STATE_DIR", str(state))
+    monkeypatch.setenv("SOCIAL_ENGINES_FILE", str(engines_file))
+    monkeypatch.setenv("SOCIAL_QA_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.setenv(
+        "PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", "")
+    )
+    script = Path(__file__).parents[1] / "runtime" / "social_daily.sh"
+
+    completed = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    run_dir = next((state / "receipts").iterdir())
+    return completed, state, run_dir, qa_count
+
+
+def test_daily_retries_qa_engine_without_consuming_edit_round(tmp_path, monkeypatch):
+    completed, _, run_dir, qa_count = _run_real_daily_with_qa_responses(
+        tmp_path,
+        monkeypatch,
+        ["not json", "still not json", {"defects": []}],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert qa_count.read_text(encoding="utf-8") == "3"
+    assert (run_dir / "N5-qa-r1.json").exists()
+    assert (run_dir / "N5-qa-r1-try2.json").exists()
+    assert (run_dir / "N5-qa-r1-try3.json").exists()
+    assert not (run_dir / "N4-draft-r2.json").exists()
+    assert (run_dir / "N6-dispatch.json").exists()
+
+
+def test_daily_quarantines_exhausted_qa_engine_retries(tmp_path, monkeypatch):
+    completed, state, run_dir, qa_count = _run_real_daily_with_qa_responses(
+        tmp_path,
+        monkeypatch,
+        ["not json"],
+    )
+    incidents = json.loads(
+        (state / "incident_candidates.json").read_text(encoding="utf-8")
+    )
+
+    assert completed.returncode == 2
+    assert "qa engine unavailable after three attempts" in completed.stderr
+    assert qa_count.read_text(encoding="utf-8") == "3"
+    assert incidents[-1]["failure_class"] == "engine_unavailable"
+    assert incidents[-1]["subject"] == "N5-qa-engine-unavailable"
+    assert (run_dir / "N5-qa-r1-try3.json").exists()
+    assert not (run_dir / "N4-draft-r2.json").exists()
+    assert not (run_dir / "N6-dispatch.json").exists()
+
+
+def test_daily_content_defects_keep_two_round_edit_behavior(tmp_path, monkeypatch):
+    content_defect = {
+        "defects": [{"code": "voice", "detail": "synthetic content defect"}]
+    }
+    completed, state, run_dir, qa_count = _run_real_daily_with_qa_responses(
+        tmp_path,
+        monkeypatch,
+        [content_defect],
+    )
+    incidents = json.loads(
+        (state / "incident_candidates.json").read_text(encoding="utf-8")
+    )
+
+    assert completed.returncode == 2
+    assert "qa did not converge within two rounds" in completed.stderr
+    assert qa_count.read_text(encoding="utf-8") == "2"
+    assert incidents[-1]["failure_class"] == "qa_non_convergence"
+    assert (run_dir / "N4-draft-r2.json").exists()
+    assert (run_dir / "N5-qa-r2.json").exists()
+    assert not (run_dir / "N5-qa-r1-try2.json").exists()
+    assert not (run_dir / "N5-qa-r2-try2.json").exists()
+    assert not (run_dir / "N6-dispatch.json").exists()
 
 
 def _fake_daily_python(

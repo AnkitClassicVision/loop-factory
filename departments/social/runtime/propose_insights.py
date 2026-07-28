@@ -6,6 +6,7 @@ import json
 import logging
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,7 +45,11 @@ def _engine_allowlist(charter_path: str | Path) -> frozenset[str]:
 
 
 def _engine_command(
-    engines_file: str | Path, engine: str, allowed_engines: frozenset[str]
+    engines_file: str | Path,
+    engine: str,
+    prompt: str,
+    prompt_file: Path,
+    allowed_engines: frozenset[str],
 ) -> list[str]:
     if engine not in allowed_engines:
         raise ValueError(f"engine {engine!r} is not subscription/OAuth allowlisted")
@@ -61,13 +66,27 @@ def _engine_command(
         raise ValueError(f"engine {engine!r} has no valid command in {engines_file}")
     if not command:
         raise ValueError(f"engine {engine!r} command is empty")
-    return command
+    if not any(
+        "{prompt}" in part or "{prompt_file}" in part
+        for part in command
+    ):
+        raise ValueError(
+            f"engine {engine!r} command must contain {{prompt}} or {{prompt_file}}"
+        )
+    try:
+        return [
+            part.format(prompt=prompt, prompt_file=str(prompt_file))
+            for part in command
+        ]
+    except (KeyError, ValueError) as exc:
+        raise ValueError(
+            f"engine {engine!r} has an invalid command template: {exc}"
+        ) from exc
 
 
 def _subprocess_runner(command: list[str], prompt: str) -> str:
     completed = subprocess.run(
         command,
-        input=prompt,
         text=True,
         capture_output=True,
         check=False,
@@ -77,6 +96,33 @@ def _subprocess_runner(command: list[str], prompt: str) -> str:
             f"engine exited {completed.returncode}: {completed.stderr.strip()}"
         )
     return completed.stdout
+
+
+def _call_engine(
+    prompt: str,
+    *,
+    state_dir: str | Path,
+    engines_file: str | Path,
+    engine: str,
+    allowed_engines: frozenset[str],
+    runner: Runner = _subprocess_runner,
+) -> str:
+    state_path = Path(state_dir)
+    state_path.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="social-insights-",
+        dir=state_path,
+    ) as temp_dir:
+        prompt_file = Path(temp_dir) / "prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        command = _engine_command(
+            engines_file,
+            engine,
+            prompt,
+            prompt_file,
+            allowed_engines,
+        )
+        return runner(command, prompt)
 
 
 def _prompt(evidence_pack: dict[str, Any]) -> str:
@@ -171,13 +217,14 @@ def main() -> int:
     try:
         evidence_pack = _load_json(args.evidence_pack)
         allowed_engines = _engine_allowlist(args.charter)
-        command = _engine_command(args.engines_file, args.engine, allowed_engines)
-        cards = propose(
-            evidence_pack,
+        response = _call_engine(
+            _prompt(evidence_pack),
+            state_dir=args.state_dir,
+            engines_file=args.engines_file,
             engine=args.engine,
-            command=command,
             allowed_engines=allowed_engines,
         )
+        cards = validate_proposals(json.loads(response), evidence_pack)
     except FileNotFoundError as exc:
         LOGGER.error("%s", exc)
         _write_json(args.out, {"status": "missing", "reason": str(exc)})

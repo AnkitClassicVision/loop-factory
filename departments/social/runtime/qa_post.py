@@ -151,14 +151,27 @@ def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
         raise GateBlocked(f"charter policy invalid: {exc}") from exc
 
 
-def _engine_argv(engine: str, engines_file: Path, prompt_file: Path) -> list[str]:
+def _engine_argv(
+    engine: str,
+    engines_file: Path,
+    prompt: str,
+    prompt_file: Path,
+) -> list[str]:
     engines = _load_engines(engines_file)
     if engine not in engines:
         raise EngineUnavailable(f"allowlisted engine {engine!r} is absent from engines file")
+    template = engines[engine]
+    if not any(
+        "{prompt}" in part or "{prompt_file}" in part
+        for part in template
+    ):
+        raise EngineUnavailable(
+            f"engine {engine!r} argv must contain {{prompt}} or {{prompt_file}}"
+        )
     try:
         return [
-            part.format(prompt_file=str(prompt_file))
-            for part in engines[engine]
+            part.format(prompt=prompt, prompt_file=str(prompt_file))
+            for part in template
         ]
     except (KeyError, ValueError) as exc:
         raise EngineUnavailable(
@@ -209,7 +222,7 @@ def _call_engine(
     with tempfile.TemporaryDirectory(prefix="social-qa-", dir=state_dir) as temp_dir:
         prompt_file = Path(temp_dir) / "prompt.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
-        argv = _engine_argv(engine, engines_file, prompt_file)
+        argv = _engine_argv(engine, engines_file, prompt, prompt_file)
 
         def runner(_prompt: str) -> str:
             return _run_argv(argv, timeout)

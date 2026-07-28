@@ -70,6 +70,7 @@ def _fake_engine(
     crash: bool = False,
     source_ref: str = "https://example.test/archive",
     prompt_capture: Path | None = None,
+    placeholder: str = "{prompt}",
 ) -> tuple[Path, Path]:
     script = tmp_path / ("crash_engine.py" if crash else "fake_engine.py")
     if crash:
@@ -87,7 +88,17 @@ def _fake_engine(
         )
         script.write_text(
             "import json, pathlib, sys\n"
-            "prompt = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
+            + (
+                "if len(sys.argv) != 2 or "
+                "'Obviously Fake Archive Item' not in sys.argv[1]:\n"
+                "    raise SystemExit('prompt content was not one argv element')\n"
+                "prompt = sys.argv[1]\n"
+                if placeholder == "{prompt}"
+                else
+                "if len(sys.argv) != 2:\n"
+                "    raise SystemExit('prompt file was not one argv element')\n"
+                "prompt = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
+            )
             + capture_line
             + "if 'cross-model voice' in prompt:\n"
             "    result = {'defects': []}\n"
@@ -108,15 +119,15 @@ def _fake_engine(
         "codex_oauth:\n"
         f"  - {json.dumps(sys.executable)}\n"
         f"  - {json.dumps(str(script))}\n"
-        "  - \"{prompt_file}\"\n"
+        f"  - {json.dumps(placeholder)}\n"
         "claude_subscription:\n"
         f"  - {json.dumps(sys.executable)}\n"
         f"  - {json.dumps(str(script))}\n"
-        "  - \"{prompt_file}\"\n"
+        f"  - {json.dumps(placeholder)}\n"
         "fixture_engine:\n"
         f"  - {json.dumps(sys.executable)}\n"
         f"  - {json.dumps(str(script))}\n"
-        "  - \"{prompt_file}\"\n",
+        f"  - {json.dumps(placeholder)}\n",
         encoding="utf-8",
     )
     return script, engines
@@ -235,6 +246,71 @@ def test_engine_allowlist_refuses_unknown_engine(tmp_path):
     assert completed.returncode == 2
     assert output["status"] == "blocked"
     assert "not allowlisted" in " ".join(output["reasons"])
+
+
+def test_prompt_placeholder_passes_full_prompt_as_one_argv_element(tmp_path):
+    prompt_capture = tmp_path / "prompt-content.txt"
+    _, engines_file = _fake_engine(tmp_path, prompt_capture=prompt_capture)
+
+    completed, _, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+
+    prompt = prompt_capture.read_text(encoding="utf-8")
+    assert completed.returncode == 0
+    assert "Obviously Fake Archive Item" in prompt
+    assert "\n" in prompt
+
+
+def test_prompt_file_placeholder_remains_supported(tmp_path):
+    _, engines_file = _fake_engine(tmp_path, placeholder="{prompt_file}")
+
+    drafted, _, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+    reviewed, report, _ = _run_qa(
+        tmp_path,
+        _draft("A clean archive idea. https://example.test/book"),
+        engines_file=engines_file,
+    )
+
+    assert drafted.returncode == 0
+    assert reviewed.returncode == 0
+    assert report["pass"] is True
+
+
+def test_engine_template_without_prompt_placeholder_is_rejected(tmp_path):
+    script, _ = _fake_engine(tmp_path)
+    engines_file = _write_json(
+        tmp_path / "missing-placeholder-engines.json",
+        {
+            "codex_oauth": [sys.executable, str(script)],
+            "claude_subscription": [sys.executable, str(script)],
+        },
+    )
+
+    drafted, draft_output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+    reviewed, qa_output, _ = _run_qa(
+        tmp_path,
+        _draft("A clean archive idea. https://example.test/book"),
+        engines_file=engines_file,
+    )
+
+    assert drafted.returncode == 2
+    assert "must contain {prompt} or {prompt_file}" in " ".join(
+        draft_output["reasons"]
+    )
+    assert reviewed.returncode == 0
+    assert _codes(qa_output) == ["qa_engine_unavailable"]
+    assert "must contain {prompt} or {prompt_file}" in qa_output["defects"][0]["detail"]
 
 
 def test_qa_refuses_same_engine_as_draft(tmp_path):

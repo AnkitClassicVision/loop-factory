@@ -224,6 +224,64 @@ def test_fake_engine_adapter_accepts_only_grounded_cards():
     ]
 
 
+@pytest.mark.parametrize("placeholder", ["{prompt}", "{prompt_file}"])
+def test_propose_engine_placeholders_pass_the_complete_prompt(
+    tmp_path,
+    placeholder,
+):
+    engine = tmp_path / "fake-proposal-engine.py"
+    if placeholder == "{prompt}":
+        prompt_loader = "prompt = sys.argv[1]\n"
+    else:
+        prompt_loader = (
+            "prompt = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
+        )
+    engine.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        "if len(sys.argv) != 2:\n"
+        "    raise SystemExit('prompt was not one argv element')\n"
+        + prompt_loader
+        + "if 'sense-engagement-1' not in prompt:\n"
+        "    raise SystemExit('prompt marker missing')\n"
+        "sys.stdout.write('[]')\n",
+        encoding="utf-8",
+    )
+    engine.chmod(0o755)
+    engines_file = tmp_path / "engines.yaml"
+    engines_file.write_text(
+        yaml.safe_dump({"test_subscription": [str(engine), placeholder]}),
+        encoding="utf-8",
+    )
+
+    response = propose_insights._call_engine(
+        propose_insights._prompt(_pack()),
+        state_dir=tmp_path / "state",
+        engines_file=engines_file,
+        engine="test_subscription",
+        allowed_engines=frozenset({"test_subscription"}),
+    )
+
+    assert json.loads(response) == []
+
+
+def test_propose_engine_template_without_prompt_placeholder_is_rejected(tmp_path):
+    engines_file = tmp_path / "engines.yaml"
+    engines_file.write_text(
+        yaml.safe_dump({"test_subscription": ["fake-engine"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"must contain \{prompt\} or \{prompt_file\}"):
+        propose_insights._call_engine(
+            propose_insights._prompt(_pack()),
+            state_dir=tmp_path / "state",
+            engines_file=engines_file,
+            engine="test_subscription",
+            allowed_engines=frozenset({"test_subscription"}),
+        )
+
+
 def test_outbox_is_idempotent_and_card_has_one_question_and_ttl(tmp_path):
     card = {
         "question": "Approve updating the drafting prompt?",

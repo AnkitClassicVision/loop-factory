@@ -19,6 +19,7 @@ DRAFT_ENGINE="${SOCIAL_DRAFT_ENGINE:-codex_oauth}"
 QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
 ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
 ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-300}"
+QA_RETRY_BACKOFF_SECONDS="${SOCIAL_QA_RETRY_BACKOFF_SECONDS:-1}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="${STATE_DIR}/receipts/${RUN_ID}"
 INCIDENTS="${STATE_DIR}/incident_candidates.json"
@@ -89,6 +90,28 @@ raise SystemExit(0 if valid else 1)
 PY
 }
 
+qa_has_only_engine_unavailable() {
+  local receipt="$1"
+  python3 - "${receipt}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+defects = report.get("defects") if isinstance(report, dict) else None
+only_unavailable = (
+    isinstance(defects, list)
+    and bool(defects)
+    and all(
+        isinstance(defect, dict)
+        and defect.get("code") == "qa_engine_unavailable"
+        for defect in defects
+    )
+)
+raise SystemExit(0 if only_unavailable else 1)
+PY
+}
+
 require_node() {
   local name="$1"
   local path="${RUNTIME_DIR}/${name}.py"
@@ -122,6 +145,40 @@ run_step() {
     echo "step blocked: ${node}: exit ${rc}" >&2
     exit "${rc}"
   fi
+}
+
+run_qa_round() {
+  local round_number="$1"
+  local draft="$2"
+  local attempt=1
+  local node
+
+  QA_ENGINE_UNAVAILABLE_EXHAUSTED="no"
+  while test "${attempt}" -le 3; do
+    node="N5-qa-r${round_number}"
+    if test "${attempt}" -gt 1; then
+      node="${node}-try${attempt}"
+    fi
+    QA_OUT="${RUN_DIR}/${node}.json"
+    run_step "${node}" "${QA_OUT}" \
+      python3 "${RUNTIME_DIR}/qa_post.py" \
+      --state-dir "${STATE_DIR}" --out "${QA_OUT}" \
+      --draft "${draft}" --bundle "${SANITIZED_OUT}" \
+      --engine "${QA_ENGINE}" --engines-file "${ENGINES_FILE}" \
+      --engine-timeout "${ENGINE_TIMEOUT}"
+
+    if ! qa_has_only_engine_unavailable "${QA_OUT}"; then
+      return
+    fi
+    if test "${attempt}" -eq 3; then
+      QA_ENGINE_UNAVAILABLE_EXHAUSTED="yes"
+      return
+    fi
+    if test "${QA_RETRY_BACKOFF_SECONDS}" -gt 0; then
+      sleep "$((attempt * QA_RETRY_BACKOFF_SECONDS))"
+    fi
+    attempt=$((attempt + 1))
+  done
 }
 
 if test -f "${STATE_DIR}/KILLED"; then
@@ -334,13 +391,13 @@ Path(sys.argv[2]).write_text(
 )
 PY
 
-QA_OUT="${RUN_DIR}/N5-qa-r1.json"
-run_step "N5-qa-r1" "${QA_OUT}" \
-  python3 "${RUNTIME_DIR}/qa_post.py" \
-  --state-dir "${STATE_DIR}" --out "${QA_OUT}" \
-  --draft "${DRAFT_OUT}" --bundle "${SANITIZED_OUT}" \
-  --engine "${QA_ENGINE}" --engines-file "${ENGINES_FILE}" \
-  --engine-timeout "${ENGINE_TIMEOUT}"
+run_qa_round 1 "${DRAFT_OUT}"
+if test "${QA_ENGINE_UNAVAILABLE_EXHAUSTED}" = "yes"; then
+  incident_receipt_failure \
+    "N5-qa-engine-unavailable" "${QA_OUT}" "engine_unavailable"
+  echo "qa engine unavailable after three attempts" >&2
+  exit 2
+fi
 
 QA_PASS="$(python3 - "${QA_OUT}" <<'PY'
 import json
@@ -358,13 +415,13 @@ if test "${QA_PASS}" != "yes"; then
     --revise --prior-draft "${DRAFT_OUT}" --qa-report "${QA_OUT}" \
     --engine-timeout "${ENGINE_TIMEOUT}"
   DRAFT_OUT="${EDITED_DRAFT}"
-  QA_OUT="${RUN_DIR}/N5-qa-r2.json"
-  run_step "N5-qa-r2" "${QA_OUT}" \
-    python3 "${RUNTIME_DIR}/qa_post.py" \
-    --state-dir "${STATE_DIR}" --out "${QA_OUT}" \
-    --draft "${DRAFT_OUT}" --bundle "${SANITIZED_OUT}" \
-    --engine "${QA_ENGINE}" --engines-file "${ENGINES_FILE}" \
-    --engine-timeout "${ENGINE_TIMEOUT}"
+  run_qa_round 2 "${DRAFT_OUT}"
+  if test "${QA_ENGINE_UNAVAILABLE_EXHAUSTED}" = "yes"; then
+    incident_receipt_failure \
+      "N5-qa-engine-unavailable" "${QA_OUT}" "engine_unavailable"
+    echo "qa engine unavailable after three attempts" >&2
+    exit 2
+  fi
   QA_PASS="$(python3 - "${QA_OUT}" <<'PY'
 import json
 import sys
