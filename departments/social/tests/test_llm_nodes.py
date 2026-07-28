@@ -1,0 +1,358 @@
+"""Contract tests for social N4 draft_post and N5 qa_post."""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[3]
+DRAFT_NODE = ROOT / "departments" / "social" / "runtime" / "draft_post.py"
+QA_NODE = ROOT / "departments" / "social" / "runtime" / "qa_post.py"
+
+
+def _write_json(path: Path, value) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def _bundle(*, sanitized: bool = True) -> dict:
+    return {
+        "version": "fake-v1",
+        "assembled_at": "2026-01-01T00:00:00+00:00",
+        "item": {
+            "item_id": "fake-item-1",
+            "source_type": "podcast",
+            "title": "Obviously Fake Archive Item",
+            "url": "https://example.test/archive",
+            "published_at": "2020-01-01T00:00:00+00:00",
+            "body_path": "/fixtures/fake-item.txt",
+            "last_resurfaced_at": None,
+            "prior_engagement": {"score": 1.0},
+        },
+        "body_text": "An invented fixture about careful business operations.",
+        "brand": {"name": "Example Test Brand"},
+        "offer": {"cta_url": "https://example.test/book"},
+        "complete": True,
+        "missing": [],
+        "sanitized": sanitized,
+        "redactions": 0,
+    }
+
+
+def _draft(body: str, **updates) -> dict:
+    value = {
+        "surface": "linkedin_mybcat",
+        "body": body,
+        "cta_url": "https://example.test/book",
+        "sources": [],
+        "engine": "codex_oauth",
+        "round": 0,
+    }
+    value.update(updates)
+    return value
+
+
+def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
+    script = tmp_path / ("crash_engine.py" if crash else "fake_engine.py")
+    if crash:
+        script.write_text(
+            "import sys\n"
+            "sys.stderr.write('synthetic engine outage\\n')\n"
+            "raise SystemExit(7)\n",
+            encoding="utf-8",
+        )
+    else:
+        script.write_text(
+            "import json, pathlib, sys\n"
+            "prompt = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
+            "if 'cross-model voice' in prompt:\n"
+            "    result = {'defects': []}\n"
+            "else:\n"
+            "    result = {\n"
+            "        'body': 'A useful idea from the archive. https://example.test/book',\n"
+            "        'cta_url': 'https://example.test/book',\n"
+            "        'sources': [],\n"
+            "    }\n"
+            "sys.stdout.write(json.dumps(result))\n",
+            encoding="utf-8",
+        )
+    engines = tmp_path / ("crash_engines.yaml" if crash else "engines.yaml")
+    engines.write_text(
+        "codex_oauth:\n"
+        f"  - {json.dumps(sys.executable)}\n"
+        f"  - {json.dumps(str(script))}\n"
+        "  - \"{prompt_file}\"\n"
+        "claude_subscription:\n"
+        f"  - {json.dumps(sys.executable)}\n"
+        f"  - {json.dumps(str(script))}\n"
+        "  - \"{prompt_file}\"\n",
+        encoding="utf-8",
+    )
+    return script, engines
+
+
+def _run_draft(
+    tmp_path: Path,
+    bundle: dict,
+    *,
+    engine: str = "codex_oauth",
+    engines_file: Path | None = None,
+    extra: list[str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
+    if engines_file is None:
+        _, engines_file = _fake_engine(tmp_path)
+    bundle_path = _write_json(tmp_path / "bundle.json", bundle)
+    out = tmp_path / "draft-out.json"
+    state = tmp_path / "state"
+    command = [
+        sys.executable,
+        str(DRAFT_NODE),
+        "--state-dir",
+        str(state),
+        "--out",
+        str(out),
+        "--bundle",
+        str(bundle_path),
+        "--surface",
+        "linkedin_mybcat",
+        "--engine",
+        engine,
+        "--engines-file",
+        str(engines_file),
+        "--no-kernel",
+    ]
+    command.extend(extra or [])
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    return completed, json.loads(out.read_text(encoding="utf-8")), state
+
+
+def _run_qa(
+    tmp_path: Path,
+    draft: dict,
+    *,
+    bundle: dict | None = None,
+    engine: str = "claude_subscription",
+    engines_file: Path | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
+    if engines_file is None:
+        _, engines_file = _fake_engine(tmp_path)
+    draft_path = _write_json(tmp_path / "input-draft.json", draft)
+    bundle_path = _write_json(tmp_path / "bundle.json", bundle or _bundle())
+    out = tmp_path / "qa-out.json"
+    state = tmp_path / "state"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(QA_NODE),
+            "--state-dir",
+            str(state),
+            "--out",
+            str(out),
+            "--draft",
+            str(draft_path),
+            "--bundle",
+            str(bundle_path),
+            "--engine",
+            engine,
+            "--engines-file",
+            str(engines_file),
+            "--no-kernel",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed, json.loads(out.read_text(encoding="utf-8")), state
+
+
+def _codes(report: dict) -> list[str]:
+    return [defect["code"] for defect in report["defects"]]
+
+
+def test_draft_refuses_unsanitized_bundle_and_quarantines(tmp_path):
+    completed, output, state = _run_draft(tmp_path, _bundle(sanitized=False))
+
+    assert completed.returncode == 2
+    assert output["status"] == "blocked"
+    assert "sanitized flag must be true" in " ".join(output["reasons"])
+    quarantine = json.loads(
+        (state / "quarantine" / "fake-item-1.json").read_text(encoding="utf-8")
+    )
+    assert quarantine["status"] == "blocked"
+
+
+def test_engine_allowlist_refuses_unknown_engine(tmp_path):
+    completed, output, _ = _run_draft(
+        tmp_path, _bundle(), engine="per_token_api"
+    )
+
+    assert completed.returncode == 2
+    assert output["status"] == "blocked"
+    assert "not allowlisted" in " ".join(output["reasons"])
+
+
+def test_qa_refuses_same_engine_as_draft(tmp_path):
+    completed, output, state = _run_qa(
+        tmp_path, _draft("A clean archive idea. https://example.test/book"),
+        engine="codex_oauth",
+    )
+
+    assert completed.returncode == 2
+    assert output["status"] == "blocked"
+    assert "cross-model QA required" in " ".join(output["reasons"])
+    assert (state / "quarantine" / "fake-item-1.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("draft", "expected_code"),
+    [
+        (
+            _draft("A specific idea — without hype. https://example.test/book"),
+            "em_dash",
+        ),
+        (
+            _draft("Leverage this archive idea. https://example.test/book"),
+            "banned_word",
+        ),
+        (
+            _draft(
+                "Read https://example.test/book and https://example.test/other."
+            ),
+            "cta_url_count",
+        ),
+        (
+            _draft("A" * 281, surface="x_mybcat"),
+            "surface_length_exceeded",
+        ),
+        (
+            _draft("The fixture claims 42 wins. https://example.test/book"),
+            "ungrounded_number",
+        ),
+        (
+            _draft("This week, revisit the archive. https://example.test/book"),
+            "time_anchor",
+        ),
+    ],
+    ids=["em-dash", "banned-word", "two-ctas", "length", "number", "time-anchor"],
+)
+def test_each_deterministic_defect_is_enumerated(tmp_path, draft, expected_code):
+    completed, report, _ = _run_qa(tmp_path, draft)
+
+    assert completed.returncode == 0
+    assert expected_code in _codes(report)
+    assert report["pass"] is False
+
+
+def test_deterministic_checks_stay_silent_on_clean_draft(tmp_path):
+    completed, report, _ = _run_qa(
+        tmp_path,
+        _draft("A specific archive idea. https://example.test/book"),
+    )
+
+    assert completed.returncode == 0
+    assert report == {
+        "pass": True,
+        "defects": [],
+        "engine": "claude_subscription",
+    }
+
+
+def test_qa_marks_missing_sanitized_flag_without_calling_model(tmp_path):
+    completed, report, _ = _run_qa(
+        tmp_path,
+        _draft("A specific archive idea. https://example.test/book"),
+        bundle=_bundle(sanitized=False),
+    )
+
+    assert completed.returncode == 0
+    assert _codes(report) == ["unsanitized_bundle"]
+    assert report["pass"] is False
+
+
+def test_revise_consumes_defects_and_increments_round(tmp_path):
+    _, engines_file = _fake_engine(tmp_path)
+    prior = _write_json(
+        tmp_path / "prior.json",
+        _draft(
+            "Leverage the archive. https://example.test/book",
+            round=0,
+        ),
+    )
+    report = _write_json(
+        tmp_path / "report.json",
+        {
+            "pass": False,
+            "defects": [{"code": "banned_word", "detail": "remove leverage"}],
+            "engine": "claude_subscription",
+        },
+    )
+
+    completed, output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+        extra=[
+            "--revise",
+            "--prior-draft",
+            str(prior),
+            "--qa-report",
+            str(report),
+        ],
+    )
+
+    assert completed.returncode == 0
+    assert output["round"] == 1
+    assert output["engine"] == "codex_oauth"
+
+
+def test_round_three_is_refused_and_quarantined(tmp_path):
+    _, engines_file = _fake_engine(tmp_path)
+    prior = _write_json(
+        tmp_path / "prior.json",
+        _draft("A prior draft. https://example.test/book", round=2),
+    )
+    report = _write_json(
+        tmp_path / "report.json",
+        {
+            "pass": False,
+            "defects": [{"code": "voice", "detail": "still generic"}],
+            "engine": "claude_subscription",
+        },
+    )
+
+    completed, output, state = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+        extra=[
+            "--revise",
+            "--prior-draft",
+            str(prior),
+            "--qa-report",
+            str(report),
+        ],
+    )
+
+    assert completed.returncode == 2
+    assert "maximum round 2" in " ".join(output["reasons"])
+    assert (state / "quarantine" / "fake-item-1.json").is_file()
+
+
+def test_qa_engine_crash_fails_closed(tmp_path):
+    _, engines_file = _fake_engine(tmp_path, crash=True)
+
+    completed, report, _ = _run_qa(
+        tmp_path,
+        _draft("A specific archive idea. https://example.test/book"),
+        engines_file=engines_file,
+    )
+
+    assert completed.returncode == 0
+    assert report["pass"] is False
+    assert _codes(report) == ["qa_engine_unavailable"]
+

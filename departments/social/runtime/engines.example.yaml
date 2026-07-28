@@ -1,0 +1,14 @@
+# Subscription/OAuth engines only. Runtime code substitutes {prompt_file}
+# without invoking a shell.
+codex_oauth:
+  - codex
+  - exec
+  - --sandbox
+  - read-only
+  - "{prompt_file}"
+claude_subscription:
+  - claude
+  - -p
+  - --output-format
+  - text
+  - "{prompt_file}"

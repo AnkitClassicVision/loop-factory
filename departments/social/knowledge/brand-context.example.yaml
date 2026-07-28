@@ -1,0 +1,12 @@
+# Schema example only. Replace every TODO_* value in a governed packet before use.
+contexts:
+  podcast:
+    brand:
+      name: TODO_BRAND_NAME
+      voice_notes:
+        - TODO_DESCRIBE_VOICE
+      audience: TODO_AUDIENCE
+    offer:
+      name: TODO_OFFER_NAME
+      cta_url: https://example.invalid/TODO_CTA
+      description: TODO_OFFER_DESCRIPTION
