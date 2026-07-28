@@ -88,6 +88,25 @@ def build_rows(
                 }
             )
             continue
+        verified = post.get("platform_verified")
+        if not isinstance(verified, bool):
+            rows.append(
+                {
+                    "status": "missing",
+                    "reason": "platform_verified must be an explicit boolean",
+                    "source": "zernio",
+                    "ts": now,
+                    "post_ref": post_ref,
+                    "surface": surface,
+                }
+            )
+            quarantined.append(
+                {
+                    "item_id": str(post_ref),
+                    "reason": "missing or ambiguous platform_verified; excluded from metrics",
+                }
+            )
+            continue
         metrics = post.get("metrics")
         if not isinstance(metrics, dict):
             metrics = {}
@@ -104,7 +123,6 @@ def build_rows(
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
             rows.append({**base, "metric": str(metric_name), "value": float(value)})
-        verified = post.get("platform_verified", True)
         rows.append({**base, "metric": "platform_verified", "value": 1.0 if verified else 0.0})
     return rows, quarantined
 
@@ -173,10 +191,20 @@ def main() -> None:
     rows, quarantined = build_rows(posts, now)
     write_quarantine(args.state_dir, quarantined)
     write_rows(args.out, rows)
+    usable_posts = {
+        row.get("post_ref")
+        for row in rows
+        if row.get("metric") == "platform_verified"
+    }
     logger.info(
-        "pulled %d observation rows from %d posts (%d quarantined)",
-        len(rows), len(posts), len(quarantined),
+        "pulled %d observation rows from %d posts (%d usable, %d quarantined)",
+        len(rows), len(posts), len(usable_posts), len(quarantined),
     )
+    if not usable_posts:
+        logger.error("zernio feed contained no posts with explicit verification evidence")
+        if not rows:
+            write_missing(args.out, "no usable feed evidence with explicit platform verification")
+        raise SystemExit(3)
     raise SystemExit(0)
 
 

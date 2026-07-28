@@ -30,6 +30,28 @@ logger = logging.getLogger("assemble_weekly_digest")
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "social" / "state"
 DEFAULT_CHARTER_PATH = REPO_ROOT / "departments" / "social" / "charter.yaml"
 
+METRIC_LABELS = {
+    "budget_near": "Budget near ceiling",
+    "cap_near": "Weekly posting cap near",
+    "delivery_verified_gap": "Delivery verification gap",
+    "discovery_calls_booked": "Discovery calls booked",
+    "discovery_calls_booked_by_source": "Discovery calls booked by source",
+    "dollars_used": "Dollars used",
+    "engagement_rate": "Engagement rate",
+    "engagement_rate_per_surface": "Engagement rate per surface",
+    "faux_work_signal": "Faux-work signal",
+    "gaming_signal": "Gaming signal",
+    "icaregrow_webinar_registrations": "icaregrow webinar registrations",
+    "impressions": "Impressions",
+    "likes": "Likes",
+    "model_calls_used": "Model calls used",
+    "platform_verified_delivery_pct": "Platform-verified delivery percent",
+    "podcast_dept_post_engagement": "Podcast department post engagement",
+    "posts_per_week_all_surfaces": "Posts per week across all surfaces",
+    "quarantine_backlog_items": "Quarantine backlog items",
+    "worker_minutes_used": "Worker minutes used",
+}
+
 
 class DigestInputError(RuntimeError):
     """Raised when a required digest input is missing, unreadable, or malformed."""
@@ -103,7 +125,12 @@ def post_lookup(observations: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             entry["platform_post_id"] = row["platform_post_id"]
         metric = row.get("metric")
         value = row.get("value")
-        if metric and metric != "platform_verified" and isinstance(value, (int, float)):
+        if (
+            metric in METRIC_LABELS
+            and metric != "platform_verified"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
             entry["metrics"][metric] = value
     return lookup
 
@@ -115,10 +142,22 @@ def dept_wide_metric_rows(observations: list[dict[str, Any]]) -> dict[str, dict[
         if row.get("post_ref"):
             continue
         metric = row.get("metric")
-        if not metric:
+        if metric not in METRIC_LABELS:
+            continue
+        value = row.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
             continue
         values[metric] = row
     return values
+
+
+def unrecognized_metric_count(observations: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in observations
+        if row.get("metric") not in METRIC_LABELS
+        and row.get("metric") != "platform_verified"
+    )
 
 
 def outcome_targets(charter: dict[str, Any] | None) -> dict[str, Any]:
@@ -153,6 +192,7 @@ def render_markdown(
     tbd: set[str],
     targets: dict[str, Any],
     memory_backend_state: str,
+    unrecognized_rows: int,
 ) -> str:
     lines: list[str] = ["# Weekly Social Sensing Digest", "", f"Generated: {now}", ""]
 
@@ -167,7 +207,9 @@ def render_markdown(
             link = info.get("url") or "link unavailable"
             platform_post_id = post.get("platform_post_id") or info.get("platform_post_id") or "unknown"
             metrics = info.get("metrics") or {}
-            metrics_str = ", ".join(f"{k}={v}" for k, v in sorted(metrics.items())) or "no engagement metrics pulled yet"
+            metrics_str = ", ".join(
+                f"{METRIC_LABELS[k]}={v}" for k, v in sorted(metrics.items())
+            ) or "no engagement metrics pulled yet"
             lines.append(
                 f"- `{post_ref}` ({surface}) — link: {link} — platform_post_id: `{platform_post_id}` — engagement: {metrics_str}"
             )
@@ -183,15 +225,18 @@ def render_markdown(
     else:
         for metric in sorted(dept_metrics):
             row = dept_metrics[metric]
-            value = row.get("value", row.get("status"))
+            value = row["value"]
+            label = METRIC_LABELS[metric]
             if metric in tbd:
-                lines.append(f"- {metric}: baseline (shadow) — observed {value}")
+                lines.append(f"- {label}: baseline (shadow) — observed {value}")
                 continue
             target = targets.get(metric)
             if target is not None:
-                lines.append(f"- {metric}: {value} (target: {target})")
+                lines.append(f"- {label}: {value} (target: {target})")
             else:
-                lines.append(f"- {metric}: {value}")
+                lines.append(f"- {label}: {value}")
+    if unrecognized_rows:
+        lines.append(f"- {unrecognized_rows} unrecognized rows")
     lines.append("")
 
     if memory_backend_state != "wired":
@@ -235,12 +280,12 @@ def main() -> None:
         write_missing(args.out, str(exc))
         raise SystemExit(3)
 
-    charter: dict[str, Any] | None
     try:
         charter = load_charter(args.charter, expect_department="social")
     except CharterError as exc:
-        logger.warning("charter unavailable, digest will omit shadow-baseline labels: %s", exc)
-        charter = None
+        logger.error("charter unavailable: %s", exc)
+        write_missing(args.out, str(exc))
+        raise SystemExit(3)
 
     verified_posts = [post for post in verified_posts_raw if isinstance(post, dict) and post.get("verified") is True]
     lookup = post_lookup(observations)
@@ -257,6 +302,7 @@ def main() -> None:
         tbd=tbd,
         targets=targets,
         memory_backend_state=args.memory_backend_state,
+        unrecognized_rows=unrecognized_metric_count(observations),
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

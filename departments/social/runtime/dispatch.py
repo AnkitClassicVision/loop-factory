@@ -161,6 +161,19 @@ def _check_stop_markers(state_dir: Path, surface: str) -> None:
         raise DispatchBlocked(f"circuit breaker blocks surface {surface}")
 
 
+def _surface_count(surface_counts: dict[str, Any] | None, surface: str) -> int:
+    if surface_counts is None:
+        raise DispatchBlocked("surface_counts is required for all-author cap enforcement")
+    if not isinstance(surface_counts, dict):
+        raise DispatchBlocked("surface_counts must be a JSON object")
+    count = surface_counts.get(surface)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise DispatchBlocked(
+            f"surface_counts must contain a non-negative integer for {surface}"
+        )
+    return count
+
+
 def dispatch(
     state_dir: str | Path,
     draft: dict[str, Any],
@@ -171,21 +184,20 @@ def dispatch(
     delivery_mode: str | None = None,
     zernio_cmd: str = "zernio",
     simulate_sink: str | Path | None = None,
+    surface_counts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Dispatch one passed draft, through the kernel, or fail closed."""
     state_dir = Path(state_dir)
     draft = _validated_draft(draft)
-    _validated_qa(qa_report)
-    receipt, slot = _validated_token(token)
     surface = draft["surface"]
     _check_stop_markers(state_dir, surface)
 
     state = kernel_bridge.autonomy_state()
-    derived_mode = "simulate" if state in {"shadow", "draft_only"} else "live"
+    derived_mode = "simulate" if state in kernel_bridge.NON_LIVE_STATES else "live"
     mode = delivery_mode or derived_mode
     if mode not in {"simulate", "live"}:
         raise DispatchBlocked(f"unknown delivery mode: {mode}")
-    if state in {"shadow", "draft_only"} and mode != "simulate":
+    if state in kernel_bridge.NON_LIVE_STATES and mode != "simulate":
         raise DispatchBlocked(
             f"{state} charter requires delivery_mode=simulate"
         )
@@ -199,9 +211,29 @@ def dispatch(
     except RuntimeError as exc:
         raise DispatchBlocked(str(exc)) from exc
 
+    count = _surface_count(surface_counts, surface)
+    try:
+        cap = kernel_bridge.surface_daily_cap(surface)
+    except RuntimeError as exc:
+        raise DispatchBlocked(str(exc)) from exc
+    if count >= cap:
+        return {
+            "status": "yielded",
+            "reason": "surface_at_cap",
+            "surface": surface,
+            "surface_count": count,
+            "cap": cap,
+            "delivered_count": 0,
+            "simulated": mode == "simulate",
+            "ts": utc_now(),
+        }
+
+    _validated_qa(qa_report)
+    receipt, slot = _validated_token(token)
     fields = kernel_bridge.dispatch_fields(draft)
     kernel = kernel_bridge.get_kernel(state_dir)
     kernel_audit_sink = state_dir / "kernel" / "dispatch_sink.jsonl"
+    _check_stop_markers(state_dir, surface)
     try:
         gateway_result = kernel.send(
             fields["to"],
@@ -286,6 +318,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--draft", required=True)
     parser.add_argument("--qa-report", required=True)
     parser.add_argument("--token", required=True)
+    parser.add_argument("--surface-counts")
     parser.add_argument("--simulate-sink")
     parser.add_argument("--delivery-mode", choices=("simulate", "live"))
     parser.add_argument("--zernio-cmd", default="zernio")
@@ -306,6 +339,11 @@ def main(argv: list[str] | None = None) -> int:
             delivery_mode=args.delivery_mode,
             zernio_cmd=args.zernio_cmd,
             simulate_sink=args.simulate_sink,
+            surface_counts=(
+                _read_object(args.surface_counts, "surface_counts")
+                if args.surface_counts
+                else None
+            ),
         )
         atomic_write_json(out, result)
         return 0

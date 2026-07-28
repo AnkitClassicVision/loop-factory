@@ -11,9 +11,11 @@ from typing import Any, Callable
 
 import yaml
 
+from factory.charter_loader import load_charter
+
 
 LOGGER = logging.getLogger(__name__)
-ALLOWED_ENGINES = frozenset({"codex_oauth", "claude_subscription"})
+DEFAULT_CHARTER = Path(__file__).resolve().parents[1] / "charter.yaml"
 VALID_CLASSES = frozenset({"process_change", "prompt_update", "other"})
 VALID_KINDS = frozenset({"approve", "skip", "fix"})
 Runner = Callable[[list[str], str], str]
@@ -29,8 +31,22 @@ def _load_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _engine_command(engines_file: str | Path, engine: str) -> list[str]:
-    if engine not in ALLOWED_ENGINES:
+def _engine_allowlist(charter_path: str | Path) -> frozenset[str]:
+    charter = load_charter(charter_path, expect_department="social")
+    configured = (charter.get("budget") or {}).get("engine_allowlist")
+    if (
+        not isinstance(configured, list)
+        or not configured
+        or not all(isinstance(item, str) and item.strip() for item in configured)
+    ):
+        raise ValueError("charter budget.engine_allowlist is missing or empty")
+    return frozenset(item.strip() for item in configured)
+
+
+def _engine_command(
+    engines_file: str | Path, engine: str, allowed_engines: frozenset[str]
+) -> list[str]:
+    if engine not in allowed_engines:
         raise ValueError(f"engine {engine!r} is not subscription/OAuth allowlisted")
     config = yaml.safe_load(Path(engines_file).read_text(encoding="utf-8"))
     engines = config.get("engines", config) if isinstance(config, dict) else {}
@@ -128,9 +144,10 @@ def propose(
     *,
     engine: str,
     command: list[str],
+    allowed_engines: frozenset[str],
     runner: Runner = _subprocess_runner,
 ) -> list[dict[str, Any]]:
-    if engine not in ALLOWED_ENGINES:
+    if engine not in allowed_engines:
         raise ValueError(f"engine {engine!r} is not subscription/OAuth allowlisted")
     response = runner(command, _prompt(evidence_pack))
     return validate_proposals(json.loads(response), evidence_pack)
@@ -140,8 +157,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Propose grounded SG-LEARN insights")
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--evidence-pack", required=True)
+    parser.add_argument("--charter", default=str(DEFAULT_CHARTER))
     parser.add_argument("--engines-file", required=True)
-    parser.add_argument("--engine", required=True, choices=sorted(ALLOWED_ENGINES))
+    parser.add_argument("--engine", required=True)
     parser.add_argument("--no-kernel", action="store_true")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
@@ -152,8 +170,14 @@ def main() -> int:
         return 2
     try:
         evidence_pack = _load_json(args.evidence_pack)
-        command = _engine_command(args.engines_file, args.engine)
-        cards = propose(evidence_pack, engine=args.engine, command=command)
+        allowed_engines = _engine_allowlist(args.charter)
+        command = _engine_command(args.engines_file, args.engine, allowed_engines)
+        cards = propose(
+            evidence_pack,
+            engine=args.engine,
+            command=command,
+            allowed_engines=allowed_engines,
+        )
     except FileNotFoundError as exc:
         LOGGER.error("%s", exc)
         _write_json(args.out, {"status": "missing", "reason": str(exc)})

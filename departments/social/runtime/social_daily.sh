@@ -12,6 +12,7 @@ SUPPRESSION="${SOCIAL_SUPPRESSION:-${STATE_DIR}/suppression.jsonl}"
 APPROVALS="${SOCIAL_APPROVALS:-${STATE_DIR}/approvals.yaml}"
 BLOCKLIST="${SOCIAL_BLOCKLIST:-${STATE_DIR}/privacy_blocklist.yaml}"
 OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
+SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
 BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
 OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -20,10 +21,11 @@ INCIDENTS="${STATE_DIR}/incident_candidates.json"
 
 mkdir -p "${STATE_DIR}" "${RUN_DIR}"
 
-incident_missing_receipt() {
+incident_receipt_failure() {
   local node="$1"
   local expected="$2"
-  python3 - "${INCIDENTS}" "${node}" "${expected}" <<'PY'
+  local failure_class="$3"
+  python3 - "${INCIDENTS}" "${node}" "${expected}" "${failure_class}" <<'PY'
 import json
 import os
 import sys
@@ -35,12 +37,12 @@ row = {
     "ts": datetime.now(timezone.utc).isoformat(),
     "sensor": "receipt_gate",
     "subject": sys.argv[2],
-    "failure_class": "missing_receipt",
+    "failure_class": sys.argv[4],
     "severity": "high",
-    "setpoint": "receipt exists before next step",
-    "observed": f"missing:{sys.argv[3]}",
+    "setpoint": "receipt exists and is valid JSON before next step",
+    "observed": f"{sys.argv[4]}:{sys.argv[3]}",
     "evidence": [f"local://{Path(sys.argv[3]).name}"],
-    "one_question": "Fix the missing receipt before this process advances?",
+    "one_question": "Fix the failed receipt before this process advances?",
 }
 try:
     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
@@ -53,6 +55,33 @@ path.parent.mkdir(parents=True, exist_ok=True)
 temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
 temporary.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 os.replace(temporary, path)
+PY
+}
+
+receipt_is_valid_json() {
+  local receipt="$1"
+  python3 - "${receipt}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    text = path.read_text(encoding="utf-8")
+    try:
+        values = [json.loads(text)]
+    except json.JSONDecodeError:
+        values = [json.loads(line) for line in text.splitlines() if line.strip()]
+    invalid_statuses = {"blocked", "missing", "failed", "error"}
+    valid = bool(values) and all(
+        isinstance(value, dict)
+        and bool(value)
+        and value.get("status") not in invalid_statuses
+        for value in values
+    )
+except (OSError, UnicodeError, json.JSONDecodeError):
+    valid = False
+raise SystemExit(0 if valid else 1)
 PY
 }
 
@@ -76,8 +105,13 @@ run_step() {
     rc=$?
   fi
   if ! test -s "${receipt}"; then
-    incident_missing_receipt "${node}" "${receipt}"
+    incident_receipt_failure "${node}" "${receipt}" "missing_receipt"
     echo "missing receipt: ${node}: ${receipt}" >&2
+    exit 2
+  fi
+  if ! receipt_is_valid_json "${receipt}"; then
+    incident_receipt_failure "${node}" "${receipt}" "invalid_receipt"
+    echo "invalid receipt: ${node}: ${receipt}" >&2
     exit 2
   fi
   if test "${rc}" -ne 0; then
@@ -186,7 +220,7 @@ PY
 )"
 fi
 if test "${QA_PASS}" != "yes"; then
-  incident_missing_receipt "N5-qa-non-convergence" "${QA_OUT}"
+  incident_receipt_failure "N5-qa-non-convergence" "${QA_OUT}" "qa_non_convergence"
   echo "qa did not converge within two rounds" >&2
   exit 2
 fi
@@ -196,11 +230,37 @@ run_step "S4-S5-authorize" "${DISPATCH_TOKEN}" \
   python3 "${RUNTIME_DIR}/kernel_bridge.py" authorize-dispatch \
   --state-dir "${STATE_DIR}" --draft "${DRAFT_OUT}" --out "${DISPATCH_TOKEN}"
 
+KILL_PRE_DISPATCH_OUT="${RUN_DIR}/S6-kill-pre-dispatch.json"
+BREAKER_PRE_DISPATCH_OUT="${RUN_DIR}/S7-breaker-pre-dispatch.json"
+run_step "S6-kill-pre-dispatch" "${KILL_PRE_DISPATCH_OUT}" \
+  python3 "${RUNTIME_DIR}/guards.py" kill \
+  --state-dir "${STATE_DIR}" --observations "${OBSERVATIONS}" \
+  --out "${KILL_PRE_DISPATCH_OUT}"
+run_step "S7-breaker-pre-dispatch" "${BREAKER_PRE_DISPATCH_OUT}" \
+  python3 "${RUNTIME_DIR}/guards.py" breaker \
+  --state-dir "${STATE_DIR}" --observations "${OBSERVATIONS}" \
+  --surface "${SURFACE}" --out "${BREAKER_PRE_DISPATCH_OUT}"
+
 DISPATCH_OUT="${RUN_DIR}/N6-dispatch.json"
 run_step "N6-dispatch" "${DISPATCH_OUT}" \
   python3 "${RUNTIME_DIR}/dispatch.py" \
   --state-dir "${STATE_DIR}" --draft "${DRAFT_OUT}" \
-  --qa-report "${QA_OUT}" --token "${DISPATCH_TOKEN}" --out "${DISPATCH_OUT}"
+  --qa-report "${QA_OUT}" --token "${DISPATCH_TOKEN}" \
+  --surface-counts "${SURFACE_COUNTS}" --out "${DISPATCH_OUT}"
+
+DISPATCH_STATUS="$(python3 - "${DISPATCH_OUT}" <<'PY'
+import json
+import sys
+sys.stdout.write(
+    json.loads(open(sys.argv[1], encoding="utf-8").read()).get(
+        "status", "dispatched"
+    )
+)
+PY
+)"
+if test "${DISPATCH_STATUS}" = "yielded"; then
+  exit 0
+fi
 
 VERIFY_OUT="${RUN_DIR}/N7-delivery-verification.json"
 run_step "N7-delivery-verify" "${VERIFY_OUT}" \

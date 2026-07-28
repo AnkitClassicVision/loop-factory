@@ -106,6 +106,60 @@ def test_context_incomplete_for_missing_body_and_todo_brand(tmp_path):
     assert "brand.name" in manifest["missing"]
 
 
+def test_context_incomplete_for_todo_body_placeholder(tmp_path):
+    body = tmp_path / "body.txt"
+    candidate = tmp_path / "candidate.json"
+    brand = tmp_path / "brand.yaml"
+    out = tmp_path / "out.json"
+    body.write_text("TODO_TRANSCRIBE_EPISODE", encoding="utf-8")
+    candidate.write_text(
+        json.dumps(
+            {
+                "item": item("placeholder-body", body),
+                "rank_score": 1.0,
+                "rationale": "test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    brand.write_text(
+        yaml.safe_dump(
+            {
+                "podcast": {
+                    "brand": {
+                        "name": "Example Brand",
+                        "voice_notes": ["direct"],
+                        "audience": "fake owners",
+                    },
+                    "offer": {
+                        "name": "Example Call",
+                        "cta_url": "https://example.invalid/book",
+                        "description": "An obviously fake offer",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = invoke(
+        "assemble_context.py",
+        "--state-dir",
+        tmp_path / "state",
+        "--out",
+        out,
+        "--candidate",
+        candidate,
+        "--brand",
+        brand,
+    )
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+
+    assert result.returncode == 2
+    assert manifest["complete"] is False
+    assert "body_text" in manifest["missing"]
+
+
 def test_full_context_happy_path_embeds_body(tmp_path):
     body, candidate, brand, out = tmp_path / "body.txt", tmp_path / "candidate.json", tmp_path / "brand.yaml", tmp_path / "out.json"
     body.write_text("Full obviously-fake source body.\nSecond paragraph.", encoding="utf-8")

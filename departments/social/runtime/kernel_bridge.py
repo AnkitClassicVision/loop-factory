@@ -19,6 +19,7 @@ _DEPARTMENT = _DEPT_DIR.name
 _REPO = _DEPT_DIR.parent.parent
 _CHARTER_PATH = _DEPT_DIR / "charter.yaml"
 DISPATCH_SUBJECT = "social_publish"
+NON_LIVE_STATES = frozenset({"shadow", "draft_only"})
 
 
 def _load_module(name: str, path: Path):
@@ -61,14 +62,32 @@ def get_kernel(state_dir: str | Path):
 
 
 def require_shadow(live: bool = False) -> None:
-    """Refuse a live request while the charter remains in shadow."""
+    """Refuse a live request while the charter remains non-live."""
     if not live:
         return
     state = autonomy_state()
-    if state == "shadow":
+    if state in NON_LIVE_STATES:
         raise RuntimeError(
-            f"{_DEPARTMENT} autonomy_state is 'shadow'; live dispatch is refused"
+            f"{_DEPARTMENT} autonomy_state is {state!r}; live dispatch is refused"
         )
+
+
+def surface_daily_cap(surface: str) -> int:
+    """Return the charter-owned daily cap for one publish surface."""
+    charter = _load_charter()
+    setpoints = charter.get("setpoints")
+    operational = (
+        setpoints.get("operational") if isinstance(setpoints, dict) else None
+    )
+    if not isinstance(operational, dict):
+        raise RuntimeError("charter setpoints.operational is missing or malformed")
+    cap_key = "x_daily_cap" if surface == "x_mybcat" else "per_surface_daily_cap"
+    cap = operational.get(cap_key)
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+        raise RuntimeError(
+            f"charter setpoints.operational.{cap_key} must be a positive integer"
+        )
+    return cap
 
 
 def dispatch_fields(draft: dict[str, Any]) -> dict[str, str]:

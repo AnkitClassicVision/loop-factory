@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing
+from pathlib import Path
+import sys
 
 import pytest
+import yaml
 
 from departments.social.runtime import (
     proposal_card_to_outbox,
@@ -19,7 +23,7 @@ def _write_observations(path):
             "row_id": "sense-published-1",
             "metric": "posts_published",
             "value": 2,
-            "source": "fake-zernio-sensor",
+            "source": "zernio",
             "ts": "2026-07-28T12:00:00+00:00",
             "surface": "linkedin_mybcat",
             "lane": "republish_reengagement",
@@ -29,7 +33,7 @@ def _write_observations(path):
             "row_id": "sense-engagement-1",
             "metric": "engagement_rate",
             "value": 0.25,
-            "source": "fake-zernio-sensor",
+            "source": "zernio",
             "ts": "2026-07-28T12:05:00+00:00",
             "surface": "linkedin_mybcat",
             "lane": "republish_reengagement",
@@ -40,7 +44,7 @@ def _write_observations(path):
             "metric": "qa_defect.unsourced_claim",
             "value": 1,
             "code": "unsourced_claim",
-            "source": "fake-cross-model-qa",
+            "source": "compare_charter",
             "ts": "2026-07-28T12:10:00+00:00",
             "surface": "linkedin_mybcat",
             "lane": "republish_reengagement",
@@ -53,17 +57,39 @@ def _write_observations(path):
 def _pack():
     return {
         "source": "SG-SENSE",
+        "sanitized": True,
         "rows": [
             {
                 "row_id": "sense-engagement-1",
                 "metric": "engagement_rate",
                 "value": 0.25,
-                "source": "fake-zernio-sensor",
+                "source": "zernio",
                 "ts": "2026-07-28T12:05:00+00:00",
             }
         ],
         "aggregates": [],
     }
+
+
+def _charter_copy(tmp_path, *, engines=None, ttl=None):
+    source = Path(proposal_card_to_outbox.DEFAULT_CHARTER)
+    charter = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if engines is not None:
+        charter["budget"]["engine_allowlist"] = engines
+    if ttl is not None:
+        charter["escalation"]["no_reply_ttl_hours"] = ttl
+    target = tmp_path / "social-charter-copy.yaml"
+    target.write_text(yaml.safe_dump(charter), encoding="utf-8")
+    return target
+
+
+def _append_worker(state_dir, evidence_pack, charter_path, card):
+    proposal_card_to_outbox.append_cards(
+        [card],
+        state_dir,
+        evidence_pack=evidence_pack,
+        charter_path=charter_path,
+    )
 
 
 def test_aggregates_retain_row_provenance(tmp_path):
@@ -75,6 +101,7 @@ def test_aggregates_retain_row_provenance(tmp_path):
     )
 
     assert pack["source"] == "SG-SENSE"
+    assert pack["sanitized"] is True
     aggregate = pack["aggregates"][0]
     assert aggregate["surface"] == "linkedin_mybcat"
     assert aggregate["published"]["value_sum"] == 2
@@ -86,6 +113,49 @@ def test_aggregates_retain_row_provenance(tmp_path):
             "row_id": "sense-published-1",
             "ts": "2026-07-28T12:00:00+00:00",
         }
+    ]
+
+
+def test_self_reported_sensitive_and_extra_fields_never_enter_pack(tmp_path):
+    observations = tmp_path / "observations.jsonl"
+    rows = [
+        {
+            "row_id": "self-report",
+            "metric": "engagement_rate",
+            "value": 1,
+            "source": "department_self_report",
+            "ts": "2026-07-28T12:00:00+00:00",
+        },
+        {
+            "row_id": "sensitive",
+            "metric": "engagement_rate",
+            "value": 1,
+            "source": "zernio",
+            "ts": "2026-07-28T12:00:00+00:00",
+            "email": "sensitive-shaped-value",
+        },
+        {
+            "row_id": "safe",
+            "metric": "engagement_rate",
+            "value": 0.2,
+            "source": "zernio",
+            "ts": "2026-07-28T12:00:00+00:00",
+            "surface": "linkedin",
+            "untrusted_claim": "drop me",
+        },
+    ]
+    observations.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+    )
+
+    pack = read_metrics_records.build_evidence_pack(observations)
+
+    assert [row["row_id"] for row in pack["rows"]] == ["safe"]
+    assert set(pack["rows"][0]) <= {
+        "metric", "value", "status", "source", "ts", "post_ref", "surface", "row_id"
+    }
+    assert pack["aggregates"][0]["engagement"]["provenance"] == [
+        {"row_id": "safe", "ts": "2026-07-28T12:00:00+00:00"}
     ]
 
 
@@ -140,6 +210,7 @@ def test_fake_engine_adapter_accepts_only_grounded_cards():
         _pack(),
         engine="codex_oauth",
         command=["fake-subscription-engine"],
+        allowed_engines=frozenset({"codex_oauth"}),
         runner=fake_runner,
     )
 
@@ -162,10 +233,10 @@ def test_outbox_is_idempotent_and_card_has_one_question_and_ttl(tmp_path):
     }
 
     first = proposal_card_to_outbox.append_cards(
-        [card], tmp_path, now="2026-07-28T14:00:00+00:00"
+        [card], tmp_path, evidence_pack=_pack(), now="2026-07-28T14:00:00+00:00"
     )
     second = proposal_card_to_outbox.append_cards(
-        [card], tmp_path, now="2026-07-28T15:00:00+00:00"
+        [card], tmp_path, evidence_pack=_pack(), now="2026-07-28T15:00:00+00:00"
     )
 
     rows = [
@@ -189,6 +260,133 @@ def test_missing_class_self_modify_style_card_is_rejected(tmp_path):
     }
 
     with pytest.raises(ValueError, match="class is missing"):
-        proposal_card_to_outbox.append_cards([crafted], tmp_path)
+        proposal_card_to_outbox.append_cards([crafted], tmp_path, evidence_pack=_pack())
 
     assert not (tmp_path / "approval_queue.jsonl").exists()
+
+
+def test_direct_outbox_evidence_bypass_is_rejected(tmp_path, monkeypatch):
+    card = {
+        "question": "Approve changing the cadence?",
+        "kind": "approve",
+        "class": "process_change",
+        "evidence": ["invented-row"],
+    }
+    cards_path = tmp_path / "cards.json"
+    pack_path = tmp_path / "pack.json"
+    out_path = tmp_path / "receipt.json"
+    cards_path.write_text(json.dumps([card]), encoding="utf-8")
+    pack_path.write_text(json.dumps(_pack()), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proposal_card_to_outbox.py",
+            "--state-dir", str(tmp_path),
+            "--cards", str(cards_path),
+            "--evidence-pack", str(pack_path),
+            "--out", str(out_path),
+        ],
+    )
+
+    assert proposal_card_to_outbox.main() == 2
+    assert json.loads(out_path.read_text(encoding="utf-8"))["status"] == "blocked"
+    assert not (tmp_path / "approval_queue.jsonl").exists()
+
+
+def test_out_receipt_must_stay_inside_state_dir(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    cards = tmp_path / "cards.json"
+    pack = tmp_path / "pack.json"
+    cards.write_text("[]", encoding="utf-8")
+    pack.write_text(json.dumps(_pack()), encoding="utf-8")
+    escaped = tmp_path / "escaped-receipt.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proposal_card_to_outbox.py",
+            "--state-dir", str(state_dir),
+            "--cards", str(cards),
+            "--evidence-pack", str(pack),
+            "--out", str(escaped),
+        ],
+    )
+
+    assert proposal_card_to_outbox.main() == 2
+    assert not escaped.exists()
+    with pytest.raises(ValueError, match="governance"):
+        proposal_card_to_outbox._safe_out_path(state_dir, state_dir / "runbook-receipt.json")
+
+
+def test_concurrent_dedup_queues_exactly_once(tmp_path):
+    card = {
+        "question": "Approve updating the drafting prompt?",
+        "kind": "approve",
+        "class": "prompt_update",
+        "evidence": ["sense-engagement-1"],
+    }
+    charter = _charter_copy(tmp_path)
+    context = multiprocessing.get_context("fork")
+    processes = [
+        context.Process(
+            target=_append_worker,
+            args=(tmp_path, _pack(), charter, card),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=5)
+        assert process.exitcode == 0
+
+    rows = (tmp_path / "approval_queue.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+
+
+def test_engine_allowlist_is_charter_driven_and_empty_fails_closed(tmp_path):
+    changed = _charter_copy(tmp_path, engines=["test_subscription"])
+    allowed = propose_insights._engine_allowlist(changed)
+    assert allowed == frozenset({"test_subscription"})
+    assert propose_insights.propose(
+        _pack(),
+        engine="test_subscription",
+        command=["fake"],
+        allowed_engines=allowed,
+        runner=lambda command, prompt: "[]",
+    ) == []
+    with pytest.raises(ValueError, match="not subscription/OAuth allowlisted"):
+        propose_insights.propose(
+            _pack(),
+            engine="codex_oauth",
+            command=["fake"],
+            allowed_engines=allowed,
+            runner=lambda command, prompt: "[]",
+        )
+
+    empty = _charter_copy(tmp_path, engines=[])
+    with pytest.raises(ValueError, match="missing or empty"):
+        propose_insights._engine_allowlist(empty)
+
+
+def test_outbox_ttl_is_charter_driven(tmp_path):
+    charter = _charter_copy(tmp_path, ttl=7)
+    card = {
+        "question": "Approve updating the drafting prompt?",
+        "kind": "approve",
+        "class": "prompt_update",
+        "evidence": ["sense-engagement-1"],
+    }
+
+    proposal_card_to_outbox.append_cards(
+        [card],
+        tmp_path,
+        evidence_pack=_pack(),
+        charter_path=charter,
+    )
+
+    row = json.loads(
+        (tmp_path / "approval_queue.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert row["ttl_hours"] == 7

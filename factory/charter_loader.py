@@ -97,6 +97,36 @@ def autonomy_state(charter: dict) -> str:
     return charter["autonomy_state"]
 
 
+def engine_allowlist(charter: dict) -> frozenset[str]:
+    """Return the charter-owned model engine allowlist, with no fallback."""
+    try:
+        value = charter["budget"]["engine_allowlist"]
+    except (KeyError, TypeError) as exc:
+        raise CharterError("charter missing required key 'budget.engine_allowlist'") from exc
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(engine, str) or not engine.strip() for engine in value)
+    ):
+        raise CharterError(
+            "charter budget.engine_allowlist must be a non-empty list of engine names"
+        )
+    return frozenset(engine.strip() for engine in value)
+
+
+def max_edit_rounds(charter: dict) -> int:
+    """Return the charter-owned edit-round ceiling, with no fallback."""
+    try:
+        value = charter["qa_shape"]["max_edit_rounds"]
+    except (KeyError, TypeError) as exc:
+        raise CharterError("charter missing required key 'qa_shape.max_edit_rounds'") from exc
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CharterError(
+            "charter qa_shape.max_edit_rounds must be a non-negative integer"
+        )
+    return value
+
+
 def human_gates(charter: dict) -> frozenset[str]:
     """Action classes that always require a human decision. The factory floor
     (external effects + governance) applies even if the charter lists fewer."""

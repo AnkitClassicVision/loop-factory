@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - guarded at runtime
 
 
 LOGGER = logging.getLogger("social.qa_post")
-ALLOWED_ENGINES = frozenset({"codex_oauth", "claude_subscription"})
+DEFAULT_CHARTER = Path(__file__).resolve().parents[1] / "charter.yaml"
 SURFACE_LIMITS = {
     "linkedin_mybcat": 3000,
     "linkedin_personal": 3000,
@@ -135,6 +135,20 @@ def _load_engines(path: Path) -> dict[str, list[str]]:
             )
         engines[name] = list(argv)
     return engines
+
+
+def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
+    loader_path = Path(__file__).resolve().parents[3] / "factory" / "charter_loader.py"
+    spec = importlib.util.spec_from_file_location("charter_loader_for_social_qa", loader_path)
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("charter loader could not be loaded")
+    loader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loader)
+    try:
+        charter = loader.load_charter(path, expect_department="social")
+        return loader.engine_allowlist(charter), loader.max_edit_rounds(charter)
+    except loader.CharterError as exc:
+        raise GateBlocked(f"charter policy invalid: {exc}") from exc
 
 
 def _engine_argv(engine: str, engines_file: Path, prompt_file: Path) -> list[str]:
@@ -319,6 +333,13 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
             f"{surface} body length {len(body)} exceeds hard cap {SURFACE_LIMITS[surface]}",
         )
 
+    sources = draft.get("sources")
+    if not isinstance(sources, list) or not sources:
+        add(
+            "missing_sources",
+            "draft sources must contain at least one entry",
+        )
+
     grounded: set[str] = set()
     for claim in _source_claims(draft):
         grounded.update(_number_tokens(claim))
@@ -386,6 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--engine", required=True)
     parser.add_argument("--engines-file", type=Path, required=True)
+    parser.add_argument("--charter", type=Path, default=DEFAULT_CHARTER)
     parser.add_argument("--no-kernel", action="store_true")
     parser.add_argument("--engine-timeout", type=int, default=120)
     return parser
@@ -399,13 +421,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         draft = _read_json(args.draft, "draft")
         bundle = _read_json(args.bundle, "sanitized bundle")
-        if args.engine not in ALLOWED_ENGINES:
+        allowed_engines, max_rounds = _load_charter_policy(args.charter)
+        if args.engine not in allowed_engines:
             raise GateBlocked(
                 f"engine {args.engine!r} is not allowlisted; allowed: "
-                + ", ".join(sorted(ALLOWED_ENGINES))
+                + ", ".join(sorted(allowed_engines))
             )
         if not isinstance(draft, dict):
             raise GateBlocked("draft must be a JSON object")
+        round_number = draft.get("round")
+        if (
+            isinstance(round_number, bool)
+            or not isinstance(round_number, int)
+            or not 0 <= round_number <= max_rounds
+        ):
+            raise GateBlocked(
+                f"draft round must be an integer from 0 through {max_rounds}"
+            )
         if draft.get("engine") == args.engine:
             raise GateBlocked(
                 "cross-model QA required: qa engine must differ from draft engine"

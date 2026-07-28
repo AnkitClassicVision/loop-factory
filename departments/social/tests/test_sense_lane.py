@@ -57,6 +57,8 @@ def write_charter(
     outcome_target: str | float = "TBD_MEASURE_IN_SHADOW",
     platform_verified_delivery_pct_target: float = 100,
     model_calls_ceiling: float = 500,
+    dollars_ceiling: float = 0,
+    worker_minutes_ceiling: float = 1200,
 ) -> Path:
     path.write_text(
         f"""
@@ -84,8 +86,8 @@ thresholds:
 budget:
   weekly_ceilings:
     model_calls: {model_calls_ceiling}
-    dollars: 0
-    worker_minutes: 1200
+    dollars: {dollars_ceiling}
+    worker_minutes: {worker_minutes_ceiling}
 """,
         encoding="utf-8",
     )
@@ -219,7 +221,10 @@ def test_pull_zernio_analytics_quarantines_ambiguous_item(tmp_path):
         feed,
         [
             {"post_ref": "", "surface": "linkedin_mybcat", "metrics": {"impressions": 1}},
-            {"post_ref": "p1", "surface": "linkedin_mybcat", "metrics": {"impressions": 5}},
+            {
+                "post_ref": "p1", "surface": "linkedin_mybcat",
+                "metrics": {"impressions": 5}, "platform_verified": True,
+            },
         ],
     )
     state_dir = tmp_path / "state"
@@ -233,6 +238,24 @@ def test_pull_zernio_analytics_quarantines_ambiguous_item(tmp_path):
     assert len(quarantine_files) == 1
     rows = read_jsonl(out)
     assert all(r.get("post_ref") != "" for r in rows)
+
+
+def test_pull_zernio_missing_verification_is_missing_and_not_metric(tmp_path):
+    feed = tmp_path / "feed.json"
+    write_json(
+        feed,
+        [{"post_ref": "p1", "surface": "linkedin_mybcat", "metrics": {"impressions": 5}}],
+    )
+    out = tmp_path / "obs.jsonl"
+    result = run_node(
+        PULL_ZERNIO,
+        ["--state-dir", str(tmp_path / "state"), "--out", str(out), "--fake-feed", str(feed)],
+    )
+    assert result.returncode == 3
+    rows = read_jsonl(out)
+    assert any(r.get("status") == "missing" and r.get("post_ref") == "p1" for r in rows)
+    assert not any(r.get("metric") == "platform_verified" for r in rows)
+    assert not any(r.get("metric") == "impressions" for r in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +371,109 @@ def test_compare_charter_missing_observations_exits3(tmp_path):
     assert payload["status"] == "missing"
 
 
+def test_compare_charter_upstream_missing_marker_exits3_without_verdicts(tmp_path):
+    observations = tmp_path / "obs.jsonl"
+    observations.write_text(
+        json.dumps({"status": "missing", "source": "zernio", "reason": "outage"}) + "\n",
+        encoding="utf-8",
+    )
+    charter = write_charter(tmp_path / "charter.yaml")
+    out = tmp_path / "signals.jsonl"
+    result = run_node(
+        COMPARE_CHARTER,
+        ["--out", str(out), "--observations", str(observations), "--charter", str(charter)],
+    )
+    assert result.returncode == 3
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["status"] == "missing"
+    assert "metric" not in payload
+
+
+@pytest.mark.parametrize(
+    ("baseline", "mutation", "observed_value", "signal"),
+    [
+        (
+            {"platform_verified_delivery_pct_target": 40},
+            {"platform_verified_delivery_pct_target": 60},
+            50,
+            "delivery_verified_gap",
+        ),
+        ({"budget_near_frac": 0.9}, {"budget_near_frac": 0.8}, 425, "budget_near"),
+        ({"model_calls_ceiling": 110}, {"model_calls_ceiling": 100}, 85, "budget_near"),
+        (
+            {"dollars_ceiling": 110},
+            {"dollars_ceiling": 100},
+            85,
+            "budget_near",
+        ),
+        (
+            {"worker_minutes_ceiling": 110},
+            {"worker_minutes_ceiling": 100},
+            85,
+            "budget_near",
+        ),
+        (
+            {"pace_ceiling_near_frac": 0.95},
+            {"pace_ceiling_near_frac": 0.8},
+            90,
+            "cap_near",
+        ),
+    ],
+)
+def test_compare_charter_each_consumed_threshold_flips_signal(
+    tmp_path, baseline, mutation, observed_value, signal
+):
+    def observed():
+        rows = []
+        if signal == "delivery_verified_gap":
+            verified = int(observed_value)
+            rows = [
+                {
+                    "metric": "platform_verified", "value": 1.0 if index < verified else 0.0,
+                    "source": "zernio", "ts": "2026-07-27T12:00:00Z",
+                    "post_ref": f"p{index}", "surface": "x",
+                }
+                for index in range(100)
+            ]
+        elif signal == "cap_near":
+            rows = [
+                {
+                    "metric": "platform_verified", "value": 1.0, "source": "zernio",
+                    "ts": "2026-07-27T12:00:00Z", "post_ref": f"p{index}", "surface": "x",
+                }
+                for index in range(int(observed_value))
+            ]
+        else:
+            metric = {
+                "model_calls_ceiling": "model_calls_used",
+                "dollars_ceiling": "dollars_used",
+                "worker_minutes_ceiling": "worker_minutes_used",
+            }.get(next(iter(mutation)), "model_calls_used")
+            rows = [
+                {
+                    "metric": metric, "value": observed_value,
+                    "source": "budget_ledger", "ts": "2026-07-27T12:00:00Z",
+                }
+            ]
+        return rows
+
+    observations = tmp_path / "obs.jsonl"
+    observations.write_text(
+        "".join(json.dumps(row) + "\n" for row in observed()), encoding="utf-8"
+    )
+    values = []
+    for index, charter_values in enumerate((baseline, mutation)):
+        charter = write_charter(tmp_path / f"charter-{index}.yaml", **charter_values)
+        out = tmp_path / f"out-{index}.jsonl"
+        result = run_node(
+            COMPARE_CHARTER,
+            ["--out", str(out), "--observations", str(observations), "--charter", str(charter)],
+        )
+        assert result.returncode == 0, result.stderr
+        values.append({row["metric"]: row["value"] for row in read_jsonl(out)}[signal])
+    assert values == [False, True]
+
+
 def test_compare_charter_gaming_signal_from_self_reported_mismatch(tmp_path):
     observations = tmp_path / "obs.jsonl"
     now = "2026-07-27T12:00:00+00:00"
@@ -442,7 +568,7 @@ def test_assemble_weekly_digest_links_seam_and_tbd_and_no_dm_leak(tmp_path):
     # quarantine count surfaced
     assert "1 item(s) pending owner review" in text
     # TBD_MEASURE_IN_SHADOW metric renders as a shadow baseline, not a failure
-    assert "discovery_calls_booked: baseline (shadow)" in text
+    assert "Discovery calls booked: baseline (shadow)" in text
     # unwired memory seam notice present (charter C18)
     assert "UNWIRED MEMORY SEAM" in text
     # sanitized: DM body never leaks even though it was present on the input row
@@ -492,3 +618,47 @@ def test_assemble_weekly_digest_missing_verified_posts_exits3(tmp_path):
     assert result.returncode == 3
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["status"] == "missing"
+
+
+def test_assemble_weekly_digest_invalid_charter_exits3(tmp_path):
+    observations = tmp_path / "obs.jsonl"
+    observations.write_text("", encoding="utf-8")
+    verified_posts = tmp_path / "verified.json"
+    write_json(verified_posts, [])
+    charter = tmp_path / "charter.yaml"
+    charter.write_text("department: [invalid", encoding="utf-8")
+    out = tmp_path / "digest.md"
+    result = run_node(
+        ASSEMBLE_DIGEST,
+        [
+            "--out", str(out), "--observations", str(observations),
+            "--verified-posts", str(verified_posts), "--charter", str(charter),
+        ],
+    )
+    assert result.returncode == 3
+    assert json.loads(out.read_text(encoding="utf-8"))["status"] == "missing"
+
+
+def test_assemble_weekly_digest_never_renders_unknown_metric_name(tmp_path):
+    injection = "RAW_METRIC_<script>alert(1)</script>"
+    observations = tmp_path / "obs.jsonl"
+    observations.write_text(
+        json.dumps({"metric": injection, "value": 7, "source": "zernio", "post_ref": "p1"})
+        + "\n",
+        encoding="utf-8",
+    )
+    verified_posts = tmp_path / "verified.json"
+    write_json(verified_posts, [])
+    charter = write_charter(tmp_path / "charter.yaml")
+    out = tmp_path / "digest.md"
+    result = run_node(
+        ASSEMBLE_DIGEST,
+        [
+            "--out", str(out), "--observations", str(observations),
+            "--verified-posts", str(verified_posts), "--charter", str(charter),
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    text = out.read_text(encoding="utf-8")
+    assert injection not in text
+    assert "1 unrecognized rows" in text

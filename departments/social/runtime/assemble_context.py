@@ -67,8 +67,11 @@ def run(
                 body_text = body_path.read_text(encoding="utf-8")
             except OSError:
                 missing.append("body_text")
-        if not body_text.strip() and "body_text" not in missing:
+        if _placeholder(body_text) and "body_text" not in missing:
             missing.append("body_text")
+        for field in ("title", "url"):
+            if _placeholder(item.get(field)):
+                missing.append(f"item.{field}")
         for field in BRAND_FIELDS:
             if _placeholder(brand.get(field)):
                 missing.append(f"brand.{field}")

@@ -71,6 +71,24 @@ def load_observations(path: str | Path) -> list[dict[str, Any]]:
             raise ObservationError(
                 f"observations evidence is malformed at {obs_path}:{line_number}: row is not an object"
             )
+        if value.get("status") == "missing":
+            source = value.get("source") or "unknown"
+            raise ObservationError(
+                f"required observation source is missing at {obs_path}:{line_number}: {source}"
+            )
+        if not isinstance(value.get("source"), str) or not value["source"]:
+            raise ObservationError(
+                f"observations evidence is malformed at {obs_path}:{line_number}: missing source"
+            )
+        metric = value.get("metric")
+        if not isinstance(metric, str) or not metric:
+            raise ObservationError(
+                f"observations evidence is malformed at {obs_path}:{line_number}: missing metric"
+            )
+        if "value" not in value:
+            raise ObservationError(
+                f"observations evidence is malformed at {obs_path}:{line_number}: missing value"
+            )
         rows.append(value)
     return rows
 

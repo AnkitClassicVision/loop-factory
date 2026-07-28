@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - guarded at runtime
 
 
 LOGGER = logging.getLogger("social.draft_post")
-ALLOWED_ENGINES = frozenset({"codex_oauth", "claude_subscription"})
+DEFAULT_CHARTER = Path(__file__).resolve().parents[1] / "charter.yaml"
 SURFACE_LIMITS = {
     "linkedin_mybcat": 3000,
     "linkedin_personal": 3000,
@@ -115,11 +115,30 @@ def _load_engines(path: Path) -> dict[str, list[str]]:
     return engines
 
 
-def _engine_argv(engine: str, engines_file: Path, prompt_file: Path) -> list[str]:
-    if engine not in ALLOWED_ENGINES:
+def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
+    loader_path = Path(__file__).resolve().parents[3] / "factory" / "charter_loader.py"
+    spec = importlib.util.spec_from_file_location("charter_loader_for_social_draft", loader_path)
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("charter loader could not be loaded")
+    loader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loader)
+    try:
+        charter = loader.load_charter(path, expect_department="social")
+        return loader.engine_allowlist(charter), loader.max_edit_rounds(charter)
+    except loader.CharterError as exc:
+        raise GateBlocked(f"charter policy invalid: {exc}") from exc
+
+
+def _engine_argv(
+    engine: str,
+    engines_file: Path,
+    prompt_file: Path,
+    allowed_engines: frozenset[str],
+) -> list[str]:
+    if engine not in allowed_engines:
         raise GateBlocked(
             f"engine {engine!r} is not allowlisted; allowed: "
-            + ", ".join(sorted(ALLOWED_ENGINES))
+            + ", ".join(sorted(allowed_engines))
         )
     engines = _load_engines(engines_file)
     if engine not in engines:
@@ -171,12 +190,13 @@ def _call_engine(
     state_dir: Path,
     no_kernel: bool,
     timeout: int,
+    allowed_engines: frozenset[str],
 ) -> str:
     state_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="social-draft-", dir=state_dir) as temp_dir:
         prompt_file = Path(temp_dir) / "prompt.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
-        argv = _engine_argv(engine, engines_file, prompt_file)
+        argv = _engine_argv(engine, engines_file, prompt_file, allowed_engines)
 
         def runner(_prompt: str) -> str:
             return _run_argv(argv, timeout)
@@ -322,6 +342,10 @@ def _normalize_draft(
     if not isinstance(sources, list):
         reasons.append("draft sources must be a list")
     else:
+        if not sources:
+            reasons.append(
+                "missing_sources: draft sources must contain at least one entry"
+            )
         bundle_strings = _all_bundle_strings(bundle)
         for index, source in enumerate(sources):
             if not isinstance(source, dict):
@@ -380,7 +404,8 @@ def _prompt(
 Return exactly one JSON object with keys body, cta_url, and sources.
 sources must be a list of objects with keys claim and source. Map every factual
 claim and every number in body to an exact source value found in the sanitized
-bundle. Do not invent claims, statistics, testimonials, outcomes, or URLs.
+bundle. Every draft must contain at least one source entry. Do not invent claims,
+statistics, testimonials, outcomes, or URLs.
 
 Surface: {surface}
 Round: {round_number}
@@ -397,7 +422,10 @@ SANITIZED BUNDLE:
 """
 
 
-def _revision_inputs(args: argparse.Namespace) -> tuple[dict | None, list[dict] | None, int]:
+def _revision_inputs(
+    args: argparse.Namespace,
+    max_rounds: int,
+) -> tuple[dict | None, list[dict] | None, int]:
     revise_value = args.revise
     revision_requested = revise_value is not None
     prior_path = args.prior_draft
@@ -420,8 +448,8 @@ def _revision_inputs(args: argparse.Namespace) -> tuple[dict | None, list[dict] 
     except (TypeError, ValueError) as exc:
         raise GateBlocked("prior draft round must be an integer") from exc
     next_round = previous_round + 1
-    if next_round > 2:
-        raise GateBlocked("revision would exceed maximum round 2")
+    if next_round > max_rounds:
+        raise GateBlocked(f"revision would exceed maximum round {max_rounds}")
     if report.get("engine") == args.engine:
         raise GateBlocked(
             "cross-model edit loop required: revision engine must differ from qa engine"
@@ -437,6 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--surface", choices=sorted(SURFACE_LIMITS), required=True)
     parser.add_argument("--engine", required=True)
     parser.add_argument("--engines-file", type=Path, required=True)
+    parser.add_argument("--charter", type=Path, default=DEFAULT_CHARTER)
     parser.add_argument(
         "--revise",
         nargs="?",
@@ -458,13 +487,14 @@ def main(argv: list[str] | None = None) -> int:
     bundle: Any = None
     try:
         bundle = _read_json(args.bundle, "sanitized bundle")
-        if args.engine not in ALLOWED_ENGINES:
+        allowed_engines, max_rounds = _load_charter_policy(args.charter)
+        if args.engine not in allowed_engines:
             raise GateBlocked(
                 f"engine {args.engine!r} is not allowlisted; allowed: "
-                + ", ".join(sorted(ALLOWED_ENGINES))
+                + ", ".join(sorted(allowed_engines))
             )
         bundle = _validate_bundle(bundle)
-        prior, defects, round_number = _revision_inputs(args)
+        prior, defects, round_number = _revision_inputs(args, max_rounds)
         prompt = _prompt(
             bundle,
             args.surface,
@@ -480,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_dir=args.state_dir,
                 no_kernel=args.no_kernel,
                 timeout=args.engine_timeout,
+                allowed_engines=allowed_engines,
             )
         )
         draft = _normalize_draft(

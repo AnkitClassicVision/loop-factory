@@ -7,11 +7,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 DRAFT_NODE = ROOT / "departments" / "social" / "runtime" / "draft_post.py"
 QA_NODE = ROOT / "departments" / "social" / "runtime" / "qa_post.py"
+CHARTER = ROOT / "departments" / "social" / "charter.yaml"
 
 
 def _write_json(path: Path, value) -> Path:
@@ -49,7 +51,12 @@ def _draft(body: str, **updates) -> dict:
         "surface": "linkedin_mybcat",
         "body": body,
         "cta_url": "https://example.test/book",
-        "sources": [],
+        "sources": [
+            {
+                "claim": "An archive item supports this draft.",
+                "source": "An invented fixture about careful business operations.",
+            }
+        ],
         "engine": "codex_oauth",
         "round": 0,
     }
@@ -76,7 +83,10 @@ def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
             "    result = {\n"
             "        'body': 'A useful idea from the archive. https://example.test/book',\n"
             "        'cta_url': 'https://example.test/book',\n"
-            "        'sources': [],\n"
+            "        'sources': [\n"
+            "            {'claim': 'A useful idea from the archive.',\n"
+            "             'source': 'An invented fixture about careful business operations.'}\n"
+            "        ],\n"
             "    }\n"
             "sys.stdout.write(json.dumps(result))\n",
             encoding="utf-8",
@@ -90,10 +100,22 @@ def _fake_engine(tmp_path: Path, *, crash: bool = False) -> tuple[Path, Path]:
         "claude_subscription:\n"
         f"  - {json.dumps(sys.executable)}\n"
         f"  - {json.dumps(str(script))}\n"
+        "  - \"{prompt_file}\"\n"
+        "fixture_engine:\n"
+        f"  - {json.dumps(sys.executable)}\n"
+        f"  - {json.dumps(str(script))}\n"
         "  - \"{prompt_file}\"\n",
         encoding="utf-8",
     )
     return script, engines
+
+
+def _mutated_charter(tmp_path: Path, mutate) -> Path:
+    charter = yaml.safe_load(CHARTER.read_text(encoding="utf-8"))
+    mutate(charter)
+    path = tmp_path / "charter.yaml"
+    path.write_text(yaml.safe_dump(charter, sort_keys=False), encoding="utf-8")
+    return path
 
 
 def _run_draft(
@@ -102,6 +124,7 @@ def _run_draft(
     *,
     engine: str = "codex_oauth",
     engines_file: Path | None = None,
+    charter: Path | None = None,
     extra: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
     if engines_file is None:
@@ -126,6 +149,8 @@ def _run_draft(
         str(engines_file),
         "--no-kernel",
     ]
+    if charter is not None:
+        command.extend(["--charter", str(charter)])
     command.extend(extra or [])
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     return completed, json.loads(out.read_text(encoding="utf-8")), state
@@ -138,6 +163,7 @@ def _run_qa(
     bundle: dict | None = None,
     engine: str = "claude_subscription",
     engines_file: Path | None = None,
+    charter: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
     if engines_file is None:
         _, engines_file = _fake_engine(tmp_path)
@@ -145,24 +171,27 @@ def _run_qa(
     bundle_path = _write_json(tmp_path / "bundle.json", bundle or _bundle())
     out = tmp_path / "qa-out.json"
     state = tmp_path / "state"
+    command = [
+        sys.executable,
+        str(QA_NODE),
+        "--state-dir",
+        str(state),
+        "--out",
+        str(out),
+        "--draft",
+        str(draft_path),
+        "--bundle",
+        str(bundle_path),
+        "--engine",
+        engine,
+        "--engines-file",
+        str(engines_file),
+        "--no-kernel",
+    ]
+    if charter is not None:
+        command.extend(["--charter", str(charter)])
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(QA_NODE),
-            "--state-dir",
-            str(state),
-            "--out",
-            str(out),
-            "--draft",
-            str(draft_path),
-            "--bundle",
-            str(bundle_path),
-            "--engine",
-            engine,
-            "--engines-file",
-            str(engines_file),
-            "--no-kernel",
-        ],
+        command,
         capture_output=True,
         text=True,
         check=False,
@@ -262,6 +291,43 @@ def test_deterministic_checks_stay_silent_on_clean_draft(tmp_path):
     }
 
 
+def test_empty_sources_is_a_deterministic_defect(tmp_path):
+    completed, report, _ = _run_qa(
+        tmp_path,
+        _draft(
+            "A specific archive idea. https://example.test/book",
+            sources=[],
+        ),
+    )
+
+    assert completed.returncode == 0
+    assert "missing_sources" in _codes(report)
+    assert report["pass"] is False
+
+
+def test_draft_rejects_empty_sources(tmp_path):
+    script, engines_file = _fake_engine(tmp_path)
+    script.write_text(
+        "import json, sys\n"
+        "sys.stdout.write(json.dumps({\n"
+        "    'body': 'A source-free draft. https://example.test/book',\n"
+        "    'cta_url': 'https://example.test/book',\n"
+        "    'sources': [],\n"
+        "}))\n",
+        encoding="utf-8",
+    )
+
+    completed, output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+    )
+
+    assert completed.returncode == 2
+    assert output["status"] == "blocked"
+    assert "missing_sources" in " ".join(output["reasons"])
+
+
 def test_qa_marks_missing_sanitized_flag_without_calling_model(tmp_path):
     completed, report, _ = _run_qa(
         tmp_path,
@@ -343,6 +409,115 @@ def test_round_three_is_refused_and_quarantined(tmp_path):
     assert (state / "quarantine" / "fake-item-1.json").is_file()
 
 
+def test_charter_engine_allowlist_controls_draft_and_qa(tmp_path):
+    charter = _mutated_charter(
+        tmp_path,
+        lambda value: value["budget"].update(
+            {"engine_allowlist": ["fixture_engine"]}
+        ),
+    )
+    _, engines_file = _fake_engine(tmp_path)
+
+    drafted, draft, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engine="fixture_engine",
+        engines_file=engines_file,
+        charter=charter,
+    )
+    reviewed, report, _ = _run_qa(
+        tmp_path,
+        _draft(
+            "A specific archive idea. https://example.test/book",
+            engine="codex_oauth",
+        ),
+        engine="fixture_engine",
+        engines_file=engines_file,
+        charter=charter,
+    )
+
+    assert drafted.returncode == 0
+    assert draft["engine"] == "fixture_engine"
+    assert reviewed.returncode == 0
+    assert report["pass"] is True
+
+
+def test_charter_max_edit_rounds_controls_draft_and_qa(tmp_path):
+    charter = _mutated_charter(
+        tmp_path,
+        lambda value: value["qa_shape"].update({"max_edit_rounds": 3}),
+    )
+    _, engines_file = _fake_engine(tmp_path)
+    prior = _write_json(
+        tmp_path / "prior.json",
+        _draft("A prior draft. https://example.test/book", round=2),
+    )
+    qa_report = _write_json(
+        tmp_path / "report.json",
+        {
+            "pass": False,
+            "defects": [{"code": "voice", "detail": "still generic"}],
+            "engine": "claude_subscription",
+        },
+    )
+
+    drafted, draft, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        engines_file=engines_file,
+        charter=charter,
+        extra=[
+            "--revise",
+            "--prior-draft",
+            str(prior),
+            "--qa-report",
+            str(qa_report),
+        ],
+    )
+    reviewed, report, _ = _run_qa(
+        tmp_path,
+        draft,
+        engines_file=engines_file,
+        charter=charter,
+    )
+
+    assert drafted.returncode == 0
+    assert draft["round"] == 3
+    assert reviewed.returncode == 0
+    assert report["pass"] is True
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    ["engine_allowlist", "max_edit_rounds"],
+)
+def test_missing_charter_policy_keys_refuse_draft_and_qa(tmp_path, missing_key):
+    def remove_policy(value):
+        if missing_key == "engine_allowlist":
+            del value["budget"]["engine_allowlist"]
+        else:
+            del value["qa_shape"]["max_edit_rounds"]
+
+    charter = _mutated_charter(tmp_path, remove_policy)
+    drafted, draft_output, _ = _run_draft(
+        tmp_path,
+        _bundle(),
+        charter=charter,
+    )
+    reviewed, qa_output, _ = _run_qa(
+        tmp_path,
+        _draft("A specific archive idea. https://example.test/book"),
+        charter=charter,
+    )
+
+    assert drafted.returncode == 2
+    assert draft_output["status"] == "blocked"
+    assert missing_key in " ".join(draft_output["reasons"])
+    assert reviewed.returncode == 2
+    assert qa_output["status"] == "blocked"
+    assert missing_key in " ".join(qa_output["reasons"])
+
+
 def test_qa_engine_crash_fails_closed(tmp_path):
     _, engines_file = _fake_engine(tmp_path, crash=True)
 
@@ -355,4 +530,3 @@ def test_qa_engine_crash_fails_closed(tmp_path):
     assert completed.returncode == 0
     assert report["pass"] is False
     assert _codes(report) == ["qa_engine_unavailable"]
-

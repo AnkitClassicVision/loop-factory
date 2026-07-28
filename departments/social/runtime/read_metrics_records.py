@@ -13,6 +13,11 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 _KINDS = ("published", "engagement", "quarantine", "qa_defect")
+_ALLOWED_SOURCES = frozenset({"zernio", "calendar_join", "compare_charter"})
+_ALLOWED_FIELDS = frozenset(
+    {"metric", "value", "status", "source", "ts", "post_ref", "surface", "row_id"}
+)
+_SENSITIVE_KEYS = frozenset({"body", "message", "text", "email", "phone"})
 
 
 def _write_json(path: str | Path, value: Any) -> None:
@@ -78,6 +83,18 @@ def build_evidence_pack(
             raise ValueError(f"invalid observation JSON on line {line_number}: {exc}") from exc
         if not isinstance(row, dict):
             raise ValueError(f"observation line {line_number} must be an object")
+        source = row.get("source")
+        if source not in _ALLOWED_SOURCES:
+            LOGGER.warning("dropping non-SG-SENSE source on line %s: %r", line_number, source)
+            continue
+        sensitive = sorted(key for key in row if str(key).lower() in _SENSITIVE_KEYS)
+        if sensitive:
+            LOGGER.warning(
+                "dropping sensitive-shaped observation on line %s; keys=%s",
+                line_number,
+                sensitive,
+            )
+            continue
         required = {"metric", "source", "ts"}
         missing = sorted(required - row.keys())
         if missing or ("value" not in row and row.get("status") != "missing"):
@@ -88,7 +105,7 @@ def build_evidence_pack(
         if row_id in seen_ids:
             raise ValueError(f"duplicate observation row id: {row_id}")
         seen_ids.add(row_id)
-        normalized = dict(row)
+        normalized = {key: row[key] for key in _ALLOWED_FIELDS if key in row}
         normalized["row_id"] = row_id
         rows.append(normalized)
 
@@ -147,6 +164,7 @@ def build_evidence_pack(
         "version": "sg-learn-evidence-v1",
         "assembled_at": assembled_at or datetime.now(timezone.utc).isoformat(),
         "source": "SG-SENSE",
+        "sanitized": True,
         "rows": rows,
         "aggregates": aggregates,
     }
