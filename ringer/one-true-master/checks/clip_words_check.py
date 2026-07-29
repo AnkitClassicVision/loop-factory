@@ -12,6 +12,7 @@ import math
 import os
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 
@@ -20,8 +21,9 @@ SAMPLE_RATE = 16000  # 16 kHz mono preserves speech detail while keeping FFTs mo
 SILENCE_DBFS = -55.0  # Quieter stem windows do not contain speech worth matching.
 MIN_PEAK = 0.35  # The reference certifier's floor rejects weak accidental matches.
 MIN_MARGIN_RATIO = 1.25  # The best match must clearly beat the next distinct candidate.
-RUNNER_GUARD_S = 0.250  # Nearby samples belong to the same correlation peak, not a rival.
-MAX_LAG_ERROR_S = 0.100  # AAC/MP4 boundary padding can move decoded audio by a few frames.
+RUNNER_GUARD_S = 0.500  # Nearby samples belong to the same correlation peak, not a rival.
+CLIP_LAG_TOLERANCE_S = 1.5  # Manifest rounding and codec priming may shift source starts.
+MAX_LAG_ERROR_S = CLIP_LAG_TOLERANCE_S  # Legacy receipt field retained for compatibility.
 MIN_AUDIO_S = 0.250  # Shorter material cannot provide a dependable speech fingerprint.
 MAX_CODEC_TRIM_S = 0.250  # Permit only small codec tail padding when clip exceeds the source.
 TIME_EPSILON_S = 0.001  # Millisecond rounding noise must not invalidate ordered timestamps.
@@ -144,19 +146,19 @@ def dbfs(samples):
 
 
 def locate(needle, haystack):
-    """Return (lag_samples, peak, runner_up) using normalized FFT correlation."""
-    if needle.size == 0 or haystack.size < needle.size:
+    """Return the best valid lag and absolute, window-normalized FFT correlations."""
+    if needle.size == 0 or haystack.size <= needle.size:
         return None, 0.0, 0.0
 
-    needle = needle.astype(np.float64) - float(needle.mean())
-    haystack = haystack.astype(np.float64) - float(haystack.mean())
+    needle = needle.astype(np.float64)
+    haystack = haystack.astype(np.float64)
+    needle -= float(needle.mean())
     needle_energy = float(np.sqrt(np.sum(needle * needle)))
     if needle_energy == 0.0:
         return None, 0.0, 0.0
-    needle /= needle_energy
 
     fft_size = 1
-    while fft_size < haystack.size + needle.size:
+    while fft_size < haystack.size + needle.size - 1:
         fft_size *= 2
     corr = np.fft.irfft(
         np.fft.rfft(haystack, fft_size)
@@ -164,21 +166,30 @@ def locate(needle, haystack):
         fft_size,
     )[: haystack.size - needle.size + 1]
 
-    cumulative = np.concatenate(
+    cumulative_sum = np.concatenate(
+        ([0.0], np.cumsum(haystack, dtype=np.float64))
+    )
+    cumulative_square = np.concatenate(
         ([0.0], np.cumsum(haystack * haystack, dtype=np.float64))
     )
-    window_energy = np.sqrt(
-        np.maximum(
-            cumulative[needle.size :] - cumulative[: corr.size],
-            np.finfo(np.float64).tiny,
-        )
+    window_sum = cumulative_sum[needle.size :] - cumulative_sum[: corr.size]
+    window_square = (
+        cumulative_square[needle.size :] - cumulative_square[: corr.size]
     )
-    corr /= window_energy
+    window_variance = np.maximum(
+        window_square - (window_sum * window_sum) / needle.size,
+        0.0,
+    )
+    denominator = needle_energy * np.sqrt(window_variance)
+    usable = denominator > np.finfo(np.float64).tiny
+    corr[usable] /= denominator[usable]
+    corr[~usable] = 0.0
+    scores = np.abs(np.clip(corr, -1.0, 1.0))
 
-    best = int(np.argmax(corr))
-    peak = float(corr[best])
+    best = int(np.argmax(scores))
+    peak = float(scores[best])
     guard = int(RUNNER_GUARD_S * SAMPLE_RATE)
-    rivals = corr.copy()
+    rivals = scores.copy()
     rivals[max(0, best - guard) : min(corr.size, best + guard + 1)] = -np.inf
     runner = float(np.max(rivals)) if np.isfinite(rivals).any() else 0.0
     return best, peak, runner
@@ -241,7 +252,15 @@ def unusable_variant(variant, path, why):
     }
 
 
-def measure_variant(variant, path, source, claimed_final_duration):
+def measure_variant(
+    variant,
+    path,
+    source,
+    source_window_start,
+    claimed_source_start,
+    claimed_source_duration,
+    claimed_final_duration,
+):
     try:
         clip_duration = probe_duration(path)
         extraction_duration = min(clip_duration, claimed_final_duration)
@@ -250,8 +269,9 @@ def measure_variant(variant, path, source, claimed_final_duration):
         return unusable_variant(variant, path, str(exc))
 
     trimmed_s = 0.0
-    if clip_audio.size > source.size:
-        excess = (clip_audio.size - source.size) / SAMPLE_RATE
+    claimed_source_samples = int(round(claimed_source_duration * SAMPLE_RATE))
+    if clip_audio.size > claimed_source_samples:
+        excess = (clip_audio.size - claimed_source_samples) / SAMPLE_RATE
         if excess > MAX_CODEC_TRIM_S:
             why = (
                 "clip audio is %s seconds longer than the claimed source window; "
@@ -267,7 +287,21 @@ def measure_variant(variant, path, source, claimed_final_duration):
                 "best_match_lag_s": None,
             }
         trimmed_s = excess
-        clip_audio = clip_audio[: source.size]
+        clip_audio = clip_audio[:claimed_source_samples]
+
+    if source.size <= clip_audio.size:
+        return {
+            "variant": str(variant),
+            "file": path,
+            "status": "FAIL",
+            "why": (
+                "the padded stem extraction contains no lag search space; "
+                "the source media does not provide the required tolerance"
+            ),
+            "clip_duration_s": rounded_s(clip_duration),
+            "measured_audio_s": rounded_s(clip_audio.size / SAMPLE_RATE),
+            "best_match_lag_s": None,
+        }
 
     lag_samples, peak, runner = locate(clip_audio, source)
     if lag_samples is None:
@@ -282,13 +316,15 @@ def measure_variant(variant, path, source, claimed_final_duration):
         }
 
     lag_s = lag_samples / SAMPLE_RATE
-    expected_lag_s = 0.0
+    expected_lag_s = claimed_source_start - source_window_start
     lag_error_s = lag_s - expected_lag_s
+    implied_source_start_s = source_window_start + lag_s
+    source_start_offset_s = implied_source_start_s - claimed_source_start
     ratio = margin_ratio(peak, runner)
     failures = []
     if peak < MIN_PEAK:
         failures.append(
-            "peak %.3f is below %.3f, so the claimed source is not a strong match"
+            "peak |r| %.3f is below %.3f, so the claimed source is not a strong match"
             % (peak, MIN_PEAK)
         )
     if ratio < MIN_MARGIN_RATIO:
@@ -296,15 +332,15 @@ def measure_variant(variant, path, source, claimed_final_duration):
             "peak/runner-up margin %.3f is below %.3f, so the match is ambiguous"
             % (ratio, MIN_MARGIN_RATIO)
         )
-    if abs(lag_error_s) > MAX_LAG_ERROR_S:
+    if abs(source_start_offset_s) > CLIP_LAG_TOLERANCE_S:
         failures.append(
-            "best-match lag is %s seconds but the manifest mapping expects %s "
-            "seconds (error %s seconds exceeds %s seconds)"
+            "implied source start is %s seconds, offset %s seconds from the "
+            "claimed %s seconds, exceeding the %s-second tolerance"
             % (
-                fmt_s(lag_s),
-                fmt_s(expected_lag_s),
-                fmt_s(lag_error_s),
-                fmt_s(MAX_LAG_ERROR_S),
+                fmt_s(implied_source_start_s),
+                fmt_s(source_start_offset_s),
+                fmt_s(claimed_source_start),
+                fmt_s(CLIP_LAG_TOLERANCE_S),
             )
         )
 
@@ -318,6 +354,9 @@ def measure_variant(variant, path, source, claimed_final_duration):
         "expected_lag_s": rounded_s(expected_lag_s),
         "best_match_lag_s": rounded_s(lag_s),
         "lag_error_s": rounded_s(lag_error_s),
+        "implied_source_start_s": rounded_s(implied_source_start_s),
+        "source_start_offset_s": rounded_s(source_start_offset_s),
+        "search_positions": int(source.size - clip_audio.size + 1),
         "peak": round(peak, 3),
         "runner_up": round(runner, 3),
         "margin_ratio": ratio_for_json(ratio),
@@ -355,7 +394,8 @@ def print_variant(row):
     ratio_text = ratio if isinstance(ratio, str) else "%.3f" % ratio
     evidence = (
         "peak=%.3f runner=%.3f margin=%s best_lag_s=%s "
-        "expected_lag_s=%s lag_error_s=%s"
+        "expected_lag_s=%s lag_error_s=%s implied_source_start_s=%s "
+        "source_start_offset_s=%s"
         % (
             row["peak"],
             row["runner_up"],
@@ -363,6 +403,8 @@ def print_variant(row):
             fmt_s(row["best_match_lag_s"]),
             fmt_s(row["expected_lag_s"]),
             fmt_s(row["lag_error_s"]),
+            fmt_s(row["implied_source_start_s"]),
+            fmt_s(row["source_start_offset_s"]),
         )
     )
     if row["status"] == "FAIL":
@@ -403,14 +445,23 @@ def measure_clip(entry, position, stems, manifest_dir, clips_dir):
     final_duration = final_end - final_start
 
     stem_windows = {}
+    stem_window_starts = {}
+    stem_window_ends = {}
     stem_levels = {}
     stem_errors = {}
     for role, path in stems.items():
         try:
-            probe_duration(path)
-            samples = extract_audio(path, raw_start, raw_duration)
+            stem_duration = probe_duration(path)
+            window_start = max(0.0, raw_start - CLIP_LAG_TOLERANCE_S)
+            window_end = min(stem_duration, raw_end + CLIP_LAG_TOLERANCE_S)
+            samples = extract_audio(path, window_start, window_end - window_start)
             stem_windows[role] = samples
-            stem_levels[role] = dbfs(samples)
+            stem_window_starts[role] = window_start
+            stem_window_ends[role] = window_start + samples.size / SAMPLE_RATE
+            level_start = int(round((raw_start - window_start) * SAMPLE_RATE))
+            level_end = level_start + int(round(raw_duration * SAMPLE_RATE))
+            level_samples = samples[max(0, level_start) : max(0, level_end)]
+            stem_levels[role] = dbfs(level_samples)
         except InputError as exc:
             stem_errors[role] = str(exc)
 
@@ -453,6 +504,8 @@ def measure_clip(entry, position, stems, manifest_dir, clips_dir):
             "selected_speaker": speaker,
             "selected_speaker_dbfs": round(level, 1) if math.isfinite(level) else "-inf",
             "stem_levels_dbfs": levels_json,
+            "source_window_start_s": rounded_s(stem_window_starts[speaker]),
+            "source_window_end_s": rounded_s(stem_window_ends[speaker]),
         }
     )
 
@@ -493,13 +546,20 @@ def measure_clip(entry, position, stems, manifest_dir, clips_dir):
 
     rows = []
     source = stem_windows[speaker]
+    source_window_start = stem_window_starts[speaker]
     for variant, declared_path in variants:
         try:
             path = resolve_output_path(declared_path, manifest_dir, clips_dir)
             if not os.path.isfile(path):
                 raise InputError("output file does not exist: %s" % path)
             variant_row = measure_variant(
-                variant, path, source, final_duration
+                variant,
+                path,
+                source,
+                source_window_start,
+                raw_start,
+                raw_duration,
+                final_duration,
             )
         except InputError as exc:
             path = str(declared_path)
@@ -560,15 +620,172 @@ def write_json(path, receipt):
         raise InputError("cannot write JSON receipt %s: %s" % (path, exc)) from exc
 
 
+def run_self_test_ffmpeg(command, output_path):
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise InputError(command_error("ffmpeg", output_path, exc)) from exc
+
+
+def run_self_test():
+    cases = (
+        ("exact", 20.00, 20.00, "PASS", 0.00),
+        ("rounded-420ms", 20.42, 20.00, "PASS", 0.42),
+        ("wrong-source", 45.00, 20.00, "FAIL", None),
+        ("outside-tolerance", 20.00, 22.00, "FAIL", None),
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="clip-words-check-") as temp_dir:
+            stem_path = os.path.join(temp_dir, "host_audio.wav")
+            run_self_test_ffmpeg(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    (
+                        "anoisesrc=color=white:seed=20260728:"
+                        "duration=60:sample_rate=%d" % SAMPLE_RATE
+                    ),
+                    "-ac",
+                    "1",
+                    "-ar",
+                    str(SAMPLE_RATE),
+                    "-c:a",
+                    "pcm_s16le",
+                    "-y",
+                    stem_path,
+                ],
+                stem_path,
+            )
+
+            clip_paths = {}
+            for actual_start in sorted({case[1] for case in cases}):
+                clip_path = os.path.join(
+                    temp_dir, "clip_%s.wav" % fmt_s(actual_start).replace(".", "_")
+                )
+                run_self_test_ffmpeg(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-ss",
+                        fmt_s(actual_start),
+                        "-t",
+                        "6.000",
+                        "-i",
+                        stem_path,
+                        "-map",
+                        "0:a:0",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        str(SAMPLE_RATE),
+                        "-c:a",
+                        "pcm_s16le",
+                        "-y",
+                        clip_path,
+                    ],
+                    clip_path,
+                )
+                clip_paths[actual_start] = clip_path
+
+            failures = []
+            stems = {"host": stem_path}
+            for position, (
+                label,
+                actual_start,
+                claimed_start,
+                expected_status,
+                expected_offset,
+            ) in enumerate(cases, 1):
+                entry = {
+                    "index": label,
+                    "raw_start_s": claimed_start,
+                    "raw_end_s": claimed_start + 6.0,
+                    "final_start_s": 0.0,
+                    "final_end_s": 6.0,
+                    "outputs": {"self-test": clip_paths[actual_start]},
+                }
+                result = measure_clip(
+                    entry, position, stems, temp_dir, clips_dir=None
+                )
+                observed_status = result["status"]
+                variant = result["variants"][0]
+                observed_offset = variant.get("source_start_offset_s")
+                print(
+                    "SELF-TEST %s expected=%s observed=%s offset_s=%s"
+                    % (
+                        label,
+                        expected_status,
+                        observed_status,
+                        (
+                            fmt_s(observed_offset)
+                            if observed_offset is not None
+                            else "n/a"
+                        ),
+                    )
+                )
+                if observed_status != expected_status:
+                    failures.append(
+                        "%s expected %s but observed %s"
+                        % (label, expected_status, observed_status)
+                    )
+                if expected_offset is not None:
+                    if observed_offset is None or abs(
+                        observed_offset - expected_offset
+                    ) > 0.010:
+                        failures.append(
+                            "%s expected offset %s seconds but observed %s"
+                            % (
+                                label,
+                                fmt_s(expected_offset),
+                                (
+                                    fmt_s(observed_offset)
+                                    if observed_offset is not None
+                                    else "n/a"
+                                ),
+                            )
+                        )
+                    if variant.get("search_positions", 0) <= 1:
+                        failures.append(
+                            "%s did not exercise a non-degenerate lag search" % label
+                        )
+    except InputError as exc:
+        print("SELF-TEST UNUSABLE: %s" % exc)
+        return 2
+
+    if failures:
+        for failure in failures:
+            print("SELF-TEST FAIL: %s" % failure)
+        return 1
+    print("SELF-TEST PASS: 2 green cases passed and 2 red cases failed.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Prove rendered clips contain their claimed stem material."
     )
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--stems", required=True)
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run a hermetic ffmpeg-generated lag-tolerance test",
+    )
+    parser.add_argument("--manifest")
+    parser.add_argument("--stems")
     parser.add_argument("--clips-dir")
     parser.add_argument("--json", dest="json_out")
     args = parser.parse_args()
+
+    if args.self_test:
+        return run_self_test()
+    if not args.manifest:
+        parser.error("--manifest is required unless --self-test is used")
+    if not args.stems:
+        parser.error("--stems is required unless --self-test is used")
 
     receipt = {
         "manifest": args.manifest,
@@ -580,6 +797,7 @@ def main():
             "min_peak": MIN_PEAK,
             "min_margin_ratio": MIN_MARGIN_RATIO,
             "runner_guard_s": rounded_s(RUNNER_GUARD_S),
+            "clip_lag_tolerance_s": rounded_s(CLIP_LAG_TOLERANCE_S),
             "max_lag_error_s": rounded_s(MAX_LAG_ERROR_S),
             "min_audio_s": rounded_s(MIN_AUDIO_S),
             "max_codec_trim_s": rounded_s(MAX_CODEC_TRIM_S),

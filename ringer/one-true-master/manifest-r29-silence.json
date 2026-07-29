@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r29",
+  "worktrees": false,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "cut-absence-silence",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker extending a certification checker. Copy /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/cut_absence_check.py into your current working directory as ./cut_absence_check.py and extend it in place. READ access to /mnt/d_drive/repos/podcast; never write to it. Pure stdlib + numpy + ffmpeg subprocess. No git, no MCP, no network.\n\nWHAT IT DOES TODAY: proves each removed span from an edit receipt is gone from the final render. For speech-bearing spans it fingerprints stem audio from the cut and asserts it does NOT appear in the render (plus LOCATED controls proving the method can find kept content). Spans where both stems are silent (< -55 dBFS) are honestly marked UNMEASURABLE (\"no reference evidence, not passed\") \u2014 and 5 such spans currently make the whole check exit 2 UNUSABLE.\n\nREAL DATA: a certified episode has 7 cuts: two long content cuts (proven ABSENT by fingerprint) and five ~1.0-1.9s dead-air cuts whose stems measure -61 to -97 dBFS. Silence cannot be fingerprinted, so content-matching is the WRONG instrument for them \u2014 but their absence is still provable: a dead-air cut removes a silent gap, so after the edit the render must NOT contain a silent gap of ~the cut's duration at the splice point.\n\nTHE EXTENSION \u2014 SILENCE-GONE mode for UNMEASURABLE spans:\n1. Compute each cut's splice position on the RENDER timeline: render_pos = cut.start_s - (total duration of receipt cuts that end at or before this cut's start) + head_offset. head_offset accounts for content prepended before the edited body in the final (intro bumper); accept it as --head-offset-s (default 0.0) and document that the caller passes the intro duration when the render is a full final rather than the bare edited body.\n2. Decode render audio (mono, 8kHz is fine) in a window of +/- WINDOW_S (named constant, 3.0s) around render_pos and measure silent runs: consecutive samples below SILENCE_FLOOR_DBFS (named constant, -50.0, slightly above the stem gate so encoded noise floors do not fake speech).\n3. Verdict per span: SILENCE_GONE (pass) if the longest silent run inside the window is < max(0.6 * cut_duration, MIN_GAP_S=0.5); SILENCE_PRESENT (fail, with the measured run length and position) otherwise. Report each span's mode, numbers, and WHY on failure.\n4. Overall verdict: PASS (exit 0) iff every control is LOCATED, every speech-bearing cut is ABSENT, and every silent cut is SILENCE_GONE. Any SILENCE_PRESENT or ABSENT-violation -> exit 1. Exit 2 remains only for truly unusable inputs (missing files, malformed receipt, spans beyond media). Keep all existing output lines and add the new fields; do not weaken the fingerprint path.\n\nADD --self-test (hermetic, ffmpeg lavfi, no repo access): build a synthetic 40s 'stem' pair with speech-like noise everywhere EXCEPT a genuine 1.2s silent gap at t=20.0; build (a) an EDITED render with the gap removed (concat of before/after) and (b) an UNEDITED render retaining the gap. Assert, printing measured numbers: (1) the edited render's silent-cut span verdicts SILENCE_GONE and overall exit 0 (with a receipt containing that one silent cut plus one speech cut you also apply); (2) the UNEDITED render yields SILENCE_PRESENT for the silent cut and exit 1 (red proof); (3) a receipt span beyond media duration still exits 2. Self-test exit 0 only when green cases are green and red cases are red.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' cut_absence_check.py argparse '2026-06-10,fred-cho' && timeout 900 python3 cut_absence_check.py --self-test && echo PASS",
+      "expect_files": [
+        "cut_absence_check.py"
+      ],
+      "verified": "dead-air cuts proven gone via splice-point silence measurement; red-proved on an unedited render; fingerprint path untouched"
+    }
+  ]
+}

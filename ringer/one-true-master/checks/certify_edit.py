@@ -54,26 +54,45 @@ def main():
     program_audio = os.path.join(final, "episode.mp3")
 
     # The applied edit plan's removed spans, exported to session-grid seconds so
-    # cut-absence can prove each is gone from the render. Written by the driver
-    # or derivable from episode.json local_media_build.content_edit.removed.
-    cuts_json = os.path.join(proc, "_applied_cuts.json")
-    if not os.path.exists(cuts_json):
+    # cut-absence can prove each is gone from the render. AUTHORITATIVE source
+    # is episode.json local_media_build.clip_source.removed (written by the
+    # orchestrator on every render); legacy content_edit.removed is second. A
+    # pre-existing processed/_applied_cuts.json is only trusted as a LAST
+    # resort: a real episode carried an orphaned, clock-mixed, duplicated
+    # _applied_cuts.json from a superseded round that no code writes anymore,
+    # and it shadowed the clean receipt (2026-07-29). Derived spans are
+    # deduped, merged when overlapping, and written to a certify-owned file so
+    # the orphan is never consulted when the authoritative receipt exists.
+    orphan_cuts = os.path.join(proc, "_applied_cuts.json")
+    cuts_json = os.path.join(proc, "_certify_cuts.json")
+    removed = []
+    try:
+        ep_data = json.load(open(os.path.join(ep, "episode.json")))
+        lmb = ep_data.get("local_media_build") or {}
+        removed = ((lmb.get("clip_source") or {}).get("removed")
+                   or (lmb.get("content_edit") or {}).get("removed") or [])
+    except (OSError, ValueError):
+        removed = []
+    spans = []
+    for span in removed:
         try:
-            ep_data = json.load(open(os.path.join(ep, "episode.json")))
-            removed = (((ep_data.get("local_media_build") or {}).get("content_edit")
-                        or {}).get("removed") or [])
-            norm = []
-            for i, span in enumerate(removed):
-                try:
-                    norm.append({"id": "cut_%02d" % i,
-                                 "start_s": float(span["start_s"]),
-                                 "end_s": float(span["end_s"])})
-                except (KeyError, TypeError, ValueError):
-                    continue
-            if norm:
-                json.dump(norm, open(cuts_json, "w"))
-        except (OSError, ValueError):
-            pass
+            s, e = float(span["start_s"]), float(span["end_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if e > s:
+            spans.append((s, e))
+    if spans:
+        spans.sort()
+        merged = [list(spans[0])]
+        for s, e in spans[1:]:
+            if s <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], e)
+            else:
+                merged.append([s, e])
+        json.dump([{"id": "cut_%02d" % i, "start_s": s, "end_s": e}
+                   for i, (s, e) in enumerate(merged)], open(cuts_json, "w"))
+    elif os.path.exists(orphan_cuts):
+        cuts_json = orphan_cuts
 
     # Bumpers are repo-level assets (server/config INTRO_PATH/OUTRO_PATH =
     # <repo>/assets/intro.mp4 / outro.mp4), not per-episode files. Resolve up
@@ -93,6 +112,16 @@ def main():
 
     def tool(name):
         return os.path.join(CHECKS_DIR, name)
+
+    def _media_duration_s(path):
+        """ffprobe duration as a string arg; '0.0' when unprobeable."""
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", path], capture_output=True, text=True)
+            return f"{float(out.stdout.strip()):.3f}"
+        except (ValueError, OSError):
+            return "0.0"
 
     # The final concatenates MASTERED bumpers (loudness-normalized copies), so
     # presence and level must be judged against those artifacts, not the raw
@@ -174,7 +203,10 @@ def main():
         ("cut-absence (removed spans gone from render)", "clips",
          [program, stems, cuts_json] if clips_fresh else [os.path.join(ep, "__STALE_CLIPS__")],
          ["python3", tool("cut_absence_check.py"), "--render", program,
-          "--stems", stems, "--cuts", cuts_json]),
+          "--stems", stems, "--cuts", cuts_json,
+          # The render is the full final: the intro bumper precedes the edited
+          # body, so splice-point silence checks must shift by its duration.
+          "--head-offset-s", _media_duration_s(intro)]),
     ]
 
     wanted = args.scope  # episode | clips | all
