@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r33",
+  "worktrees": false,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "resolution-gate-realmedia",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker fixing a checker that fails on real media. Copy /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/resolution_check.py into your current working directory as ./resolution_check.py and fix it in place. READ access to /mnt/d_drive/repos/podcast; never write to it. Pure stdlib + numpy + ffmpeg/ffprobe subprocess. No git, no MCP, no network.\n\nWHAT IT DOES: proves a finished video master carries real picture detail at its declared resolution (catching a pipeline that downscaled to 540p then upscaled back to 1080p). Its hermetic --self-test passes.\n\nTHE REAL-MEDIA DEFECT, measured. Run against a real episode it aborts immediately:\n  ERROR: no positive finite video duration in <...>-cam-video-<...>.webm\nBecause the source cameras are Daily.co WebM recordings that carry NO duration metadata. Probing one shows:\n  codec_name=vp8  width=1920  height=1080  duration=N/A  nb_frames=N/A   (format duration also N/A, size 223373096)\nThe duration IS derivable: `ffprobe -count_packets -select_streams v:0 -show_entries stream=nb_read_packets` returns 75833 packets for that file, and packet timestamps are available via `ffprobe -select_streams v:0 -show_entries packet=pts_time`. Real recordings from this platform are ALWAYS like this, so a checker that demands container duration is unusable in production \u2014 exactly the failure mode this gate was written to prevent in others.\n\nALSO FIX: the abort path returned process exit 0 in the observed run even though it printed ERROR and did no work. An error must exit 2 (unusable input). Verify the exit code propagates from every early-return path, not just this one.\n\nTHE FIX:\n1. Add resolve_duration_s(path) with an explicit fallback ladder, logging which rung produced the answer: (a) format/stream duration when positive and finite; (b) the LAST packet pts_time (+ its duration when present) from `ffprobe -select_streams v:0 -show_entries packet=pts_time -of csv` \u2014 read the final non-empty value, which is cheap enough here and robust to VFR; (c) decoded frame count divided by the average frame rate when both are obtainable; (d) only if all rungs fail, treat the input as unusable and exit 2 with a WHY naming every rung tried. Prefer streaming/parsing the ffprobe output without loading the whole packet list into memory where practical.\n2. Probe timestamps must be computed from the RESOLVED duration everywhere the code previously assumed container duration.\n3. VFR safety: when sampling frames at a timestamp in a source with no reliable timebase, seek with -ss before -i and accept the nearest decodable frame; a seek that lands on no frame must retry at a small offset rather than aborting the whole run (a single unreadable probe should degrade that probe, not the gate). If MORE than half the probes on a file fail to decode, THEN exit 2 for that file.\n\nEXTEND --self-test (keep every existing case green): add a DURATIONLESS-SOURCE case \u2014 build a WebM/VP8 file and strip or omit its duration metadata so ffprobe reports duration=N/A (e.g. write VP8 into WebM via a pipe/streaming mux so the header carries no duration; VERIFY with ffprobe that duration is genuinely N/A and PRINT that verification, since a fixture that accidentally has a duration proves nothing). Assert: resolve_duration_s recovers a duration within 10% of the true synthetic length via the packet fallback and prints which rung it used; and the full check runs to a normal verdict against that source instead of aborting. Also add an EXIT-CODE case asserting an unresolvable/corrupt input yields exit 2, not 0. Self-test exits 0 only when every green case is green and every red case is red.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' resolution_check.py argparse '2026-06-10,fred-cho' && timeout 900 python3 resolution_check.py --self-test && echo PASS",
+      "expect_files": [
+        "resolution_check.py"
+      ],
+      "verified": "resolution gate works on real durationless VP8/WebM camera tracks and exits 2 (not 0) on unusable input"
+    }
+  ]
+}

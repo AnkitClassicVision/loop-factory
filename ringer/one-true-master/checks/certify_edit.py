@@ -53,6 +53,16 @@ def main():
     timeline = os.path.join(proc, "timeline.json")
     program_audio = os.path.join(final, "episode.mp3")
 
+    # Raw camera tracks are the resolution gate's reference: the master must
+    # carry the detail the cameras actually captured. A pipeline that silently
+    # downscaled every stem to 960x540 and re-upscaled to 1080p passed eight
+    # gates undetected (2026-07-29) because nothing compared against source.
+    raw_dir = os.path.join(ep, "raw")
+    raw_videos = sorted(
+        os.path.join(raw_dir, f) for f in (os.listdir(raw_dir) if os.path.isdir(raw_dir) else [])
+        if "video" in f.lower() and f.lower().endswith((".webm", ".mp4", ".mkv"))
+    )
+
     # The applied edit plan's removed spans, exported to session-grid seconds so
     # cut-absence can prove each is gone from the render. AUTHORITATIVE source
     # is episode.json local_media_build.clip_source.removed (written by the
@@ -194,12 +204,21 @@ def main():
         ("bumpers (present, once, level-matched)", "episode", [program, intro, outro],
          ["python3", tool("bumper_check.py"), "--final", program,
           "--intro", intro, "--outro", outro] + bumper_level_args),
+        ("resolution (real detail, not upscaled)", "episode",
+         [program] + (raw_videos[:1] or [os.path.join(ep, "__NO_RAW_TRACKS__")]),
+         ["python3", tool("resolution_check.py"), "--final", program,
+          "--sources", *raw_videos]),
         ("freshness (outputs newer than inputs)", "episode", [ep],
          ["python3", tool("freshness_check.py"), "--episode", ep]),
         ("clip-words (clips contain their source)", "clips",
          [clips_manifest, stems] if clips_fresh else [os.path.join(ep, "__STALE_CLIPS__")],
          ["python3", tool("clip_words_check.py"), "--manifest", clips_manifest,
           "--stems", stems, "--clips-dir", os.path.join(ep, "clips")]),
+        ("clip-framing (face present, centered, right shape)", "clips",
+         [clips_manifest] if clips_fresh else [os.path.join(ep, "__STALE_CLIPS__")],
+         ["python3", tool("clip_framing_check.py"),
+          "--clips-dir", os.path.join(ep, "clips"),
+          "--manifest", clips_manifest]),
         ("cut-absence (removed spans gone from render)", "clips",
          [program, stems, cuts_json] if clips_fresh else [os.path.join(ep, "__STALE_CLIPS__")],
          ["python3", tool("cut_absence_check.py"), "--render", program,
