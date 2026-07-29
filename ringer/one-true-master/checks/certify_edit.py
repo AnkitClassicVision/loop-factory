@@ -204,9 +204,15 @@ def main():
         ("bumpers (present, once, level-matched)", "episode", [program, intro, outro],
          ["python3", tool("bumper_check.py"), "--final", program,
           "--intro", intro, "--outro", outro] + bumper_level_args),
-        ("resolution (real detail, not upscaled)", "episode",
-         [program] + (raw_videos[:1] or [os.path.join(ep, "__NO_RAW_TRACKS__")]),
-         ["python3", tool("resolution_check.py"), "--final", program,
+        # Structural first: every video stem must carry at least what its camera
+        # captured (capped at the delivery canvas). SAME_FRAMING_DETAIL compares
+        # the angle-switched program against the composite — both full-frame, so
+        # the ratio means something; comparing differently-framed artifacts does
+        # not (measured 2026-07-29).
+        ("resolution (stems vs cameras, real detail)", "episode",
+         [angle, stems] + (raw_videos[:1] or [os.path.join(ep, "__NO_RAW_TRACKS__")]),
+         ["python3", tool("resolution_check.py"), "--final", angle,
+          "--stems", stems, "--ancestor", composite or "/nonexistent",
           "--sources", *raw_videos]),
         ("freshness (outputs newer than inputs)", "episode", [ep],
          ["python3", tool("freshness_check.py"), "--episode", ep]),

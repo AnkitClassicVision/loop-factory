@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Certify declared resolution and measured picture detail in a final video."""
+"""Certify that a final master preserves the resolution captured by its cameras."""
 
 from __future__ import annotations
 
@@ -26,10 +26,13 @@ import numpy as np
 DEFAULT_PROBE_COUNT = 5
 # One probe is the minimum that can form a median distribution.
 MIN_PROBE_COUNT = 1
-# A 0.75 floor tolerates ordinary encode/content variance while catching material loss.
-DEFAULT_MIN_DETAIL_RATIO = 0.75
-# Retention above 0.92 means a half-size round trip removed too little claimed-resolution detail.
-UPSCALE_RETENTION_MAX = 0.92
+# Same-framing re-encodes should retain nearly all source detail. A controlled
+# 960x540-to-1920x1080 round trip lost about 13.5% on the real episode.
+DEFAULT_MIN_DETAIL_RATIO = 0.85
+# Kept only to show what the retired absolute fingerprint would have concluded.
+LEGACY_UPSCALE_RETENTION_MAX = 0.92
+DEFAULT_CANVAS_WIDTH = 1920
+DEFAULT_CANVAS_HEIGHT = 1080
 # The first 10% is excluded so intros and title bumpers do not dominate the sample.
 PROBE_WINDOW_START_FRACTION = 0.10
 # Sampling 80% of each file excludes both head and tail bumpers.
@@ -81,15 +84,11 @@ class ProbeMeasurement:
 
 
 @dataclass(frozen=True)
-class SourceComparison:
-    source: str
-    comparison_width_final: int
-    comparison_width_source: int
-    comparison_height: int
-    final_probes: list[ProbeMeasurement]
-    source_probes: list[ProbeMeasurement]
-    final_median_detail: float
-    source_median_detail: float
+class AlignedDetailProbe:
+    ancestor_timestamp_s: float
+    final_timestamp_s: float
+    ancestor_detail: float
+    final_detail: float
     ratio: float
 
 
@@ -289,6 +288,69 @@ def validate_local_file(path_value: str, label: str) -> Path:
     if not os.access(path, os.R_OK):
         raise UnusableInputError(f"{label} is not readable: {path}")
     return path
+
+
+def validate_stem_directory(path_value: str) -> list[Path]:
+    directory = Path(path_value).expanduser().resolve()
+    if not directory.exists():
+        raise UnusableInputError(f"--stems does not exist: {directory}")
+    if not directory.is_dir():
+        raise UnusableInputError(f"--stems is not a directory: {directory}")
+    try:
+        stems = sorted(
+            (path.resolve() for path in directory.iterdir() if path.is_file()),
+            key=lambda path: (path.name.casefold(), str(path)),
+        )
+    except OSError as exc:
+        raise UnusableInputError(f"cannot read --stems directory {directory}: {exc}") from exc
+    if not stems:
+        raise UnusableInputError(f"--stems contains no regular files: {directory}")
+    for index, stem in enumerate(stems):
+        if not os.access(stem, os.R_OK):
+            raise UnusableInputError(f"--stems[{index}] is not readable: {stem}")
+    # A real stems directory holds audio stems (.flac/.wav) beside the video
+    # stems; probing an audio file as video aborted the whole gate on the first
+    # live run (2026-07-29). Inside a DIRECTORY, skip files carrying no video
+    # stream and say which were skipped. Strictness is preserved where it
+    # matters: an explicitly named file with no video stream still raises,
+    # because the caller asserted it was a video.
+    video_stems, skipped = [], []
+    for stem in stems:
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0", str(stem)],
+                capture_output=True, text=True, timeout=60)
+            has_video = probe.returncode == 0 and probe.stdout.strip().split(",")[0].isdigit()
+        except (OSError, subprocess.SubprocessError):
+            has_video = False
+        if has_video:
+            video_stems.append(stem)
+        else:
+            skipped.append(stem.name)
+    if skipped:
+        print("STEM_DIRECTORY_FILTER skipped_non_video=%s" % ",".join(sorted(skipped)),
+              flush=True)
+    if not video_stems:
+        raise UnusableInputError(
+            f"--stems contains no files with a video stream: {directory}")
+    return video_stems
+
+
+def parse_canvas(value: str) -> tuple[int, int]:
+    width_text, separator, height_text = value.lower().partition("x")
+    if not separator:
+        raise argparse.ArgumentTypeError("--canvas must use WIDTHxHEIGHT")
+    try:
+        width = int(width_text)
+        height = int(height_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--canvas must use integer WIDTHxHEIGHT") from exc
+    if width < MIN_DETAIL_DIMENSION or height < MIN_DETAIL_DIMENSION:
+        raise argparse.ArgumentTypeError(
+            f"--canvas dimensions must each be at least {MIN_DETAIL_DIMENSION}"
+        )
+    return width, height
 
 
 def _duration_from_metadata(
@@ -688,56 +750,6 @@ def median_detail(measurements: Sequence[ProbeMeasurement]) -> float:
     return float(median(item.detail for item in measurements))
 
 
-def compare_source_distributions(
-    decoder: FrameDecoder,
-    final: MediaInfo,
-    sources: Sequence[MediaInfo],
-    probe_count: int,
-) -> list[SourceComparison]:
-    comparisons = []
-    final_timestamps = probe_timestamps(final.duration_s, probe_count)
-
-    for source in sources:
-        comparison_height = min(final.height, source.height)
-        final_width = scaled_width(final.width, final.height, comparison_height)
-        source_width = scaled_width(source.width, source.height, comparison_height)
-        final_probes = measure_probes(
-            decoder,
-            final,
-            final_timestamps,
-            final_width,
-            comparison_height,
-        )
-        source_probes = measure_probes(
-            decoder,
-            source,
-            probe_timestamps(source.duration_s, probe_count),
-            source_width,
-            comparison_height,
-        )
-        final_median = median_detail(final_probes)
-        source_median = median_detail(source_probes)
-        if source_median <= MIN_MEASURABLE_DETAIL:
-            raise UnusableInputError(
-                f"source has no measurable detail in its probe distribution: {source.path}"
-            )
-        comparisons.append(
-            SourceComparison(
-                source=source.path,
-                comparison_width_final=final_width,
-                comparison_width_source=source_width,
-                comparison_height=comparison_height,
-                final_probes=final_probes,
-                source_probes=source_probes,
-                final_median_detail=final_median,
-                source_median_detail=source_median,
-                ratio=final_median / source_median,
-            )
-        )
-
-    return comparisons
-
-
 def check_declared_resolution(
     final: MediaInfo,
     sources: Sequence[MediaInfo],
@@ -767,117 +779,281 @@ def check_declared_resolution(
     }
 
 
-def check_real_detail(
-    comparisons: Sequence[SourceComparison],
-    min_detail_ratio: float,
+def check_stem_resolution(
+    stems: Sequence[MediaInfo] | None,
+    sources: Sequence[MediaInfo],
+    canvas: tuple[int, int],
 ) -> dict[str, Any]:
-    # The highest ratio is the least lossy available distribution match.
-    selected = max(comparisons, key=lambda item: item.ratio)
-    passed = selected.ratio >= min_detail_ratio
+    if stems is None:
+        return {
+            "name": "STEM_RESOLUTION",
+            "status": "SKIPPED",
+            "why": (
+                "--stems was not supplied, so the primary deterministic check "
+                "could not inspect per-speaker intermediate dimensions."
+            ),
+        }
+
+    canvas_width, canvas_height = canvas
+    comparisons = []
+    for index, (stem, source) in enumerate(zip(stems, sources)):
+        required_width = min(source.width, canvas_width)
+        required_height = min(source.height, canvas_height)
+        width_margin = stem.width - required_width
+        height_margin = stem.height - required_height
+        pair_passed = width_margin >= 0 and height_margin >= 0
+        comparisons.append(
+            {
+                "index": index,
+                "stem": stem.path,
+                "source": source.path,
+                "stem_width": stem.width,
+                "stem_height": stem.height,
+                "source_width": source.width,
+                "source_height": source.height,
+                "required_width": required_width,
+                "required_height": required_height,
+                "width_margin_px": width_margin,
+                "height_margin_px": height_margin,
+                "status": "PASS" if pair_passed else "FAIL",
+            }
+        )
+
+    unmatched_stems = [stem.path for stem in stems[len(comparisons) :]]
+    unmatched_sources = [source.path for source in sources[len(comparisons) :]]
+    counts_match = len(stems) == len(sources)
+    passed = counts_match and all(
+        comparison["status"] == "PASS" for comparison in comparisons
+    )
     return {
-        "name": "REAL_DETAIL",
+        "name": "STEM_RESOLUTION",
         "status": "PASS" if passed else "FAIL",
         "matching_method": (
-            "Distribution comparison, not frame-pair comparison: each file is "
-            "sampled at its own evenly spaced timestamps in its own middle 80%; "
-            "with multiple sources, the highest final/source median ratio is the "
-            "best available match."
+            "Stem files and source camera tracks are independently sorted by "
+            "filename, then paired by zero-based index."
         ),
-        "selected_source": selected.source,
-        "comparison_height": selected.comparison_height,
-        "comparison_width_final": selected.comparison_width_final,
-        "comparison_width_source": selected.comparison_width_source,
-        "final_median_detail": selected.final_median_detail,
-        "source_median_detail": selected.source_median_detail,
-        "ratio": selected.ratio,
-        "minimum_ratio": min_detail_ratio,
-        "margin": selected.ratio - min_detail_ratio,
-        "final_probes": [asdict(item) for item in selected.final_probes],
-        "source_probes": [asdict(item) for item in selected.source_probes],
-        "candidates": [
-            {
-                "source": item.source,
-                "comparison_height": item.comparison_height,
-                "comparison_width_final": item.comparison_width_final,
-                "comparison_width_source": item.comparison_width_source,
-                "final_median_detail": item.final_median_detail,
-                "source_median_detail": item.source_median_detail,
-                "ratio": item.ratio,
-            }
-            for item in comparisons
-        ],
+        "canvas_width": canvas_width,
+        "canvas_height": canvas_height,
+        "stem_count": len(stems),
+        "source_count": len(sources),
+        "counts_match": counts_match,
+        "comparisons": comparisons,
+        "unmatched_stems": unmatched_stems,
+        "unmatched_sources": unmatched_sources,
         "why": (
-            "The median first-difference ratio measures retained picture detail "
-            "after both files are scaled to a fair common height."
+            "Each stem must be at least min(its index-matched camera dimension, "
+            "the delivery canvas) on both axes. Pair names are printed so an "
+            "incorrect index match is visible."
         ),
     }
 
 
-def check_upscale_fingerprint(
+def measure_aligned_detail(
     decoder: FrameDecoder,
     final: MediaInfo,
+    ancestor: MediaInfo,
     probe_count: int,
+    head_offset_s: float,
+) -> tuple[list[AlignedDetailProbe], int, int]:
+    ancestor_span_in_final_s = final.duration_s - head_offset_s
+    if ancestor_span_in_final_s <= 0.0:
+        raise UnusableInputError(
+            f"--head-offset-s {head_offset_s:.6f} leaves no aligned final duration"
+        )
+    aligned_duration_s = min(ancestor.duration_s, ancestor_span_in_final_s)
+    timestamps = probe_timestamps(aligned_duration_s, probe_count)
+    comparison_height = min(final.height, ancestor.height)
+    final_width = scaled_width(final.width, final.height, comparison_height)
+    ancestor_width = scaled_width(
+        ancestor.width,
+        ancestor.height,
+        comparison_height,
+    )
+    measurements = []
+    failures = []
+    for ancestor_timestamp_s in timestamps:
+        final_timestamp_s = head_offset_s + ancestor_timestamp_s
+        try:
+            final_frame = decoder.gray_frame(
+                final,
+                final_timestamp_s,
+                final_width,
+                comparison_height,
+            )
+            ancestor_frame = decoder.gray_frame(
+                ancestor,
+                ancestor_timestamp_s,
+                ancestor_width,
+                comparison_height,
+            )
+            final_detail = detail_score(final_frame)
+            ancestor_detail = detail_score(ancestor_frame)
+            if ancestor_detail <= MIN_MEASURABLE_DETAIL:
+                raise UnusableInputError(
+                    "ancestor frame has no measurable first-difference detail"
+                )
+        except UnusableInputError as exc:
+            failures.append((ancestor_timestamp_s, final_timestamp_s, str(exc)))
+            print(
+                f"WARNING: degraded aligned probe ancestor={ancestor_timestamp_s:.3f}s "
+                f"final={final_timestamp_s:.3f}s: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        measurements.append(
+            AlignedDetailProbe(
+                ancestor_timestamp_s=ancestor_timestamp_s,
+                final_timestamp_s=final_timestamp_s,
+                ancestor_detail=ancestor_detail,
+                final_detail=final_detail,
+                ratio=final_detail / ancestor_detail,
+            )
+        )
+    if len(failures) * 2 > len(timestamps):
+        failure_summary = " | ".join(
+            f"ancestor={ancestor_s:.3f}s final={final_s:.3f}s: {reason}"
+            for ancestor_s, final_s, reason in failures
+        )
+        raise UnusableInputError(
+            f"more than half the aligned probes were unusable: "
+            f"{len(failures)}/{len(timestamps)}; WHY: {failure_summary}"
+        )
+    return measurements, final_width, ancestor_width
+
+
+def check_same_framing_detail(
+    decoder: FrameDecoder,
+    final: MediaInfo,
+    ancestor: MediaInfo | None,
+    probe_count: int,
+    head_offset_s: float,
+    min_detail_ratio: float,
 ) -> dict[str, Any]:
-    timestamps = probe_timestamps(final.duration_s, probe_count)
-    before = measure_probes(
+    if ancestor is None:
+        return {
+            "name": "SAME_FRAMING_DETAIL",
+            "status": "SKIPPED",
+            "why": (
+                "--ancestor was not supplied, so no direct same-framing "
+                "final/ancestor comparison was possible."
+            ),
+        }
+
+    measurements, final_width, ancestor_width = measure_aligned_detail(
         decoder,
         final,
+        ancestor,
+        probe_count,
+        head_offset_s,
+    )
+    ratio = float(median(item.ratio for item in measurements))
+    passed = ratio >= min_detail_ratio
+    return {
+        "name": "SAME_FRAMING_DETAIL",
+        "status": "PASS" if passed else "FAIL",
+        "matching_method": (
+            "Each ancestor probe is paired to final time "
+            "head_offset_s + ancestor_time; the median is taken over paired "
+            "per-frame final/ancestor detail ratios."
+        ),
+        "ancestor": ancestor.path,
+        "head_offset_s": head_offset_s,
+        "comparison_height": min(final.height, ancestor.height),
+        "comparison_width_final": final_width,
+        "comparison_width_ancestor": ancestor_width,
+        "ratio": ratio,
+        "minimum_ratio": min_detail_ratio,
+        "margin": ratio - min_detail_ratio,
+        "aligned_probes": [asdict(item) for item in measurements],
+        "why": (
+            "Only a direct ancestor with identical framing supports a meaningful "
+            "detail-retention gate; unrelated camera/composite framings do not."
+        ),
+    }
+
+
+def measure_upscale_retention_advisory(
+    decoder: FrameDecoder,
+    media: MediaInfo,
+    probe_count: int,
+) -> dict[str, Any]:
+    timestamps = probe_timestamps(media.duration_s, probe_count)
+    before = measure_probes(
+        decoder,
+        media,
         timestamps,
-        final.width,
-        final.height,
+        media.width,
+        media.height,
     )
     before_median = median_detail(before)
     if before_median <= MIN_MEASURABLE_DETAIL:
-        raise UnusableInputError(
-            "final has no measurable detail, so upscale retention is undefined"
-        )
+        raise UnusableInputError("media has no measurable detail")
     phase_results = []
     for phase in ((0, 0), (1, 0), (0, 1), (1, 1)):
         after_for_phase = measure_probes(
             decoder,
-            final,
+            media,
             timestamps,
-            final.width,
-            final.height,
+            media.width,
+            media.height,
             roundtrip_phase=phase,
         )
-        phase_results.append((phase, after_for_phase, median_detail(after_for_phase)))
-    selected_phase, after, after_median = max(
-        phase_results,
-        key=lambda item: item[2],
-    )
+        phase_results.append((phase, median_detail(after_for_phase)))
+    selected_phase, after_median = max(phase_results, key=lambda item: item[1])
     retention = after_median / before_median
-    passed = retention <= UPSCALE_RETENTION_MAX
     return {
-        "name": "UPSCALE_FINGERPRINT",
-        "status": "PASS" if passed else "FAIL",
-        "method": (
-            "Source-independent final-frame round trip; it uses no cross-file "
-            "timestamp or frame matching."
-        ),
+        "media": media.path,
+        "width": media.width,
+        "height": media.height,
+        "measurement_status": "MEASURED",
         "before_median_detail": before_median,
         "after_median_detail": after_median,
         "retention_ratio": retention,
-        "maximum_retention": UPSCALE_RETENTION_MAX,
-        "margin": UPSCALE_RETENTION_MAX - retention,
         "selected_sampling_phase": list(selected_phase),
-        "phase_candidates": [
-            {
-                "phase": list(phase),
-                "after_median_detail": phase_median,
-                "retention_ratio": phase_median / before_median,
+        "legacy_threshold": LEGACY_UPSCALE_RETENTION_MAX,
+        "legacy_would_fail": retention > LEGACY_UPSCALE_RETENTION_MAX,
+    }
+
+
+def upscale_fingerprint_advisory(
+    decoder: FrameDecoder,
+    final: MediaInfo,
+    sources: Sequence[MediaInfo],
+    probe_count: int,
+) -> dict[str, Any]:
+    measurements = []
+    for role, media in [
+        ("final", final),
+        *((f"source[{index}]", source) for index, source in enumerate(sources)),
+    ]:
+        try:
+            measurement = measure_upscale_retention_advisory(
+                decoder,
+                media,
+                probe_count,
+            )
+        except UnusableInputError as exc:
+            measurement = {
+                "media": media.path,
+                "width": media.width,
+                "height": media.height,
+                "measurement_status": "UNAVAILABLE",
+                "why_unavailable": str(exc),
             }
-            for phase, _phase_probes, phase_median in phase_results
-        ],
-        "before_probes": [asdict(item) for item in before],
-        "after_probes": [asdict(item) for item in after],
+        measurement["role"] = role
+        measurements.append(measurement)
+
+    # This can never gate. On the real episode, untouched raw camera footage
+    # scored 1.000-1.008 retention, above the retired 0.92 failure threshold.
+    # Native webcam softness therefore looks identical to prior upscaling.
+    return {
+        "name": "UPSCALE_FINGERPRINT_ADVISORY",
+        "status": "INFO",
+        "measurements": measurements,
         "why": (
-            f"Retention above {UPSCALE_RETENTION_MAX:.2f} means halving and "
-            f"restoring the frame removed less than "
-            f"{(1.0 - UPSCALE_RETENTION_MAX) * 100:.0f}% of its detail, a "
-            "fingerprint of picture already limited to roughly half the claimed "
-            "linear resolution. The maximum across all four 2x2 sampling "
-            "origins prevents a scaler phase shift from hiding that lattice."
+            "Advisory only, never a FAIL: real raw-camera footage measured "
+            "1.000-1.008 retention because native webcam softness contains "
+            "little fine detail for a half-size round trip to remove."
         ),
     }
 
@@ -888,36 +1064,72 @@ def evaluate(
     min_detail_ratio: float,
     probe_count: int,
     *,
+    stems_path: str | None,
+    ancestor_path: str | None,
+    canvas: tuple[int, int],
+    head_offset_s: float,
     ffmpeg: str,
     ffprobe: str,
     decoder: FrameDecoder | None = None,
 ) -> dict[str, Any]:
     final_file = validate_local_file(final_path, "--final")
-    source_files = [
-        validate_local_file(path, f"--sources[{index}]")
-        for index, path in enumerate(source_paths)
-    ]
+    source_files = sorted(
+        (
+            validate_local_file(path, f"--sources[{index}]")
+            for index, path in enumerate(source_paths)
+        ),
+        key=lambda path: (path.name.casefold(), str(path)),
+    )
+    stem_files = (
+        validate_stem_directory(stems_path) if stems_path is not None else None
+    )
+    ancestor_file = (
+        validate_local_file(ancestor_path, "--ancestor")
+        if ancestor_path is not None
+        else None
+    )
     final = probe_media(final_file, ffprobe)
     sources = [probe_media(path, ffprobe) for path in source_files]
+    stems = (
+        [probe_media(path, ffprobe) for path in stem_files]
+        if stem_files is not None
+        else None
+    )
+    ancestor = (
+        probe_media(ancestor_file, ffprobe) if ancestor_file is not None else None
+    )
     active_decoder = decoder or FrameDecoder(ffmpeg)
 
+    stem_resolution = check_stem_resolution(stems, sources, canvas)
     declared = check_declared_resolution(final, sources)
-    comparisons = compare_source_distributions(
+    same_framing = check_same_framing_detail(
+        active_decoder,
+        final,
+        ancestor,
+        probe_count,
+        head_offset_s,
+        min_detail_ratio,
+    )
+    advisory = upscale_fingerprint_advisory(
         active_decoder,
         final,
         sources,
         probe_count,
     )
-    real_detail = check_real_detail(comparisons, min_detail_ratio)
-    upscale = check_upscale_fingerprint(active_decoder, final, probe_count)
-    checks = [declared, real_detail, upscale]
-    passed = all(check["status"] == "PASS" for check in checks)
+    checks = [stem_resolution, declared, same_framing, advisory]
+    passed = not any(check["status"] == "FAIL" for check in checks)
 
     return {
         "status": "PASS" if passed else "FAIL",
         "exit_code": 0 if passed else 1,
         "final": asdict(final),
         "sources": [asdict(source) for source in sources],
+        "stems": (
+            [asdict(stem) for stem in stems] if stems is not None else None
+        ),
+        "ancestor": asdict(ancestor) if ancestor is not None else None,
+        "canvas": {"width": canvas[0], "height": canvas[1]},
+        "head_offset_s": head_offset_s,
         "probe_count": probe_count,
         "probe_window": {
             "start_fraction": PROBE_WINDOW_START_FRACTION,
@@ -926,7 +1138,9 @@ def evaluate(
         },
         "thresholds": {
             "min_detail_ratio": min_detail_ratio,
-            "upscale_retention_max": UPSCALE_RETENTION_MAX,
+            "legacy_upscale_retention_max_advisory_only": (
+                LEGACY_UPSCALE_RETENTION_MAX
+            ),
         },
         "checks": checks,
     }
@@ -943,7 +1157,36 @@ def render_report(report: dict[str, Any]) -> None:
     for check in report["checks"]:
         name = check["name"]
         status = check["status"]
-        if name == "DECLARED_RESOLUTION":
+        if name == "STEM_RESOLUTION":
+            if status == "SKIPPED":
+                print(f"{status} {name}")
+            else:
+                print(f"MATCHING: {check['matching_method']}")
+                print(
+                    f"{status} {name}: stems={check['stem_count']} "
+                    f"sources={check['source_count']} "
+                    f"counts_match={check['counts_match']}; "
+                    f"canvas={check['canvas_width']}x{check['canvas_height']}"
+                )
+                for comparison in check["comparisons"]:
+                    print(
+                        f"  {comparison['status']} STEM_SOURCE_PAIR"
+                        f"[{comparison['index']}]: "
+                        f"stem={comparison['stem']} "
+                        f"{comparison['stem_width']}x{comparison['stem_height']}; "
+                        f"source={comparison['source']} "
+                        f"{comparison['source_width']}x"
+                        f"{comparison['source_height']}; "
+                        f"required>={comparison['required_width']}x"
+                        f"{comparison['required_height']}; "
+                        f"margin={comparison['width_margin_px']:+d}px width, "
+                        f"{comparison['height_margin_px']:+d}px height"
+                    )
+                for path in check["unmatched_stems"]:
+                    print(f"  FAIL UNMATCHED_STEM: {path}")
+                for path in check["unmatched_sources"]:
+                    print(f"  FAIL UNMATCHED_SOURCE: {path}")
+        elif name == "DECLARED_RESOLUTION":
             print(
                 f"{status} {name}: final={check['final_width']}x{check['final_height']}; "
                 f"source_envelope={check['required_source_width']}x"
@@ -953,50 +1196,61 @@ def render_report(report: dict[str, Any]) -> None:
                 f"width_source={check['width_source']}; "
                 f"height_source={check['height_source']}"
             )
-        elif name == "REAL_DETAIL":
+        elif name == "SAME_FRAMING_DETAIL":
+            if status == "SKIPPED":
+                print(f"{status} {name}")
+                print(f"  WHY: {check['why']}")
+                continue
             print(f"MATCHING: {check['matching_method']}")
             print(
-                f"{status} {name}: final_median={check['final_median_detail']:.6f}; "
-                f"source_median={check['source_median_detail']:.6f}; "
+                f"{status} {name}: "
                 f"ratio={check['ratio']:.6f}; "
                 f"required>={check['minimum_ratio']:.6f}; "
-                f"margin={check['margin']:+.6f}; source={check['selected_source']}; "
+                f"margin={check['margin']:+.6f}; "
+                f"ancestor={check['ancestor']}; "
+                f"head_offset={check['head_offset_s']:.6f}s; "
                 f"comparison={check['comparison_width_final']}x"
                 f"{check['comparison_height']} final vs "
-                f"{check['comparison_width_source']}x"
-                f"{check['comparison_height']} source"
+                f"{check['comparison_width_ancestor']}x"
+                f"{check['comparison_height']} ancestor"
             )
-            print(f"  FINAL_PROBES: {format_probes(check['final_probes'])}")
-            print(f"  SOURCE_PROBES: {format_probes(check['source_probes'])}")
-            if len(check["candidates"]) > 1:
-                for candidate in check["candidates"]:
-                    print(
-                        "  SOURCE_CANDIDATE: "
-                        f"{candidate['source']} "
-                        f"final_median={candidate['final_median_detail']:.6f} "
-                        f"source_median={candidate['source_median_detail']:.6f} "
-                        f"ratio={candidate['ratio']:.6f} "
-                        f"height={candidate['comparison_height']}"
-                    )
-        elif name == "UPSCALE_FINGERPRINT":
-            print(f"METHOD: {check['method']}")
-            print(
-                f"{status} {name}: before_median={check['before_median_detail']:.6f}; "
-                f"after_median={check['after_median_detail']:.6f}; "
-                f"retention={check['retention_ratio']:.6f}; "
-                f"required<={check['maximum_retention']:.6f}; "
-                f"margin={check['margin']:+.6f}; "
-                f"sampling_phase={check['selected_sampling_phase']}"
-            )
-            print(f"  BEFORE_PROBES: {format_probes(check['before_probes'])}")
-            print(f"  AFTER_PROBES: {format_probes(check['after_probes'])}")
-            for phase in check["phase_candidates"]:
+            for probe in check["aligned_probes"]:
                 print(
-                    "  PHASE_CANDIDATE: "
-                    f"phase={phase['phase']} "
-                    f"after_median={phase['after_median_detail']:.6f} "
-                    f"retention={phase['retention_ratio']:.6f}"
+                    "  ALIGNED_PROBE: "
+                    f"ancestor_t={probe['ancestor_timestamp_s']:.3f}s "
+                    f"final_t={probe['final_timestamp_s']:.3f}s "
+                    f"ancestor_detail={probe['ancestor_detail']:.6f} "
+                    f"final_detail={probe['final_detail']:.6f} "
+                    f"ratio={probe['ratio']:.6f}"
                 )
+        elif name == "UPSCALE_FINGERPRINT_ADVISORY":
+            print(
+                f"{status} {name}: advisory_only=True; "
+                "never_changes_verdict=True"
+            )
+            for measurement in check["measurements"]:
+                if measurement["measurement_status"] == "MEASURED":
+                    print(
+                        f"  INFO {measurement['role']}: "
+                        f"media={measurement['media']} "
+                        f"resolution={measurement['width']}x"
+                        f"{measurement['height']} "
+                        f"before_median={measurement['before_median_detail']:.6f} "
+                        f"after_median={measurement['after_median_detail']:.6f} "
+                        f"retention={measurement['retention_ratio']:.6f} "
+                        f"legacy_threshold={measurement['legacy_threshold']:.6f} "
+                        f"legacy_would_fail={measurement['legacy_would_fail']} "
+                        f"phase={measurement['selected_sampling_phase']}"
+                    )
+                else:
+                    print(
+                        f"  INFO {measurement['role']}: "
+                        f"media={measurement['media']} "
+                        f"resolution={measurement['width']}x"
+                        f"{measurement['height']} "
+                        f"retention=UNAVAILABLE "
+                        f"WHY={measurement['why_unavailable']}"
+                    )
         print(f"  WHY: {check['why']}")
 
     print(f"{report['status']} RESOLUTION_CHECK")
@@ -1017,12 +1271,21 @@ def write_json_report(report: dict[str, Any], output_path: str) -> None:
 def synthesize_self_test_media(ffmpeg: str, directory: Path) -> dict[str, Path]:
     paths = {
         "source": directory / "source.mkv",
-        "good": directory / "good.mkv",
-        "bad": directory / "bad.mkv",
-        "low": directory / "low.mkv",
+        "source_720": directory / "source-720.mkv",
+        "good": directory / "good-final.mkv",
+        "roundtrip": directory / "roundtrip-final.mkv",
+        "low": directory / "low-final.mkv",
+        "soft_source": directory / "soft-source.mkv",
+        "soft_final": directory / "soft-final.mkv",
         "durationless": directory / "durationless-source.webm",
         "corrupt": directory / "corrupt-input.webm",
+        "stems_good": directory / "stems-good",
+        "stems_bad": directory / "stems-bad",
+        "stems_720": directory / "stems-720",
+        "stems_soft": directory / "stems-soft",
     }
+    for key in ("stems_good", "stems_bad", "stems_720", "stems_soft"):
+        paths[key].mkdir()
     pattern = (
         f"testsrc2=size=1920x1080:rate={SELF_TEST_FPS}:"
         f"duration={SELF_TEST_DURATION_SECONDS},"
@@ -1053,11 +1316,12 @@ def synthesize_self_test_media(ffmpeg: str, directory: Path) -> dict[str, Path]:
 
     transforms = {
         "good": "scale=1920:1080:flags=lanczos,setsar=1",
-        "bad": (
+        "roundtrip": (
             "scale=960:540:flags=area,"
             "scale=1920:1080:flags=lanczos,setsar=1"
         ),
         "low": "scale=1280:720:flags=area,setsar=1",
+        "source_720": "scale=1280:720:flags=area,setsar=1",
     }
     for name, video_filter in transforms.items():
         command = [
@@ -1083,6 +1347,94 @@ def synthesize_self_test_media(ffmpeg: str, directory: Path) -> dict[str, Path]:
             str(paths[name]),
         ]
         run_command(command, label=f"synthesize {name} self-test final")
+
+    stem_transforms = {
+        paths["stems_good"] / "speaker-01.mkv": (
+            str(paths["source"]),
+            "scale=1920:1080:flags=lanczos,setsar=1",
+        ),
+        paths["stems_bad"] / "speaker-01.mkv": (
+            str(paths["source"]),
+            "scale=960:540:flags=area,setsar=1",
+        ),
+        paths["stems_720"] / "speaker-01.mkv": (
+            str(paths["source_720"]),
+            "scale=1920:1080:flags=lanczos,setsar=1",
+        ),
+    }
+    for output_path, (input_path, video_filter) in stem_transforms.items():
+        command = [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            input_path,
+            "-map",
+            "0:v:0",
+            "-vf",
+            video_filter,
+            "-an",
+            "-c:v",
+            "ffv1",
+            "-level",
+            "3",
+            "-g",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+        run_command(command, label=f"synthesize self-test stem {output_path.name}")
+
+    soft_source = [
+        ffmpeg,
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(paths["source"]),
+        "-map",
+        "0:v:0",
+        "-vf",
+        "gblur=sigma=18:steps=3,setsar=1",
+        "-an",
+        "-c:v",
+        "ffv1",
+        "-level",
+        "3",
+        "-g",
+        "1",
+        "-pix_fmt",
+        "yuv420p",
+        str(paths["soft_source"]),
+    ]
+    run_command(soft_source, label="synthesize deliberately soft 1080p source")
+    for output_path in (
+        paths["soft_final"],
+        paths["stems_soft"] / "speaker-01.mkv",
+    ):
+        command = [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(paths["soft_source"]),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-c:v",
+            "ffv1",
+            "-level",
+            "3",
+            "-g",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+        run_command(command, label=f"synthesize correct soft case {output_path.name}")
 
     durationless = [
         ffmpeg,
@@ -1128,14 +1480,64 @@ def run_self_test() -> int:
         with tempfile.TemporaryDirectory(prefix="resolution-check-self-test-") as tmp:
             paths = synthesize_self_test_media(ffmpeg, Path(tmp))
             decoder = FrameDecoder(ffmpeg)
+            canvas = (DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT)
+
+            case_inputs = {
+                "stem-good": {
+                    "final": paths["good"],
+                    "sources": [paths["source"]],
+                    "stems": paths["stems_good"],
+                    "ancestor": paths["source"],
+                },
+                "stem-red-960x540": {
+                    "final": paths["good"],
+                    "sources": [paths["source"]],
+                    "stems": paths["stems_bad"],
+                    "ancestor": paths["source"],
+                },
+                "small-camera-legitimate-upscale": {
+                    "final": paths["good"],
+                    "sources": [paths["source_720"]],
+                    "stems": paths["stems_720"],
+                    "ancestor": None,
+                },
+                "same-framing-roundtrip-red": {
+                    "final": paths["roundtrip"],
+                    "sources": [paths["source"]],
+                    "stems": paths["stems_good"],
+                    "ancestor": paths["source"],
+                },
+                "soft-source": {
+                    "final": paths["soft_final"],
+                    "sources": [paths["soft_source"]],
+                    "stems": paths["stems_soft"],
+                    "ancestor": paths["soft_source"],
+                },
+                "below-source": {
+                    "final": paths["low"],
+                    "sources": [paths["source"]],
+                    "stems": None,
+                    "ancestor": None,
+                },
+            }
             reports = {}
-            for case in ("good", "bad", "low"):
+            for case, inputs in case_inputs.items():
                 print(f"SELF-TEST CASE {case.upper()}")
                 report = evaluate(
-                    str(paths[case]),
-                    [str(paths["source"])],
+                    str(inputs["final"]),
+                    [str(path) for path in inputs["sources"]],
                     DEFAULT_MIN_DETAIL_RATIO,
                     DEFAULT_PROBE_COUNT,
+                    stems_path=(
+                        str(inputs["stems"]) if inputs["stems"] is not None else None
+                    ),
+                    ancestor_path=(
+                        str(inputs["ancestor"])
+                        if inputs["ancestor"] is not None
+                        else None
+                    ),
+                    canvas=canvas,
+                    head_offset_s=0.0,
                     ffmpeg=ffmpeg,
                     ffprobe=ffprobe,
                     decoder=decoder,
@@ -1212,6 +1614,10 @@ def run_self_test() -> int:
                 [str(paths["durationless"])],
                 DEFAULT_MIN_DETAIL_RATIO,
                 DEFAULT_PROBE_COUNT,
+                stems_path=None,
+                ancestor_path=None,
+                canvas=canvas,
+                head_offset_s=0.0,
                 ffmpeg=ffmpeg,
                 ffprobe=ffprobe,
                 decoder=decoder,
@@ -1222,9 +1628,38 @@ def run_self_test() -> int:
                 packet_duration_ok
                 and durationless_report["exit_code"] == 0
                 and all(
-                    check["status"] == "PASS"
+                    check["status"] != "FAIL"
                     for check in durationless_report["checks"]
                 )
+            )
+
+            print("SELF-TEST CASE STEM-RED-CLI-EXIT")
+            stem_red_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--final",
+                    str(paths["good"]),
+                    "--sources",
+                    str(paths["source"]),
+                    "--stems",
+                    str(paths["stems_bad"]),
+                    "--probe-count",
+                    "1",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                text=True,
+                timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            )
+            stem_red_exit_ok = stem_red_result.returncode == 1
+            print(
+                "SELF-TEST STEM-RED CLI EXIT VERIFICATION: "
+                f"expected_exit=1 actual_exit={stem_red_result.returncode} "
+                f"structural_fail_printed="
+                f"{'FAIL STEM_RESOLUTION' in stem_red_result.stdout} "
+                f"exit_verified={stem_red_exit_ok}"
             )
 
             print("SELF-TEST CASE EXIT-CODE")
@@ -1256,41 +1691,143 @@ def run_self_test() -> int:
                     f"{diagnostic_tail(corrupt_result.stderr)}"
                 )
 
-            good_checks = reports["good"]["checks"]
+            stem_good = check_by_name(
+                reports["stem-good"],
+                "STEM_RESOLUTION",
+            )
+            same_good = check_by_name(
+                reports["stem-good"],
+                "SAME_FRAMING_DETAIL",
+            )
             good_ok = (
-                reports["good"]["exit_code"] == 0
-                and all(check["status"] == "PASS" for check in good_checks)
+                reports["stem-good"]["exit_code"] == 0
+                and stem_good["status"] == "PASS"
+                and same_good["status"] == "PASS"
             )
-            bad_detail = check_by_name(reports["bad"], "REAL_DETAIL")
-            bad_upscale = check_by_name(reports["bad"], "UPSCALE_FINGERPRINT")
-            bad_ok = (
-                reports["bad"]["exit_code"] == 1
-                and (
-                    bad_detail["status"] == "FAIL"
-                    or bad_upscale["status"] == "FAIL"
-                )
+
+            stem_bad = check_by_name(
+                reports["stem-red-960x540"],
+                "STEM_RESOLUTION",
             )
-            low_declared = check_by_name(reports["low"], "DECLARED_RESOLUTION")
+            bad_pair = stem_bad["comparisons"][0]
+            stem_bad_ok = (
+                reports["stem-red-960x540"]["exit_code"] == 1
+                and stem_bad["status"] == "FAIL"
+                and bad_pair["stem_width"] == 960
+                and bad_pair["stem_height"] == 540
+                and bad_pair["required_width"] == 1920
+                and bad_pair["required_height"] == 1080
+            )
+
+            small_stem = check_by_name(
+                reports["small-camera-legitimate-upscale"],
+                "STEM_RESOLUTION",
+            )
+            small_pair = small_stem["comparisons"][0]
+            small_camera_ok = (
+                reports["small-camera-legitimate-upscale"]["exit_code"] == 0
+                and small_stem["status"] == "PASS"
+                and small_pair["source_width"] == 1280
+                and small_pair["source_height"] == 720
+                and small_pair["stem_width"] == 1920
+                and small_pair["stem_height"] == 1080
+            )
+
+            roundtrip_detail = check_by_name(
+                reports["same-framing-roundtrip-red"],
+                "SAME_FRAMING_DETAIL",
+            )
+            roundtrip_ok = (
+                reports["same-framing-roundtrip-red"]["exit_code"] == 1
+                and roundtrip_detail["status"] == "FAIL"
+                and roundtrip_detail["ratio"] < DEFAULT_MIN_DETAIL_RATIO
+            )
+
+            soft_detail = check_by_name(
+                reports["soft-source"],
+                "SAME_FRAMING_DETAIL",
+            )
+            soft_advisory = check_by_name(
+                reports["soft-source"],
+                "UPSCALE_FINGERPRINT_ADVISORY",
+            )
+            soft_retentions = [
+                measurement["retention_ratio"]
+                for measurement in soft_advisory["measurements"]
+                if measurement["measurement_status"] == "MEASURED"
+            ]
+            soft_old_false_red = (
+                bool(soft_retentions)
+                and max(soft_retentions) > LEGACY_UPSCALE_RETENTION_MAX
+            )
+            soft_ok = (
+                reports["soft-source"]["exit_code"] == 0
+                and soft_detail["status"] == "PASS"
+                and soft_advisory["status"] == "INFO"
+                and soft_old_false_red
+            )
+
+            low_declared = check_by_name(
+                reports["below-source"],
+                "DECLARED_RESOLUTION",
+            )
             low_ok = (
-                reports["low"]["exit_code"] == 1
+                reports["below-source"]["exit_code"] == 1
                 and low_declared["status"] == "FAIL"
             )
 
             print(
-                "SELF-TEST ASSERT GOOD: "
-                f"expected_exit=0 actual_exit={reports['good']['exit_code']} "
-                f"all_three_pass={good_ok}"
+                "SELF-TEST ASSERT STEM-GOOD: "
+                f"expected_exit=0 actual_exit={reports['stem-good']['exit_code']} "
+                f"stem={stem_good['comparisons'][0]['stem_width']}x"
+                f"{stem_good['comparisons'][0]['stem_height']} "
+                f"required={stem_good['comparisons'][0]['required_width']}x"
+                f"{stem_good['comparisons'][0]['required_height']} "
+                f"same_framing_ratio={same_good['ratio']:.6f} "
+                f"verified={good_ok}"
             )
             print(
-                "SELF-TEST ASSERT BAD: "
-                f"expected_exit=1 actual_exit={reports['bad']['exit_code']} "
-                f"real_detail_margin={bad_detail['margin']:+.6f} "
-                f"upscale_margin={bad_upscale['margin']:+.6f} "
-                f"quality_failure_detected={bad_ok}"
+                "SELF-TEST ASSERT STEM-RED-960x540: "
+                f"expected_exit=1 "
+                f"actual_exit={reports['stem-red-960x540']['exit_code']} "
+                f"stem={bad_pair['stem_width']}x{bad_pair['stem_height']} "
+                f"required={bad_pair['required_width']}x"
+                f"{bad_pair['required_height']} "
+                f"margin={bad_pair['width_margin_px']:+d}px width, "
+                f"{bad_pair['height_margin_px']:+d}px height "
+                f"structural_failure_verified={stem_bad_ok}"
+            )
+            print(
+                "SELF-TEST ASSERT SMALL-CAMERA: "
+                f"expected_exit=0 "
+                f"actual_exit="
+                f"{reports['small-camera-legitimate-upscale']['exit_code']} "
+                f"source={small_pair['source_width']}x{small_pair['source_height']} "
+                f"stem={small_pair['stem_width']}x{small_pair['stem_height']} "
+                f"legitimate_upscale_verified={small_camera_ok}"
+            )
+            print(
+                "SELF-TEST ASSERT SAME-FRAMING-ROUNDTRIP: "
+                f"expected_exit=1 "
+                f"actual_exit="
+                f"{reports['same-framing-roundtrip-red']['exit_code']} "
+                f"median_ratio={roundtrip_detail['ratio']:.6f} "
+                f"required>={DEFAULT_MIN_DETAIL_RATIO:.6f} "
+                f"detail_failure_verified={roundtrip_ok}"
+            )
+            print(
+                "SELF-TEST ASSERT SOFT-SOURCE: "
+                f"expected_exit=0 actual_exit={reports['soft-source']['exit_code']} "
+                f"same_framing_ratio={soft_detail['ratio']:.6f} "
+                f"advisory_retentions="
+                f"{','.join(f'{value:.6f}' for value in soft_retentions)} "
+                f"legacy_threshold={LEGACY_UPSCALE_RETENTION_MAX:.6f} "
+                f"old_false_red_observed={soft_old_false_red} "
+                f"false_red_removed={soft_ok}"
             )
             print(
                 "SELF-TEST ASSERT BELOW-SOURCE: "
-                f"expected_exit=1 actual_exit={reports['low']['exit_code']} "
+                f"expected_exit=1 actual_exit={reports['below-source']['exit_code']} "
                 f"width_margin={low_declared['width_margin_px']:+d}px "
                 f"height_margin={low_declared['height_margin_px']:+d}px "
                 f"declared_failure_detected={low_ok}"
@@ -1299,7 +1836,12 @@ def run_self_test() -> int:
                 "SELF-TEST ASSERT DURATIONLESS-SOURCE: "
                 f"expected_exit=0 actual_exit={durationless_report['exit_code']} "
                 f"packet_fallback_verified={packet_duration_ok} "
-                f"all_three_pass={durationless_ok}"
+                f"nonfailing_checks={durationless_ok}"
+            )
+            print(
+                "SELF-TEST ASSERT STEM-RED-CLI-EXIT: "
+                f"expected_exit=1 actual_exit={stem_red_result.returncode} "
+                f"verified={stem_red_exit_ok}"
             )
             print(
                 "SELF-TEST ASSERT EXIT-CODE: "
@@ -1309,9 +1851,13 @@ def run_self_test() -> int:
 
             if (
                 good_ok
-                and bad_ok
+                and stem_bad_ok
+                and small_camera_ok
+                and roundtrip_ok
+                and soft_ok
                 and low_ok
                 and durationless_ok
+                and stem_red_exit_ok
                 and corrupt_exit_ok
             ):
                 print("PASS SELF-TEST")
@@ -1326,8 +1872,8 @@ def run_self_test() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Certify declared resolution, real detail, and the absence of an "
-            "upscale fingerprint."
+            "Certify stem dimensions and same-framing detail retention in a "
+            "finished video master."
         )
     )
     parser.add_argument("--final", help="final video to certify")
@@ -1337,16 +1883,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="one or more source camera videos",
     )
     parser.add_argument(
+        "--stems",
+        metavar="DIR",
+        help=(
+            "directory of per-speaker video stems; sorted and paired by index "
+            "with sorted --sources"
+        ),
+    )
+    parser.add_argument(
+        "--ancestor",
+        help="direct same-framing ancestor of --final",
+    )
+    parser.add_argument(
+        "--canvas",
+        type=parse_canvas,
+        default=(DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT),
+        metavar="WIDTHxHEIGHT",
+        help=(
+            "delivery canvas used by STEM_RESOLUTION "
+            f"(default: {DEFAULT_CANVAS_WIDTH}x{DEFAULT_CANVAS_HEIGHT})"
+        ),
+    )
+    parser.add_argument(
+        "--head-offset-s",
+        type=float,
+        default=0.0,
+        help=(
+            "seconds added to each ancestor timestamp to align the final "
+            "(default: 0.0)"
+        ),
+    )
+    parser.add_argument(
         "--min-detail-ratio",
         type=float,
         default=DEFAULT_MIN_DETAIL_RATIO,
-        help=f"minimum final/source median detail ratio (default: {DEFAULT_MIN_DETAIL_RATIO})",
+        help=(
+            "minimum median paired final/ancestor detail ratio "
+            f"(default: {DEFAULT_MIN_DETAIL_RATIO})"
+        ),
     )
     parser.add_argument(
         "--probe-count",
         type=int,
         default=DEFAULT_PROBE_COUNT,
-        help=f"probes per file in its middle 80%% (default: {DEFAULT_PROBE_COUNT})",
+        help=(
+            "aligned probes in the common middle 80%% "
+            f"(default: {DEFAULT_PROBE_COUNT})"
+        ),
     )
     parser.add_argument("--json", metavar="OUT", help="also write the full report as JSON")
     parser.add_argument(
@@ -1362,8 +1945,19 @@ def validate_arguments(
     args: argparse.Namespace,
 ) -> None:
     if args.self_test:
-        if args.final is not None or args.sources is not None or args.json is not None:
-            parser.error("--self-test cannot be combined with --final, --sources, or --json")
+        incompatible = (
+            args.final is not None
+            or args.sources is not None
+            or args.stems is not None
+            or args.ancestor is not None
+            or args.json is not None
+            or args.canvas != (DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT)
+            or args.head_offset_s != 0.0
+            or args.min_detail_ratio != DEFAULT_MIN_DETAIL_RATIO
+            or args.probe_count != DEFAULT_PROBE_COUNT
+        )
+        if incompatible:
+            parser.error("--self-test cannot be combined with certification options")
         return
     if args.final is None:
         parser.error("--final is required unless --self-test is used")
@@ -1371,6 +1965,8 @@ def validate_arguments(
         parser.error("--sources requires at least one path unless --self-test is used")
     if not math.isfinite(args.min_detail_ratio) or args.min_detail_ratio <= 0.0:
         parser.error("--min-detail-ratio must be a positive finite number")
+    if not math.isfinite(args.head_offset_s) or args.head_offset_s < 0.0:
+        parser.error("--head-offset-s must be a finite non-negative number")
     if args.probe_count < MIN_PROBE_COUNT:
         parser.error(f"--probe-count must be at least {MIN_PROBE_COUNT}")
 
@@ -1389,6 +1985,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.sources,
             args.min_detail_ratio,
             args.probe_count,
+            stems_path=args.stems,
+            ancestor_path=args.ancestor,
+            canvas=args.canvas,
+            head_offset_s=args.head_offset_s,
             ffmpeg=ffmpeg,
             ffprobe=ffprobe,
         )
@@ -1397,6 +1997,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 Path(args.final).expanduser().resolve(),
                 *(Path(path).expanduser().resolve() for path in args.sources),
             }
+            if args.ancestor is not None:
+                input_paths.add(Path(args.ancestor).expanduser().resolve())
+            if report["stems"] is not None:
+                input_paths.update(
+                    Path(stem["path"]).resolve() for stem in report["stems"]
+                )
             json_path = Path(args.json).expanduser().resolve()
             if json_path in input_paths:
                 raise UnusableInputError("--json must not overwrite an input media file")
