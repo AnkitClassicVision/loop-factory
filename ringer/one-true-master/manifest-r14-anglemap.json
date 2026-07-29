@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r14",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "angle-export-and-trim-clamp",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no external capture.\n\nGRADING: a checker fails you for touching a file outside the owned list, changing production code with no tests, fewer than 4 new def test_..., no negative test (pytest.raises/assert-blocked/assert-failed), or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  server/pipeline/angle_render.py\n  tests/test_keep_timeline.py\n  tests/test_boundary_angle_export.py\n\nTWO SMALL CORRECTNESS FIXES, both reviewed and confirmed by an independent model.\n\nFIX 1 (the important one): EXPORT THE CHOSEN CAMERA ANGLE PER SEGMENT.\nThe render writes a boundary-map sidecar (out_path + '.boundaries.json', written around angle_render.py:1729) via build_true_boundary_time_map(segments, fades, actual_durations) in video_assembly.py:219. Each output row currently carries edited_start_s / edited_end_s / source_start_s / source_end_s but NOT which camera angle was shown. Downstream verification of 'camera follows the actual speaker' is therefore IMPOSSIBLE -- the angle decision is a total observability blackout.\nThe input `segments` already each carry an 'angle' key (values like 'host', 'guest', 'sbs'). Add that angle to every boundary-map row build_true_boundary_time_map emits, under the key 'angle', taking it from the corresponding input segment. Both loops in that function (there are two row-appends, around lines 246 and 310) must include it. If a segment has no angle key, write null rather than omitting the field, so every row has the key. Do not change the existing keys, the timing math, or the row order.\n\nFIX 2: CLAMP REMOVED/TRIM SPANS TO THE MEDIA BOUNDS.\nThe edit plan produced a closing-trim removed-span of {start_s: 2842.196, end_s: 3008.0} -- the end is 166 seconds PAST the actual 2842.196s media end. A removed span must never extend beyond the media. Find where structural/closing trim spans are finalized in the render path (search angle_render.py for where content_end / closing trim / removed spans are assembled before rendering; the structural edit window comes from edit_detection.infer_structural_edit_window and is applied in angle_switch_edit). Clamp every trim/removed span's end to the known content/media end (the session length or content_end already available in that function) and its start to >= 0, and drop any span that becomes empty after clamping. Do NOT change which content is cut -- only bound the span numbers so they cannot exceed the media. Add a named comment explaining the 3008-past-2842 bug this prevents.\n\nKeep both fixes minimal and additive to behaviour; they only add an angle field and bound span numbers. Do not touch editorial cut DECISIONS, timeouts, or gates.\n\nTESTS (in tests/test_boundary_angle_export.py unless a keep_timeline test is the natural home): prove (1) every row build_true_boundary_time_map emits contains an 'angle' key matching its input segment's angle; (2) a segment with no angle yields angle=None, not a missing key; (3) a trim span ending past the media end is CLAMPED to the media end (negative test: assert the un-clamped 3008>2842 value does NOT appear in the output spans); (4) a span fully past the end is dropped. Mock media where needed; do not require ffmpeg.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_keep_timeline.py tests/test_angle_render.py tests/test_angle_render_grid.py tests/test_video_assembly.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r14/angle-export.patch' --owned-files 'server/pipeline/video_assembly.py,server/pipeline/angle_render.py,tests/test_keep_timeline.py,tests/test_boundary_angle_export.py' --min-new-tests 4",
+      "expect_files": [],
+      "verified": "chosen angle exported per boundary row and trim spans clamped to media bounds, proven by tests"
+    }
+  ]
+}

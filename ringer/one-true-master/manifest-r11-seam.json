@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r11",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "seam-xfade-cfr",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3000,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no external capture.\n\nGRADING (a checker runs after you): fails on touching a file outside the owned list, changing production code with no tests, fewer than 3 new def test_..., no negative test (pytest.raises/assert-blocked/assert-failed), or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/angle_render.py\n  tests/test_angle_render.py\n  tests/test_angle_render_grid.py\n  tests/test_seam_xfade_cfr.py\n\nTHE BUG, with exact evidence. A full end-to-end render just failed at a content-cut SEAM. The instrumented refusal receipt captured ffmpeg's own stderr:\n  [Parsed_xfade_0] The inputs needs to be a constant frame rate; current rate of 0/1 is invalid\n  [Parsed_xfade_0] Failed to configure output pad on Parsed_xfade_0\n  Error initializing filters!\n  Conversion failed!\n\nWHERE. In server/pipeline/angle_render.py, the seam-bridge builder (search for the seam tail/head piece filenames and the line building the bridge filter: filt = f\"[0:v][1:v]xfade=transition=fade:duration={d:.3f}:offset=0[bv]\" around line 1844). It renders two short pieces (tail of the outgoing segment, head of the incoming segment) via _segment_cmd, then combines them with the ffmpeg xfade video filter.\n\nROOT CAUSE. The two seam pieces are H.264 mp4s whose CONTAINER frame-rate tag reads 0/1 (unknown/variable), even though their content is 30fps. The xfade filter requires a declared CONSTANT frame rate on BOTH inputs and refuses 0/1. This is the same 0/1 avg_frame_rate tag family that has bitten this pipeline before on Daily VFR tracks. It is NOT a timeout and NOT a content problem.\n\nTHE FIX. Force a constant frame rate INSIDE the xfade filtergraph so both inputs are CFR before the dissolve. Do this in the filter graph, not by re-encoding upstream. Build the filter so each input pad is fps-normalized before the xfade, e.g.:\n  [0:v]fps=RATE,settb=AVTB[xa];[1:v]fps=RATE,settb=AVTB[xb];[xa][xb]xfade=transition=fade:duration={d:.3f}:offset=0[bv]\nwhere RATE comes from the module's FRAME_RATE constant (confirm it exists; do not hard-code 30), and settb=AVTB gives xfade a sane timebase. Keep -map [bv] and the existing video_args. Change ONLY the seam/bridge xfade path. Do NOT touch the smooth single-pass _build_smooth_filter graph (it already does fps=30 before its xfade around line 839 and is the correct pattern to mirror), and do NOT touch segment rendering, timeouts, or any editorial decision.\n\nWHY THIS IS SAFE. The seam pieces are already 30fps content; forcing fps in-graph is a no-op on their frames and only fixes the container tag that xfade reads. It cannot change program duration or sync.\n\nTESTS ARE THE DELIVERABLE TOO. In tests/test_seam_xfade_cfr.py prove: (1) the seam/bridge xfade filter string now contains an fps normalization derived from FRAME_RATE applied to BOTH xfade inputs before the xfade token; (2) a NEGATIVE test asserting the OLD raw [0:v][1:v]xfade form (no per-input fps) does NOT appear in the built bridge command, so the regression cannot silently return; (3) the smooth-graph path is unchanged. You may build the command through the real function with mocked _run_render_step so no ffmpeg runs. Do not require real media.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_angle_render.py tests/test_angle_render_grid.py tests/test_angle_refusal_receipt.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r11/seam-xfade-cfr.patch' --owned-files 'server/pipeline/angle_render.py,tests/test_angle_render.py,tests/test_angle_render_grid.py,tests/test_seam_xfade_cfr.py' --min-new-tests 3",
+      "expect_files": [],
+      "verified": "seam xfade inputs forced CFR so the dissolve stops refusing 0/1 frame-rate, proven by tests"
+    }
+  ]
+}

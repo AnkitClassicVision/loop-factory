@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r16",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "bumper-loudness-master",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 4000,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no external capture.\n\nGRADING: a checker fails you for touching a file outside the owned list, changing production code with no tests, fewer than 4 new def test_..., no negative test (pytest.raises / assert ... is False / asserting the WRONG behavior is gone), or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  tests/test_video_assembly.py\n  tests/test_bumper_loudness_master.py\n\nGOAL, reviewed and owner-approved. The intro/outro bumper music is ~8.4 LU quieter than the spoken program body (-24.5 vs -16 LUFS), so the episode has a volume drop at the bumpers. Owner decision: bring the bumpers UP to a target of -19 LUFS (a safe partial lift that closes most of the gap with NO clipping and NO heavy limiting, so it stays clean and not tinny). The program body is already correct at -16 LUFS and must NOT be re-processed.\n\nWHERE. assemble_video() in server/pipeline/video_assembly.py normalizes formats and stream-concats intro + program + outro (around lines 651-669). Insert a bumper-mastering step that normalizes ONLY the two bumpers to the target BEFORE they are concatenated. Leave the program body untouched.\n\nTHE RECIPE, exactly (an independent audio review specified this):\n1. Two-pass EBU R128 loudnorm on EACH bumper: first pass MEASURES (loudnorm ...:print_format=json, -f null), then second pass APPLIES with the measured values, targeting I=BUMPER_TARGET_LUFS (a named constant = -19.0), TP=-1.0, LRA=11. Two-pass, not single-pass: single-pass is dynamic and pumps.\n2. The second pass MUST run in LINEAR mode (spectrally neutral, raises all frequencies equally, preserves low end). ffmpeg's loudnorm SILENTLY falls back to DYNAMIC mode if the requested change would exceed the true-peak target. After the second pass, PARSE its output JSON and assert normalization_type == \"linear\"; if it reports \"dynamic\", raise a clear error (do not ship a dynamically-squashed bumper). At -19 LUFS the ~5.5 dB lift on these assets stays under the -1 dBTP ceiling, so linear should hold; failing loudly if it does not is the safety.\n3. Do NOT insert afftdn or any denoiser on the bumpers -- it alters music timbre (makes it tinny). If the existing process_audio_ffmpeg() inserts afftdn, do NOT reuse it for bumpers; write a dedicated bumper-normalize helper.\n4. Cache the mastered bumper by a hash of (source path + mtime/size, target LUFS, TP, channel layout, recipe version) so re-runs do not re-encode. Write the cache under a temp/derived dir, never over the source asset.\n\nEverything else about assemble_video (video handling, concat, timestamp clean) stays exactly as is. Only the two bumpers' AUDIO is normalized before concat.\n\nTESTS (in tests/test_bumper_loudness_master.py, mocking subprocess/ffmpeg so no real encode runs): prove (1) each bumper is passed through the two-pass normalize targeting -19 LUFS TP -1 before concat; (2) the program body is NOT normalized (negative test: assert no loudnorm is applied to the body input); (3) if the second-pass JSON reports normalization_type=\"dynamic\", the code RAISES rather than proceeding (negative test with pytest.raises); (4) afftdn / denoise is NOT in the bumper filter chain (negative test: assert 'afftdn' not in the built command); (5) the cache key changes when the target LUFS changes. Do not require real ffmpeg or real media.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_video_assembly.py tests/test_video_assembly_bumpers.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r16/bumper-master.patch' --owned-files 'server/pipeline/video_assembly.py,tests/test_video_assembly.py,tests/test_bumper_loudness_master.py' --min-new-tests 4",
+      "expect_files": [],
+      "verified": "bumpers normalized to -19 LUFS via two-pass linear loudnorm before concat, body untouched, no denoise, dynamic-fallback fails loudly"
+    }
+  ]
+}

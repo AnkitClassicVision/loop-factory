@@ -94,6 +94,38 @@ def main():
     def tool(name):
         return os.path.join(CHECKS_DIR, name)
 
+    # The final concatenates MASTERED bumpers (loudness-normalized copies), so
+    # presence and level must be judged against those artifacts, not the raw
+    # assets: expected level = each mastered file's own integrated LUFS (the
+    # truth of what was concatenated), and the per-episode titlecard intro
+    # supersedes the plain asset. Resolution imports the repo's own mastering
+    # entry point (idempotent cache hit); on any failure we fall back to raw
+    # assets with no expected levels — the checker then SKIPs level honestly
+    # instead of gating on a guessed baseline.
+    bumper_level_args = []
+    titlecard = os.path.join(proc, "intro_titlecard.mp4")
+    intro_src = titlecard if os.path.exists(titlecard) else intro
+    try:
+        sys.path.insert(0, repo_root)
+        from server.pipeline.video_assembly import master_bumper_audio
+
+        def _lufs(path):
+            out = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-nostats", "-i", path,
+                 "-af", "loudnorm=print_format=json", "-f", "null", "-"],
+                capture_output=True, text=True).stderr
+            return float(json.loads(out[out.rindex("{"):out.rindex("}") + 1])["input_i"])
+
+        intro = master_bumper_audio(intro_src)
+        outro = master_bumper_audio(outro)
+        bumper_level_args = [
+            "--expected-intro-lufs", f"{_lufs(intro):.2f}",
+            "--expected-outro-lufs", f"{_lufs(outro):.2f}",
+        ]
+    except Exception as exc:  # noqa: BLE001 - degrade to presence-only, loudly
+        print(f"NOTE bumper mastered-ref resolution failed ({exc!r}); "
+              "level checks will SKIP against raw assets", flush=True)
+
     # The 12-point stem cross-correlation certifies the GRID-ALIGNED composite,
     # not the cut+bumpered final program: stem windows live on session-grid time
     # and the edited program is a different timeline. The composite is the right
@@ -132,7 +164,7 @@ def main():
          + (["--boundaries", boundaries] if os.path.exists(boundaries) else [])),
         ("bumpers (present, once, level-matched)", "episode", [program, intro, outro],
          ["python3", tool("bumper_check.py"), "--final", program,
-          "--intro", intro, "--outro", outro]),
+          "--intro", intro, "--outro", outro] + bumper_level_args),
         ("freshness (outputs newer than inputs)", "episode", [ep],
          ["python3", tool("freshness_check.py"), "--episode", ep]),
         ("clip-words (clips contain their source)", "clips",

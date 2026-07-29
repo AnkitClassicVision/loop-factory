@@ -1,0 +1,40 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r12",
+  "max_parallel": 2,
+  "worktrees": false,
+  "tasks": [
+    {
+      "key": "master-loudness-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename below). READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks; never write to either. No git, no MCP, no skills, no network. Set PYTHONDONTWRITEBYTECODE=1 on any python you run.\n\nCONTEXT. An automated video-podcast pipeline's editing correctness is gated by executed receipt instruments. A Gemini review found two MISSING checks. You build one. It must be a RECEIPT not an opinion: measure the artifact, print per-item evidence with WHY on failure, exit 0 only when the measured property holds, exit 1 on violation, exit 2 on unusable inputs (missing files). Never treat could-not-measure as pass.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py for the house style: ffmpeg/ffprobe subprocess, named-constant thresholds with rationale comments, argparse CLI, --json OUT optional. Pure stdlib + numpy + ffmpeg/ffprobe only. Copy any helper you need so the file is standalone; do not import from that path. Timestamps in output are seconds, 3 decimals.\n\nFILE: ./loudness_check.py \u2014 prove the finished program's audio is at a correct, safe master level.\n\nCLI: loudness_check.py --final PATH [--target-lufs -16] [--tolerance-lu 1.5] [--max-true-peak-dbtp -1.0] [--json OUT]\n\nMeasure the final program (final/episode.mp4 or .mp3) with ffmpeg EBU R128: run `ffmpeg -i FINAL -af ebur128=peak=true -f null -` (or loudnorm print_format=json in a first-pass measurement) and parse Integrated loudness (LUFS) and true peak (dBTP). Podcast target is -16 LUFS by default (named constant with rationale: the Apple/Spotify podcast norm), tolerance +/- a named LU constant. True peak must not exceed the max (default -1.0 dBTP, named constant) or the file is clipping / will be penalized by platforms. Report integrated LUFS, LRA if available, and true peak with pass/fail per limit and the WHY. A program at -30 LUFS (too quiet) or +0.5 dBTP (clipping) must FAIL. Exit 2 if the file has no audio stream or ffmpeg cannot measure it.\n\nAdd a small self-test path guarded by `if __name__` is not needed; the coordinator will red-prove it on real files. But your DETECT logic must be correct: do not confuse momentary/short-term with integrated loudness \u2014 the gate is on INTEGRATED loudness over the whole program.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' loudness_check.py argparse 'episode,fred' && (grep -qE 'sys.exit\\(2\\)|exit\\(2\\)|return 2' loudness_check.py || (echo 'FAIL: no exit-2 unusable-input path'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "loudness_check.py"
+      ],
+      "verified": "a standalone deterministic master-loudness-check receipt; coordinator red-proves it on real media after the recut"
+    },
+    {
+      "key": "black-frame-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename below). READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks; never write to either. No git, no MCP, no skills, no network. Set PYTHONDONTWRITEBYTECODE=1 on any python you run.\n\nCONTEXT. An automated video-podcast pipeline's editing correctness is gated by executed receipt instruments. A Gemini review found two MISSING checks. You build one. It must be a RECEIPT not an opinion: measure the artifact, print per-item evidence with WHY on failure, exit 0 only when the measured property holds, exit 1 on violation, exit 2 on unusable inputs (missing files). Never treat could-not-measure as pass.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py for the house style: ffmpeg/ffprobe subprocess, named-constant thresholds with rationale comments, argparse CLI, --json OUT optional. Pure stdlib + numpy + ffmpeg/ffprobe only. Copy any helper you need so the file is standalone; do not import from that path. Timestamps in output are seconds, 3 decimals.\n\nFILE: ./blackframe_check.py \u2014 prove the finished video has no unintended black frames, flash frames, or freeze-gaps at edit points.\n\nCLI: blackframe_check.py --render PATH [--boundaries PATH] [--max-black-s 0.10] [--json OUT]\n\nUse ffmpeg blackdetect: `ffmpeg -i RENDER -vf blackdetect=d=0.05:pix_th=0.10 -an -f null -` and parse the black_start/black_end/black_duration lines from stderr. Any black span longer than --max-black-s (named constant, default 0.10s = ~3 frames at 30fps; a legitimate fade-to-black intro/outro is allowed ONLY in the first/last N seconds \u2014 make that a named constant, e.g. FADE_GRACE_S=3.0, and exempt black within it). A black span in the BODY of the program is a flash-frame / render-drop defect and must FAIL, reporting each offending span's start and duration. If --boundaries (the angle_switched .boundaries.json sidecar) is given, additionally flag any black span that lands within a small window of an edit boundary as an edit-point flash, which is the highest-value catch. Exit 2 if the render has no video stream.\n\nDo NOT fail on a single sub-threshold black frame from encoding; the threshold exists to separate real gaps from codec noise. State the threshold rationale in a comment.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' blackframe_check.py argparse 'episode,fred' && (grep -qE 'sys.exit\\(2\\)|exit\\(2\\)|return 2' blackframe_check.py || (echo 'FAIL: no exit-2 unusable-input path'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "blackframe_check.py"
+      ],
+      "verified": "a standalone deterministic black-frame-check receipt; coordinator red-proves it on real media after the recut"
+    }
+  ]
+}

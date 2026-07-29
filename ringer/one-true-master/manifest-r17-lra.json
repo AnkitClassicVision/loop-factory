@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r17",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "bumper-adaptive-lra",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no external capture.\n\nGRADING: a checker fails you for touching a file outside the owned list, changing production code with no tests, fewer than 3 new def test_..., no negative test (pytest.raises / assert ... is False), or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  tests/test_bumper_loudness_master.py\n\nTHE BUG, from a real run's error. The bumper loudness-mastering step (added recently) runs two-pass EBU R128 loudnorm and correctly RAISES when ffmpeg reports normalization_type='dynamic' instead of 'linear' (to avoid squashing the music). On the real intro bumper it fired:\n  \"Bumper loudness mastering refused ffmpeg normalization_type='dynamic'; expected 'linear'\"\n\nROOT CAUSE (confirmed): ffmpeg's loudnorm falls back from linear to dynamic mode when the requested target LRA is LOWER than the source's measured loudness range. The recipe uses a FIXED BUMPER_LRA=11, but the intro asset's measured input_lra is 15.9 (very dynamic music) > 11, so linear cannot hold and ffmpeg silently switches to dynamic, which the guard then correctly rejects. The guard is right; the target LRA is wrong.\n\nTHE FIX. The APPLY pass must use a target LRA that is at least as wide as the source's measured loudness range, so linear mode stays feasible. After the MEASURE pass parses input_lra, compute an adaptive target LRA = max(BUMPER_LRA, ceil(float(measured['input_lra']))) and use THAT in the apply-pass filter's LRA= value (not the fixed BUMPER_LRA). Keep BUMPER_LRA=11 as the floor. The measure pass may keep the fixed LRA (it only measures). Only the apply pass needs the adaptive LRA. Everything else -- the -19 LUFS target, TP=-1, linear=true requirement, the raise-on-dynamic guard, no afftdn, the hash cache -- stays exactly as is.\n\nNote: the cache key should incorporate the recipe so a changed LRA policy invalidates old cached masters; if the recipe version constant exists (BUMPER_MASTER_RECIPE_VERSION), bump it (e.g. ...-v2) so stale cached bumpers are not reused.\n\nWHY THIS KEEPS IT CLEAN: widening the target LRA to accommodate the source lets linear (spectrally neutral, gain-only) normalization succeed, which is exactly what preserves the music's low end and avoids the tinny/pumped sound. It does NOT reduce dynamics; it permits them.\n\nTESTS (in tests/test_bumper_loudness_master.py, mocking ffmpeg): prove (1) when the measured input_lra exceeds BUMPER_LRA (e.g. 15.9), the apply-pass filter string uses LRA=16 (ceil), not 11 -- negative test: assert 'LRA=11' is NOT in the apply filter for that case; (2) when input_lra is below the floor (e.g. 4.3), the apply LRA stays at the floor 11; (3) the linear=true requirement and the raise-on-dynamic guard are unchanged; (4) the recipe/cache key changed so old cached bumpers are not reused. Mock subprocess; no real ffmpeg.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_bumper_loudness_master.py tests/test_video_assembly.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r17/bumper-lra.patch' --owned-files 'server/pipeline/video_assembly.py,tests/test_bumper_loudness_master.py' --min-new-tests 3",
+      "expect_files": [],
+      "verified": "apply-pass target LRA adapts to source so linear mode holds; guard and target unchanged"
+    }
+  ]
+}
