@@ -513,3 +513,9 @@ run_step "N9-record" "${RECORD_OUT}" \
   python3 "${RUNTIME_DIR}/record.py" --node "SG-REPUBLISH" \
   --state-dir "${STATE_DIR}" --payload "$(cat "${VERIFY_OUT}")" \
   --shadow --out "${RECORD_OUT}"
+
+CARD_OUT="${RUN_DIR}/N10-review-card.json"
+python3 "${RUNTIME_DIR}/create_review_card.py" \
+  --draft "${DRAFT_OUT}" --candidate "${CANDIDATE_OUT}" \
+  --run-id "${RUN_ID}" --ledger "${STATE_DIR}/card_ledger.jsonl" \
+  --out "${CARD_OUT}" 2>&1 || echo "review card creation failed (non-blocking)" >&2
