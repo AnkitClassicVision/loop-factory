@@ -15,10 +15,10 @@ OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
 SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
 BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
 OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
-DRAFT_ENGINE="${SOCIAL_DRAFT_ENGINE:-codex_oauth}"
-QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
+DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-claude_subscription codex_oauth glm_oauth}"
+QA_ENGINE="${SOCIAL_QA_ENGINE:-codex_oauth}"
 ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
-ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-300}"
+ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-600}"
 QA_RETRY_BACKOFF_SECONDS="${SOCIAL_QA_RETRY_BACKOFF_SECONDS:-1}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="${STATE_DIR}/receipts/${RUN_ID}"
@@ -194,12 +194,40 @@ for node in inventory_backcatalog select_candidate assemble_context draft_post q
   require_node "${node}"
 done
 
-if test "${DRAFT_ENGINE}" = "${QA_ENGINE}"; then
-  incident_receipt_failure \
-    "engine-separation" "${ENGINES_FILE}" "draft_and_qa_engine_match"
-  echo "draft and QA engines must differ: ${DRAFT_ENGINE}" >&2
+run_draft_with_fallback() {
+  local receipt="$1"
+  local node="$2"
+  shift 2
+  local skipped_qa=""
+  for engine in ${DRAFT_ENGINES}; do
+    if test "${engine}" = "${QA_ENGINE}"; then
+      skipped_qa="${engine}"
+      echo "deferring draft engine ${engine}: same as QA engine" >&2
+      continue
+    fi
+    DRAFT_ENGINE="${engine}"
+    if "$@" --engine "${engine}"; then
+      if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
+        return 0
+      fi
+    fi
+    echo "draft engine ${engine} failed, trying next" >&2
+    rm -f "${receipt}"
+  done
+  if test -n "${skipped_qa}"; then
+    echo "last resort: using ${skipped_qa} for both draft and QA" >&2
+    DRAFT_ENGINE="${skipped_qa}"
+    if "$@" --engine "${skipped_qa}"; then
+      if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
+        return 0
+      fi
+    fi
+    rm -f "${receipt}"
+  fi
+  incident_receipt_failure "${node}" "${receipt}" "all_draft_engines_failed"
+  echo "all draft engines exhausted" >&2
   exit 2
-fi
+}
 
 KILL_OUT="${RUN_DIR}/S6-kill.json"
 BREAKER_OUT="${RUN_DIR}/S7-breaker.json"
@@ -365,11 +393,11 @@ run_step "S8-budget" "${MODEL_TOKEN}" \
   --state-dir "${STATE_DIR}" --bundle "${SANITIZED_OUT}" --out "${MODEL_TOKEN}"
 
 DRAFT_RAW="${RUN_DIR}/N4-draft-r1-raw.json"
-run_step "N4-draft-r1-raw" "${DRAFT_RAW}" \
+run_draft_with_fallback "${DRAFT_RAW}" "N4-draft-r1-raw" \
   python3 "${RUNTIME_DIR}/draft_post.py" \
   --state-dir "${STATE_DIR}" --out "${DRAFT_RAW}" \
   --bundle "${SANITIZED_OUT}" --surface "${SURFACE}" \
-  --engine "${DRAFT_ENGINE}" --engines-file "${ENGINES_FILE}" \
+  --engines-file "${ENGINES_FILE}" \
   --engine-timeout "${ENGINE_TIMEOUT}"
 
 # draft_post numbers an initial draft as round 0, while dispatch.py requires a
@@ -407,11 +435,11 @@ PY
 )"
 if test "${QA_PASS}" != "yes"; then
   EDITED_DRAFT="${RUN_DIR}/N4-draft-r2.json"
-  run_step "N4-draft-r2" "${EDITED_DRAFT}" \
+  run_draft_with_fallback "${EDITED_DRAFT}" "N4-draft-r2" \
     python3 "${RUNTIME_DIR}/draft_post.py" \
     --state-dir "${STATE_DIR}" --out "${EDITED_DRAFT}" \
     --bundle "${SANITIZED_OUT}" --surface "${SURFACE}" \
-    --engine "${DRAFT_ENGINE}" --engines-file "${ENGINES_FILE}" \
+    --engines-file "${ENGINES_FILE}" \
     --revise --prior-draft "${DRAFT_OUT}" --qa-report "${QA_OUT}" \
     --engine-timeout "${ENGINE_TIMEOUT}"
   DRAFT_OUT="${EDITED_DRAFT}"

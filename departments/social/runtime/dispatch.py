@@ -97,6 +97,8 @@ def _validated_draft(draft: dict[str, Any]) -> dict[str, Any]:
         raise DispatchBlocked("draft sources must be a list")
     if not isinstance(draft["round"], int) or draft["round"] < 1:
         raise DispatchBlocked("draft round must be a positive integer")
+    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
+        raise DispatchBlocked("draft thumbnail_url must be text")
     return draft
 
 
@@ -265,6 +267,7 @@ def dispatch(
                 "surface": surface,
                 "status": "simulated",
                 "source": "simulate_sink",
+                "thumbnail_url": draft.get("thumbnail_url", ""),
                 "ts": utc_now(),
             },
         )
@@ -282,15 +285,17 @@ def dispatch(
     command = shlex.split(zernio_cmd)
     if not command:
         raise DispatchBlocked("zernio command is empty")
+    command += [
+        "posts:create",
+        "--text",
+        draft["body"],
+        "--accounts",
+        surface,
+    ]
+    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
+        command += ["--media", draft["thumbnail_url"]]
     proc = subprocess.run(
-        command
-        + [
-            "posts:create",
-            "--text",
-            draft["body"],
-            "--accounts",
-            surface,
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=120,

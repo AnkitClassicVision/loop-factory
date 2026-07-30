@@ -44,7 +44,7 @@ import yaml
 
 
 LOGGER = logging.getLogger(__name__)
-DECISION_RE = re.compile(r"^(APPROVE|SKIP|FIX)\b")
+DECISION_RE = re.compile(r"^(APPROVE|SKIP|FIX)\w*\b", re.IGNORECASE)
 AGENT_MARKERS = (
     "AGENT CLAIMED:",
     "AGENT UPDATE:",

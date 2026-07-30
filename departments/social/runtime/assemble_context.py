@@ -88,6 +88,7 @@ def run(
             "complete": not missing,
             "missing": missing,
         }
+        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
         _write(out, manifest)
         if missing:
             item_id = str(item.get("item_id") or "context")

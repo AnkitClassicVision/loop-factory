@@ -191,6 +191,8 @@ def _content_item(value: Any) -> dict[str, Any]:
         raise GateBlocked("content item prior_engagement.score must be numeric")
     canonical = {field: value[field] for field in CONTENT_FIELDS}
     canonical["prior_engagement"] = {"score": float(engagement["score"])}
+    if isinstance(value.get("thumbnail_url"), str):
+        canonical["thumbnail_url"] = value["thumbnail_url"]
     return canonical
 
 

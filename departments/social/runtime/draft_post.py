@@ -351,6 +351,7 @@ def _normalize_draft(
         "engine": engine,
         "round": round_number,
     }
+    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
     reasons: list[str] = []
     body = draft["body"]
     if not isinstance(body, str) or not body.strip():

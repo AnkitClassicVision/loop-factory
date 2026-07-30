@@ -1,0 +1,71 @@
+{
+  "run_name": "social-visual-lane1",
+  "workdir": "/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir",
+  "max_parallel": 4,
+  "tasks": [
+    {
+      "key": "thumbnail-in-index",
+      "task_type": "code-feature",
+      "engine": "codex",
+      "timeout_s": 300,
+      "expect_files": [
+        "notes.md"
+      ],
+      "engine_args": [
+        "-c",
+        "sandbox_workspace_write.writable_roots=[\"/mnt/d_drive/repos/loop-factory\"]"
+      ],
+      "spec": "ROLE: EXECUTOR \u2014 do the work yourself; do not spawn subagents or launch Ringer.\n\nYou are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.\n\nOWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/inventory_backcatalog.py. Do not modify, create, delete, or stage anything else. Do not touch .git, do not commit, do not push.\n\nGOAL: Add an optional `thumbnail_url` field to podcast inventory rows.\n\nREAD FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py\n\nCHANGES:\n1. In `_rss_rows()` (~line 59), after building the row dict, add thumbnail_url. Try to extract it from the RSS item's itunes:image element: `img_el = item.find('{http://www.itunes.com/dtds/podcast-1.0.dtd}image')` then use `img_el.get('href', '') if img_el is not None else ''`. Add to the row dict: `'thumbnail_url': thumbnail_url`.\n2. Do NOT add `thumbnail_url` to the REQUIRED set (line 15). It is optional.\n3. In `_validate()` (~line 99), if `thumbnail_url` key exists in the row, validate it is a string. If not a string, set it to empty string. Do not raise.\n4. In `run()` merge logic (~line 135-142), preserve `thumbnail_url` from existing rows during merge, same pattern as `last_resurfaced_at` and `prior_engagement`: if old row has thumbnail_url and new row does not, keep the old value.\n\nVERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')\"` and confirm syntax is valid.\n\nOUTPUT: Write ./notes.md listing what you changed and the verification result.",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 -c \"exec(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read().split('def main')[0]); assert 'thumbnail_url' not in REQUIRED, 'thumbnail_url must NOT be in REQUIRED'\" && grep -q 'thumbnail_url' /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py && grep -q 'itunes' /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py && test -f notes.md && echo 'PASS' || { echo 'FAIL'; exit 1; }",
+      "verified": "inventory_backcatalog.py compiles, thumbnail_url is NOT in REQUIRED, and itunes namespace extraction is present."
+    },
+    {
+      "key": "thumbnail-in-context",
+      "task_type": "code-feature",
+      "engine": "codex",
+      "timeout_s": 300,
+      "expect_files": [
+        "notes.md"
+      ],
+      "engine_args": [
+        "-c",
+        "sandbox_workspace_write.writable_roots=[\"/mnt/d_drive/repos/loop-factory\"]"
+      ],
+      "spec": "ROLE: EXECUTOR \u2014 do the work yourself; do not spawn subagents or launch Ringer.\n\nYou are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.\n\nOWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/assemble_context.py. Do not modify anything else.\n\nGOAL: Thread `thumbnail_url` from the candidate item through to the assembled context manifest.\n\nREAD FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py\n\nCHANGES:\n1. In `run()`, after building the manifest dict (~line 81-89), add: `manifest['thumbnail_url'] = item.get('thumbnail_url', '')`\n2. Do NOT make thumbnail_url required. Do NOT add it to the missing list. It is purely optional passthrough.\n\nVERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py').read()); print('syntax ok')\"`\n\nOUTPUT: Write ./notes.md listing what you changed and the verification result.",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py').read())\" && grep -q 'thumbnail_url' /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py && test -f notes.md && echo 'PASS' || { echo 'FAIL'; exit 1; }",
+      "verified": "assemble_context.py compiles and contains thumbnail_url passthrough."
+    },
+    {
+      "key": "thumbnail-in-draft",
+      "task_type": "code-feature",
+      "engine": "codex",
+      "timeout_s": 300,
+      "expect_files": [
+        "notes.md"
+      ],
+      "engine_args": [
+        "-c",
+        "sandbox_workspace_write.writable_roots=[\"/mnt/d_drive/repos/loop-factory\"]"
+      ],
+      "spec": "ROLE: EXECUTOR \u2014 do the work yourself; do not spawn subagents or launch Ringer.\n\nYou are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.\n\nOWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/draft_post.py. Do not modify anything else.\n\nGOAL: Pass `thumbnail_url` through the draft contract so dispatch can attach it to posts.\n\nREAD FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py\n\nCHANGES:\n1. In `_normalize_draft()` (~line 336), after building the draft dict (~line 346-353), add: `draft['thumbnail_url'] = bundle.get('thumbnail_url', '')`. This passes the URL through without the LLM needing to generate it.\n2. Do NOT add thumbnail_url to the engine prompt (`_prompt()`). The LLM does not generate it.\n3. Do NOT add thumbnail_url to any validation that would reject drafts missing it.\n\nVERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py').read()); print('syntax ok')\"`\n\nOUTPUT: Write ./notes.md listing what you changed and the verification result.",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py').read())\" && grep -q 'thumbnail_url' /mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py && test -f notes.md && echo 'PASS' || { echo 'FAIL'; exit 1; }",
+      "verified": "draft_post.py compiles and contains thumbnail_url in the draft contract."
+    },
+    {
+      "key": "thumbnail-in-dispatch",
+      "task_type": "code-feature",
+      "engine": "codex",
+      "timeout_s": 300,
+      "expect_files": [
+        "notes.md"
+      ],
+      "engine_args": [
+        "-c",
+        "sandbox_workspace_write.writable_roots=[\"/mnt/d_drive/repos/loop-factory\"]"
+      ],
+      "spec": "ROLE: EXECUTOR \u2014 do the work yourself; do not spawn subagents or launch Ringer.\n\nYou are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.\n\nOWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/dispatch.py. Do not modify anything else.\n\nGOAL: When a draft has a non-empty `thumbnail_url`, pass it to the Zernio CLI via `--media`.\n\nREAD FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py\n\nCHANGES:\n1. In `_validated_draft()` (~line 85), after the existing required-field validation, add optional validation for thumbnail_url: if present, it must be a string. Do NOT add it to the `required` set.\n2. In `dispatch()`, in the LIVE Zernio subprocess command (~line 285-293), after building the base command list, conditionally append `['--media', draft['thumbnail_url']]` ONLY if `draft.get('thumbnail_url')` is a non-empty string. The `--media` flag takes comma-separated media URLs.\n3. In the SIMULATE (non-live) path (~line 250-280), include `thumbnail_url` in the simulate sink record if present: add `'thumbnail_url': draft.get('thumbnail_url', '')` to the sink dict.\n\nVERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')\"`\n\nOUTPUT: Write ./notes.md listing what you changed and the verification result.",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read())\" && grep -q 'thumbnail_url' /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py && grep -q '\\-\\-media' /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py && test -f notes.md && echo 'PASS' || { echo 'FAIL'; exit 1; }",
+      "verified": "dispatch.py compiles, contains thumbnail_url handling, and passes --media to Zernio."
+    }
+  ]
+}

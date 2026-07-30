@@ -67,11 +67,14 @@ def _rss_rows(source: str) -> list[dict]:
         url = _text(item, "link")
         item_id = _text(item, "guid") or url
         body_path = _text(item, "body_path", "bodyPath")
+        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
+        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
         row = {
             "item_id": item_id,
             "source_type": "podcast",
             "title": _text(item, "title"),
             "url": url,
+            "thumbnail_url": thumbnail_url,
             "published_at": _iso(_text(item, "pubDate", "published_at")),
             "body_path": body_path,
             "last_resurfaced_at": None,
@@ -102,6 +105,8 @@ def _validate(row: dict) -> dict:
     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
         if not isinstance(row[field], str):
             raise ValueError(f"content_item.{field} must be a string")
+    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
+        row["thumbnail_url"] = ""
     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
         raise ValueError("content_item item_id, title, and url must be non-empty")
     row["published_at"] = _iso(row["published_at"])
@@ -139,6 +144,8 @@ def run(*, rss: list[str], items: list[Path], index: Path | None, out: Path) -> 
             if old:
                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
                 row["prior_engagement"] = old["prior_engagement"]
+                if "thumbnail_url" in old and "thumbnail_url" not in row:
+                    row["thumbnail_url"] = old["thumbnail_url"]
             merged[row["item_id"]] = row
         rows = [_validate(row) for _, row in sorted(merged.items())]
         if not rows:

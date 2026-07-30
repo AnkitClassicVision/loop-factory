@@ -89,7 +89,7 @@ execution:  # owner decision (Ankit, 2026-07-23) — factory-wide defaults
 
 budget:
   engine_policy: subscription_oauth_only     # Q6: "only use oauths no api calls"
-  engine_allowlist: [codex_oauth, claude_subscription]   # Q6: "use codex and claude"; GLM excluded (readback)
+  engine_allowlist: [codex_oauth, claude_subscription, glm_oauth]   # Q6 updated: codex primary, claude fallback, glm third
   api_spend_rule: forbidden_escalate_instead
   weekly_ceilings:
     model_calls: 500               # provisional; ratify after benchmark batch (Q6)
