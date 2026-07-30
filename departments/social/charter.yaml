@@ -1,0 +1,193 @@
+# social department charter — v1.0 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-07-28, Claude Code).
+department: social
+version: v1.0
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-07-28"
+  surface: claude-code-askuserquestion-readback-r1
+owner_review:
+  charter_v1_approved_by: ankit
+  date: "2026-07-28"
+  surface: claude-code-askuserquestion-f2-gate
+owner: ankit
+mission: >-
+  Turn the company's existing content estate (Building Empires back catalog,
+  MyBCAT blog, original insights, lead magnets, icaregrow webinars) into ONE
+  governed, always-on Zernio posting engine across all surfaces — back-catalog
+  republish/re-engagement first — measuring engagement with sensors independent
+  of itself (including the podcast department's posts), learning through
+  governed prompt/process changes, so discovery calls get booked while removing
+  work from the owner's plate, never adding to it. (Spine, concept-map LOCKED.)
+
+# Architecture decision (C5, Q9-early): REBUILD FROM DAY ONE. All posting flows
+# through this department. The standalone VPS daily cron in
+# mybcat-social-content-automation is retired at a GATED CUTOVER (owner go at
+# execution time). The VPS remains a runner; management lives HERE, in one spot.
+# That repo becomes the execution toolbox and its process docs point here (C19).
+
+autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
+
+burn_in:  # owner override of the factory 14-day default (Ankit, 2026-07-28: "lets move it down to 7")
+  clean_shadow_days_required: 7
+  decided_by: ankit
+  date: "2026-07-28"
+  surface: claude-code-chat
+  note: failures still reset the streak; demotion rules unchanged
+
+# Lanes (C3). Item type (podcast/icaregrow/MyBCAT) is a dimension within lanes.
+lanes:
+  v1_active:
+    - republish_reengagement      # V1 proving slice (C4): OLDER podcast/back-catalog content only
+    - sensing_analytics           # engagement sensing incl. podcast-dept posts (C16, C20)
+    - learn_adapt                 # proposal cards only; human approves (C10, C11)
+  phased_behind_v1:               # activate via charter change + subgraph entry (owner-gated)
+    - podcast_push
+    - blog_repurpose
+    - original_insights
+    - lead_magnet_cta
+    - icaregrow_webinar_promo
+    - engagement_replies          # draft-only/gated long-term; replies are external sends
+  future_named_not_chartered:
+    - acquisitions_content        # owner: "maybe that is worth looking at" (Q1)
+  boundary:
+    initial_podcast_episode_posting: podcast_department_forever   # C4 hard boundary
+
+setpoints:
+  operational:
+    metric: posts_per_week_all_surfaces      # ceiling, not quota (Q4)
+    target: 100
+    per_surface_daily_cap: 5
+    x_daily_cap: 8
+    cap_scope: all_authors_via_zernio_count  # C12: dept + podcast dept + manual; YIELD when full
+  outcome:
+    metric: discovery_calls_booked
+    target: TBD_MEASURE_IN_SHADOW            # baselines from shadow; owner ratifies from data
+    sensor: independent_calendar_hubspot_join
+    provisional: true
+  outcome_additional:
+    - {metric: engagement_rate_per_surface, target: TBD_MEASURE_IN_SHADOW, sensor: zernio_analytics_pulled_by_manager}
+    - {metric: icaregrow_webinar_registrations, target: TBD_MEASURE_IN_SHADOW}
+    - {metric: podcast_dept_post_engagement, target: TBD_MEASURE_IN_SHADOW}   # C20 sensing scope
+    - {metric: platform_verified_delivery_pct, target: 100}                   # C15 gate 1
+    - {metric: quarantine_backlog_items, target: TBD_MEASURE_IN_SHADOW}
+
+thresholds:
+  weekly_touch_ceiling: 100        # = posts_per_week ceiling (Q4)
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 10        # below this/week with green health = faux-work signal (C9)
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+execution:  # owner decision (Ankit, 2026-07-23) — factory-wide defaults
+  headless: true
+  step_receipts: required
+
+budget:
+  engine_policy: subscription_oauth_only     # Q6: "only use oauths no api calls"
+  engine_allowlist: [codex_oauth, claude_subscription, glm_oauth]   # Q6 updated: codex primary, claude fallback, glm third
+  api_spend_rule: forbidden_escalate_instead
+  weekly_ceilings:
+    model_calls: 500               # provisional; ratify after benchmark batch (Q6)
+    dollars: 0                     # new dollars escalate, never spend
+    worker_minutes: 1200           # 20 h/week
+
+# QA shape (C11, Q8/Q11): QA ENUMERATES defects and returns them for an edit
+# round — bounded mini-loop, max 2 rounds, review and fix are separate actors
+# (cross-model), executed as headless Ringer lanes on allowlisted engines.
+# Non-convergence quarantines with the defect list; its remedy is a recorded
+# PROMPT UPDATE (lightweight process-change class through process-change-qa).
+qa_shape:
+  enumerate_then_edit: true
+  max_edit_rounds: 2
+  cross_model_required: true
+  non_convergence: quarantine_with_defect_list
+  prompt_updates: recorded_process_change_class
+
+# Exception policy (C14, Q11) — deterministic; scripts decide, workers only execute.
+exceptions:
+  transient_failure: {action: retry, max: 3, backoff: true, then: quarantine}
+  content_qa_failure: {action: edit_loop, max_rounds: 2, then: quarantine_with_defect_list}
+  surface_at_cap: {action: yield_silently}
+  missing_receipt: {action: summon_manager_heal_ladder_never_advance}
+  metrics_feed_outage: {action: mark_missing_never_fabricate}   # C13: never assume zero
+  ambiguous_item: {action: quarantine_for_owner_review_never_guess}   # C13 freshness gate
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+    - cross_author_cap_policy      # C12: caps count ALL authors; yield when full
+    - freshness_gate               # C13
+    - delivery_verification_gate   # C15 gate 1
+    - voice_gate                   # C15 gate 2
+    - context_completeness_gate    # C15 gate 3
+    - prompt_change_governance     # C11: prompt updates only via recorded process change
+
+never:  # department hard floors (Q5 + readback; human-only, forever)
+  - no_phi_or_client_identifiable_content__no_client_names_or_practice_specifics_without_written_approval_on_file
+  - no_fabricated_stats_testimonials_or_results_claims__no_medical_advice__no_political_takes__no_outcome_guarantees
+  - no_price_or_commitment_negotiation_in_comments_or_dms__no_cold_dms__ctas_only_to_official_booking_or_lead_magnet_pages
+  - researched_claims_publish_only_when_grounded_with_sources
+  - never_repost_deleted_or_retracted_content__opt_outs_and_platform_strikes_honored_instantly_and_permanently
+  - initial_posting_of_new_podcast_episodes_belongs_to_the_podcast_department_never_this_one
+  - never_draft_from_fragments__full_source_and_brand_offer_context_required
+  - escalation_ttl_expiry_denies_and_refiles_never_auto_approves
+  - governance_files_human_only
+
+kill_if:  # Q7 — kill = non-restartable without a new human charter decision
+  - reputation_event: platform strike/ban or client/public blowback traceable to a post
+  - floor_breach_on_external_action: kill the breaching action class
+  - gaming_own_numbers: fabricated or self-inflated metrics vs independent sensors
+  - cost_exceeds_value_4_consecutive_weeks_post_burn_in: true
+  - plate_load_net_positive_2_weeks: department adds more owner work than it removes
+faux_work_rule: coach_first_via_process_change_then_kill_if_flat_4_more_weeks   # Q7
+
+escalation:
+  default: fully_automated_with_escalation
+  targets: [ankit]                 # sole target, all classes (Q14)
+  no_reply_ttl_hours: 24           # owner override of 48h default (Q14)
+  no_reply_action: deny_and_refile_with_fresh_context_never_auto_approve
+  floor_breach: immediate_ping
+  draft_only_approval_mode: weekly_batch    # one sitting, whole queue (Q14)
+  digest: weekly_with_links_to_every_published_post   # C16 anti-gaming eyeball
+  question_format: one_concrete_approve_skip_or_fix_question
+  human_gates:
+    - external_send
+    - crm_write
+    - publish                      # every social post, until the class is promoted
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+    - vps_cron_cutover             # C5: disabling the legacy cron needs owner go at execution time
+
+funnels:
+  entries:
+    - SG-REPUBLISH                 # V1 proving slice (C4)
+    - SG-SENSE                     # independent sensing incl. podcast-dept posts (C16, C20)
+    - SG-LEARN                     # proposal cards only (C10, C11)
+  # phased lanes get their subgraph entries via charter change when activated
+
+memory:
+  local: departments/social/state
+  backends: []                     # C18: company-scoped digests owed to OB_company (preferred)
+                                   # or MyBCAT Hub — seam wired deliberately in F3 by whatever
+                                   # the HEADLESS runtime can reach; until wired, digests
+                                   # accumulate locally and the unwired seam is surfaced in the
+                                   # weekly digest. Never rerouted to the personal brain.
+  never_recorded: [credentials, zernio_auth, phi, raw_dm_or_comment_bodies, secrets]

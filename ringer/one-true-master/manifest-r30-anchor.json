@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r30",
+  "worktrees": false,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "cut-absence-anchor",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker upgrading a certification checker's verdict logic. Copy /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/cut_absence_check.py into your current working directory as ./cut_absence_check.py and modify it in place. READ access to /mnt/d_drive/repos/podcast; never write to it. Pure stdlib + numpy + ffmpeg subprocess. No git, no MCP, no network.\n\nCONTEXT. The checker proves removed spans are gone from an edited render. Speech-bearing cuts use stem fingerprinting (keep unchanged). Silent (dead-air) cuts currently use a SILENCE-GONE heuristic: fail if a silent run >= 0.6*cut_duration remains at the splice. That heuristic just produced a PROVEN FALSE POSITIVE on a real episode: a 1.029s cut at source t=905.576 was genuinely applied (independent proof: the content that follows the cut, source t=906.605+, was located in the render at t=442.148 with r=0.977 \u2014 within 0.15s of the expected APPLIED position 442.29, and 1.2s away from the NOT-APPLIED position 443.32), yet 1.316s of silence remains at the splice because the edit plan deliberately trimmed only the MIDDLE of a longer natural pause. Remaining silence does not prove a cut was skipped.\n\nTHE UPGRADE \u2014 POSITION-ANCHOR verdicts for silent cuts (replaces the silence heuristic as the primary instrument):\n1. For each silent cut, take an anchor probe: ANCHOR_PROBE_S (named constant, 6.0) seconds of source audio starting at cut.end_s. If that probe is itself too quiet to fingerprint (below the existing stem silence gate), slide its start forward to the next region with usable energy, up to ANCHOR_SEARCH_MAX_S (named constant, 15.0) past cut.end_s, tracking the slide amount; if no energetic region exists within that range, fall back to the existing silence heuristic for that span and label it mode=SILENCE_FALLBACK.\n2. Locate the probe in the render via full-lag sample-accurate normalized FFT cross-correlation over a window of +/- ANCHOR_WINDOW_S (named constant, 8.0) around the expected APPLIED position (expected = head_offset + (probe_source_start - removed_duration_before_probe), where removed_duration_before_probe counts ALL receipt cuts ending at or before the probe start \u2014 including this cut).\n3. Verdict: CUT_APPLIED (pass) if peak |r| >= 0.60 and |implied - expected| <= ANCHOR_TOLERANCE_S (named constant, 0.75); CUT_NOT_APPLIED (fail) if the implied position instead matches expected + cut_duration within the same tolerance (report both distances); AMBIGUOUS (fail, with WHY) if neither fits or the peak is weak. Report per span: mode=POSITION_ANCHOR, probe span, peak r, implied vs expected positions, both distances.\n4. Source audio for probes: use the same stem/mix source the speech path already uses. Controls and speech-cut fingerprinting stay exactly as they are. Overall verdict: PASS iff controls LOCATED, speech cuts ABSENT, silent cuts CUT_APPLIED (or SILENCE_FALLBACK passing its heuristic).\n\nEXTEND --self-test (keep all existing cases, adapt expectations to the new modes): (1) edited render: silent cut verdicts CUT_APPLIED, exit 0; (2) UNEDITED render: the anchor probe lands at expected+cut_duration -> CUT_NOT_APPLIED, exit 1 (red proof); (3) NEW partial-pause case shaped like the real false positive: source has a 2.5s silent pause, the receipt cut removes only its middle 1.0s, the edited render therefore retains ~1.5s of silence at the splice \u2014 the OLD heuristic would fail it; assert the new anchor logic verdicts CUT_APPLIED and exit 0, and print the retained-silence length to show the case is genuine; (4) span-beyond-media still exits 2. Self-test exit 0 only when green cases are green and red cases red.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' cut_absence_check.py argparse '2026-06-10,fred-cho' && timeout 900 python3 cut_absence_check.py --self-test && echo PASS",
+      "expect_files": [
+        "cut_absence_check.py"
+      ],
+      "verified": "silent-cut verdicts anchored on post-cut content position (applied vs not-applied provable both ways), partial-pause trims no longer false-positive, red-proved self-test"
+    }
+  ]
+}

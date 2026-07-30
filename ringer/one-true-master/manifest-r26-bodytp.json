@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r26",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "body-tp-headroom",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no network.\n\nGRADING: a checker fails you for touching files outside the owned list, production change with no tests, fewer than 3 new def test_..., no negative test, or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  tests/test_program_audio_clarity.py\n\nTHE BUG, measured twice on real finished renders. The program-BODY audio mastering (process_audio_ffmpeg in server/pipeline/video_assembly.py, two-pass linear loudnorm I=-16:TP=-1.5:LRA=11) leaves only 0.5 dB of headroom below the -1.0 dBTP platform ceiling, and this episode's AAC encode overshoots by 0.6 dB: segment-level true-peak measurements of the finished episode read intro -2.14, body -0.90, outro -2.10. The body is the sole violator of the certification gate's -1.0 dBTP limit; bumpers were already fixed to a -1.5 pre-encode ceiling and now land at -2.1. The prior assumption that 0.5 dB of codec headroom suffices is measured false for this content.\n\nTHE FIX: lower the program-audio true-peak ceiling from -1.5 to -2.0 dBTP in BOTH loudnorm passes of process_audio_ffmpeg (the measure pass and the apply pass must stay consistent), keeping I=-16 and LRA=11 unchanged. Introduce a named constant (e.g. PROGRAM_TRUE_PEAK_DB = -2.0) with a comment citing the measured 0.6 dB AAC overshoot; use it in both passes. Do not touch the bumper mastering path, the denoise flag, or video handling.\n\nTESTS (extend tests/test_program_audio_clarity.py, mock subprocess so no real ffmpeg, at least 3 new tests): (1) both program-audio passes request TP=-2.0; (2) NEGATIVE: no built program-audio filter requests TP=-1.5 anymore; (3) the two passes' loudnorm target strings are identical on the I/TP/LRA axes (consistency guard, so a future edit cannot drift one pass); (4) update any existing test asserting TP=-1.5 with a one-line comment, do not delete it.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_program_audio_clarity.py tests/test_video_assembly.py tests/test_bumper_loudness_master.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r26/bodytp.patch' --owned-files 'server/pipeline/video_assembly.py,tests/test_program_audio_clarity.py' --min-new-tests 3",
+      "expect_files": [],
+      "verified": "program-audio ceiling at -2.0 dBTP in both passes so AAC overshoot lands under the -1.0 platform limit"
+    }
+  ]
+}

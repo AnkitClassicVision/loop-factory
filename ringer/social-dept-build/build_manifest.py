@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Build manifest-r1-build.json for the social-dept-build Ringer run (round 1).
+
+Five build lanes with disjoint file ownership over loop-factory worktrees.
+Engines per owner decision (Ankit 2026-07-28): Codex OAuth for 4 lanes,
+claude-lean (Claude subscription) auditioning the sensing-scripts lane.
+"""
+import json
+from pathlib import Path
+
+REPO = "/mnt/d_drive/repos/loop-factory"
+WORKDIR = "/home/ankit114/ringer-work/social-dept-build-r1"
+CHECK = "/home/ankit114/repos/ringer/templates/fix-swarm/checks/fix-swarm.py"
+
+CONTEXT = """CONTEXT: This repo is the LOOP FACTORY (/mnt/d_drive/repos/loop-factory): a governed
+department system. You are building runtime nodes for the NEW `social` department
+(back-catalog social republishing via Zernio, SHADOW mode: zero external effects).
+Read these worktree files FIRST — they are the locked spec your code must implement:
+  departments/social/charter.yaml            (governance: floors, ceilings, exceptions, QA shape)
+  departments/social/subgraphs.json          (machine graph: your nodes' positions)
+  departments/social/procedural-graph.md     (node tables: inputs, QA checks, traces)
+  departments/social/knowledge/concept-map.md (the WHY; owner-locked)
+Pattern precedents (read as source material, NEVER modify):
+  departments/podcast/runtime/*.py, departments/podcast/tests/*.py, kernel/bridge.py,
+  kernel/gateways/*.py, kernel/lock_service.py, factory/charter_loader.py, templates/department_daily.sh.template
+Optional external reference (read-only, absolute path, may be unavailable):
+  /mnt/d_drive/repos/mybcat-social-content-automation/src/zernio_poster.py (zernio CLI subprocess pattern)
+"""
+
+INTERFACE = """INTERFACE CONTRACT (identical across all lanes — nodes compose ONLY via this):
+- Every node is a standalone CLI: `python3 departments/social/runtime/<node>.py --state-dir <dir> --out <json path> [node-specific flags]`.
+  Reads declared inputs (file paths passed as flags), writes ONE JSON artifact to --out, prints nothing but logs to stderr.
+  Nodes NEVER import each other (shared helpers may live inside each file; guards/kernel_bridge/record are the only cross-imports allowed and only where your lane owns or is told to import them).
+- Exit codes: 0 = ok; 2 = gate-blocked (quarantine path: also write state/quarantine/<item_id>.json with reasons); 3 = source missing/outage (write {"status":"missing","reason":...} to --out; NEVER fabricate data or zeros).
+- JSON shapes (field names are the contract):
+  content_item: {"item_id","source_type","title","url","published_at","body_path","last_resurfaced_at","prior_engagement":{"score":<float>}}
+  candidate: {"item":<content_item>,"rank_score":<float>,"rationale":<str>}
+  context_manifest: {"version":<str>,"assembled_at":<iso>,"item":<content_item>,"body_text":<str>,"brand":<obj>,"offer":<obj>,"complete":<bool>,"missing":[<str>]}
+  sanitized_bundle: context_manifest + {"sanitized":true,"redactions":<int>}
+  draft: {"surface","body","cta_url","sources":[{"claim","source"}],"engine","round":<int>}
+  qa_report: {"pass":<bool>,"defects":[{"code","detail"}],"engine"}
+  dispatch_receipt: {"post_ref","surface","delivered_count":<int>,"simulated":<bool>,"ts"}
+  delivery_verification: {"post_ref","platform_post_id","status","verified":<bool>,"ts"}
+  observation row (jsonl): {"metric","value" OR "status":"missing","source","ts"}
+  proposal_card: {"question","kind":"approve|skip|fix","class":"process_change|prompt_update|other","evidence":[...]}
+- Surfaces enum: linkedin_mybcat, linkedin_personal, linkedin_podcast, facebook_mybcat, instagram_mybcat, tiktok_mybcat, x_mybcat, youtube_mybcat, youtube_podcast.
+- SHADOW LAW: the charter's autonomy_state is `shadow`. Any code path that could touch a real external surface must be behind delivery_mode=simulate and assert delivered_count==0. No network calls in tests; all external CLIs (zernio, engines) are injectable via a --cmd/--engines-file style seam and faked in tests.
+"""
+
+RULES = """HARD RULES: Your current working directory IS a git worktree of /mnt/d_drive/repos/loop-factory — edit files here directly. Do NOT git commit, branch, or push; leave all changes uncommitted. Do not load skills or call MCP/Apps. No network access; tests use fakes only. Never write secrets, credentials, PHI, or real patient/client data anywhere — not even in test fixtures (invent obviously-fake data). Own ONLY your listed files; never modify anything else (guards.py, kernel files, podcast files, charter, subgraphs are read-only to you unless listed). Python: stdlib only (plus PyYAML which the repo already uses); logging module, no print for diagnostics.
+OUTPUT CONTRACT: your owned files, all tests passing under the HOW TO RUN command, plus ./fix-summary.md starting with '# Fix Summary' and containing '## Summary', '## Files Changed', '## Verification', '## Assumptions' (<700 words)."""
+
+
+def check_cmd(key: str, verify: str, owned: list[str]) -> str:
+    return (
+        f"python3 '{CHECK}' --verify-command '{verify}' "
+        f"--patch '{WORKDIR}/{key}.patch' --summary fix-summary.md "
+        f"--exported-summary '{WORKDIR}/{key}.summary.md' "
+        f"--owned-files '{','.join(owned)}'"
+    )
+
+
+def pytest_cmd(*paths: str) -> str:
+    return (
+        "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest "
+        + " ".join(paths)
+        + " -q -p no:cacheprovider"
+    )
+
+
+TASKS = []
+
+# ---------------------------------------------------------------- T1 sense
+owned = [
+    "departments/social/runtime/pull_zernio_analytics.py",
+    "departments/social/runtime/pull_call_joins.py",
+    "departments/social/runtime/compare_charter.py",
+    "departments/social/runtime/assemble_weekly_digest.py",
+    "departments/social/tests/test_sense_lane.py",
+]
+TASKS.append({
+    "key": "sense-scripts",
+    "engine": "claude-lean",
+    "model": "sonnet",
+    "task_type": "code-feature",
+    "timeout_s": 3600,
+    "spec": f"""You are a build worker implementing the SG-SENSE lane (read-only sensing) of the social department.
+
+{CONTEXT}
+{INTERFACE}
+OWNERSHIP: you own ONLY: {', '.join(owned)}. Create them; never touch anything else.
+
+TASKS:
+1. pull_zernio_analytics.py — pull engagement metrics for ALL posts on the tracked surfaces (this dept's, the podcast dept's, and manual posts: caller does not filter by author; concept C16/C20). Real mode shells the `zernio` CLI via subprocess (command overridable with --zernio-cmd for tests; parse JSON stdout). Test/offline mode: --fake-feed <json path>. On CLI failure/timeout/malformed output: exit 3 and write {{"status":"missing","reason":...}} — NEVER fabricate metrics or write zeros for missing data (charter C13, exceptions.metrics_feed_outage). Output: observation rows (jsonl path via --out) with metric names like engagement_rate/impressions/likes per post_ref+surface.
+2. pull_call_joins.py — join discovery-call bookings to social attribution INDEPENDENTLY of the department's own claims (charter setpoints.outcome.sensor). Input: --calendar-export <json> (fixture shape: list of {{"event_id","start","source_tag","contact_ref"}}); output observation rows counting discovery_calls_booked total and per source_tag. Missing/unreadable export: exit 3 + missing status. Real calendar/HubSpot wiring is a LATER seam — build the join logic against the export shape.
+3. compare_charter.py — load the charter with factory/charter_loader.py (see departments/podcast/runtime/compare_charter.py precedent). Compare observation rows (--observations <jsonl>) against setpoints/thresholds FROM THE CHARTER (never hardcoded constants): posts/week vs weekly_touch_ceiling & pace_ceiling_near_frac, faux_work_touch_floor breach, platform_verified_delivery_pct target, budget_near_frac. Emit observations including derived signals: cap_near, faux_work_signal, gaming_signal (self-reported metrics contradict independent rows), each with the evidence rows inline.
+4. assemble_weekly_digest.py — from --observations and --verified-posts (json list of delivery_verification objects): write a markdown digest (--out) that lists EVERY platform-verified post WITH its link, the engagement summary, quarantine count, and an 'unwired memory seam' notice when --memory-backend-state says unwired (charter C18). SANITIZED: never include DM/comment bodies, only counts/IDs. TBD_MEASURE_IN_SHADOW metrics render as 'baseline (shadow)' not as failures.
+5. tests/test_sense_lane.py — pytest with fakes for all four nodes: fake zernio cmd (tiny shell/python fixture the test writes to tmp), missing-feed → exit 3 + status missing (assert NO fabricated zeros), charter-driven thresholds (temp charter fixture with different numbers changes the verdicts), digest contains every verified post link + seam notice, no DM bodies leak.
+
+HOW TO RUN (this is also the check): {pytest_cmd('departments/social/tests/test_sense_lane.py')}
+
+{RULES}""",
+    "check": check_cmd("sense-scripts", pytest_cmd("departments/social/tests/test_sense_lane.py"), owned),
+    "expect_files": [],
+    "verified": "SG-SENSE nodes exist, all sense-lane tests pass: charter-driven thresholds, missing-data honesty, sanitized digest with every verified post",
+})
+
+# ---------------------------------------------------------------- T2 republish scripts
+owned = [
+    "departments/social/runtime/inventory_backcatalog.py",
+    "departments/social/runtime/select_candidate.py",
+    "departments/social/runtime/assemble_context.py",
+    "departments/social/knowledge/brand-context.example.yaml",
+    "departments/social/tests/test_republish_scripts.py",
+]
+TASKS.append({
+    "key": "republish-scripts",
+    "engine": "codex",
+    "task_type": "code-feature",
+    "timeout_s": 3600,
+    "spec": f"""You are a build worker implementing the SG-REPUBLISH script nodes N1/N2/N3 (inventory, selection, context assembly) of the social department.
+
+{CONTEXT}
+{INTERFACE}
+OWNERSHIP: you own ONLY: {', '.join(owned)}. Create them; never touch anything else.
+
+TASKS:
+1. inventory_backcatalog.py — build/refresh the back-catalog index. Sources: --rss <url or local xml path> (podcast feed; parse with stdlib xml.etree, no network in tests — tests pass a local XML fixture) and/or --items <json path> (pre-listed items). Merge with existing index (--index path, jsonl of content_item rows) preserving last_resurfaced_at/prior_engagement. Empty or unparseable source: exit 3 with reason (stale source = HALT, charter C13). QA check per graph: index row count > 0 AND schema-valid rows.
+2. select_candidate.py — DETERMINISTIC ranking (charter C10: same inputs, same pick — no randomness, no LLM): rank_score from (a) time since last_resurfaced_at (older = higher), (b) prior_engagement.score (higher = better), with an explicit documented formula; exclude items resurfaced within --cooldown-days (default 30); exclude items flagged in --suppression <jsonl> (deleted/retracted/opt-out — charter floor 5). Output candidate with rationale string naming the formula inputs. Empty eligible set: exit 2 (nothing to do is gate-blocked, not an error).
+3. assemble_context.py — build the versioned context_manifest (concept C15.3: context-blind drafting was a lived failure): read the candidate's FULL body (--item body_path → body_text; missing/empty body = incomplete), load brand/offer packet from --brand <yaml> (schema: brand{{name,voice_notes,audience}}, offer{{name,cta_url,description}} per item source_type/brand dimension). ANY missing/TODO_ field → complete:false + missing[] populated + exit 2 (HALT+escalate; never draft from fragments). Ship brand-context.example.yaml as the documented schema example with obviously-placeholder values for tests.
+4. tests/test_republish_scripts.py — pytest: RSS fixture parses to valid index; empty source exits 3; determinism (two runs, same pick); cooldown + suppression exclusions honored; context manifest completeness gate (missing body/brand TODO → exit 2, complete:false, missing[] names the gaps); full happy path produces complete:true manifest embedding full body_text.
+
+HOW TO RUN (this is also the check): {pytest_cmd('departments/social/tests/test_republish_scripts.py')}
+
+{RULES}""",
+    "check": check_cmd("republish-scripts", pytest_cmd("departments/social/tests/test_republish_scripts.py"), owned),
+    "expect_files": [],
+    "verified": "N1/N2/N3 exist with deterministic selection, suppression + cooldown honored, and a fail-closed context-completeness gate",
+})
+
+# ---------------------------------------------------------------- T3 spine: guards, kernel, dispatch, verify, records, driver
+owned = [
+    "departments/social/runtime/guards.py",
+    "departments/social/runtime/kernel_bridge.py",
+    "departments/social/runtime/dispatch.py",
+    "departments/social/runtime/delivery_verify.py",
+    "departments/social/runtime/record.py",
+    "departments/social/runtime/social_daily.sh",
+    "departments/social/tests/test_publish_chain.py",
+    "departments/social/tests/test_guards.py",
+    "departments/social/tests/test_records_integrity.py",
+]
+TASKS.append({
+    "key": "publish-spine",
+    "engine": "codex",
+    "task_type": "code-feature",
+    "timeout_s": 7200,
+    "engine_args": ["-c", "model_reasoning_effort=high"],
+    "spec": f"""You are a build worker implementing the social department's SPINE: safety guards, kernel wiring, dispatch, delivery verification, records, and the daily driver. This is the highest-risk lane: everything here FAILS CLOSED.
+
+{CONTEXT}
+{INTERFACE}
+OWNERSHIP: you own ONLY: {', '.join(owned)}. Create them; never touch anything else.
+
+TASKS:
+1. kernel_bridge.py — port departments/podcast/runtime/kernel_bridge.py: get_kernel(state_dir) loading kernel/bridge.load_kernel with the charter's budget weekly_ceilings; require_shadow() helper. The kernel gateways (budget/dispatch/frequency/model) implement guards S4/S5/S8 — the department NEVER talks to zernio or a model engine except through them.
+2. guards.py — subcommands (argparse), each a fail-closed gate reading/writing JSON per the interface:
+   - resolve (S1): canonicalize content item + target surface against the surfaces enum and the index; unknown surface or unresolvable item → exit 2 suppress+review (never guess).
+   - eligibility (S2): freshness/suppression gate per charter C13 + floor 5: item in --suppression jsonl → blocked; --approvals <yaml> required when body names a guest/client (list of approved names); time-anchored phrases (regex: weekday/date/'today'/'tomorrow'/'join us live') → blocked; dead cta_url ONLY checked structurally (scheme+host present) — no network.
+   - privacy (S3): deterministic PHI/client-data preflight BEFORE any model call: regex scan for emails, phone numbers, SSN-like, DOB-like, insurance-ID-like patterns, plus tokens from --blocklist <yaml> (client/practice names). Matches → redact into sanitized_bundle with redactions count; any unredactable structural hit → exit 2. Output sanitized_bundle; drafts may consume ONLY this.
+   - kill (S6): independent kill controller: reads charter kill_if + observation rows (INDEPENDENT sensor data, never the dept's self-reports); on trip writes state/KILLED marker + exits 2; presence of KILLED marker blocks the whole chain (driver checks it first).
+   - breaker (S7): circuit breaker: delivery-failure streak >= --streak-threshold (default 3) or platform-strike flag in observations → writes state/BREAKER_<surface> marker; marker blocks dispatch to that surface.
+3. dispatch.py (N6) — sends ONLY through the kernel dispatch gateway (kernel_bridge). Inputs: qa-passed draft + S4 token from the gateway; delivery_mode from charter autonomy_state: shadow → simulate sink, MUST assert delivered_count==0 and write dispatch_receipt{{simulated:true}}. Live mode: shells `zernio` CLI (injectable --zernio-cmd) — but in this build, live mode must REFUSE unless an explicit --i-am-promoted flag AND autonomy_state != shadow (belt and suspenders; the flag is wired only by the promotion runbook, never by the driver).
+4. delivery_verify.py (N7, concept C15.1 — silent delivery failure was a LIVED failure) — after dispatch: pull post status via zernio CLI (injectable); receipt = delivery_verification with platform_post_id pulled from the platform response, NEVER echoed from the scheduler's claim; simulate mode verifies against the simulate sink's record. Missing/failed verification → exit 2 (receipt FAIL → the driver summons the manager, never advances).
+5. record.py — port the fenced-order records pattern from departments/podcast/runtime/record.py for departments/social/state: runs.jsonl append → STATE.json epoch advance → heartbeats.jsonl, under the records lock; EpochError on reuse/skip. Keep the CLI shape (--state-dir etc.) consistent with the podcast one.
+6. social_daily.sh — instance of templates/department_daily.sh.template driving SG-REPUBLISH in SHADOW: check KILLED/BREAKER markers → inventory → resolve → select → eligibility → assemble_context (nodes from other lanes may not exist yet in YOUR worktree: the driver must probe `test -f` per node and exit 4 'node missing' cleanly — integration happens after all lanes merge) → privacy → draft/qa loop (max 2 rounds per charter qa_shape) → frequency+budget via kernel → dispatch simulate → delivery_verify → record. EVERY step: receipt file before the next step (receipt-gated law); missing receipt → write state/incident_candidates.json entry + stop.
+7. Tests — test_guards.py: each guard's block/allow/redact behavior incl. fail-closed on malformed input; kill marker blocks; breaker per-surface. test_publish_chain.py: dispatch simulate asserts delivered_count==0 and refuses live in shadow even with --i-am-promoted; delivery_verify fails on scheduler-echo (fake sink that lies) and passes on platform-confirmed id; kernel gateway path used (no direct zernio call in shadow dispatch — assert the fake zernio cmd was NOT invoked in shadow). test_records_integrity.py: fenced order, epoch protection, lock timeout (port podcast's test shape).
+
+HOW TO RUN (this is also the check): {pytest_cmd('departments/social/tests/test_guards.py', 'departments/social/tests/test_publish_chain.py', 'departments/social/tests/test_records_integrity.py')}
+
+{RULES}""",
+    "check": check_cmd(
+        "publish-spine",
+        pytest_cmd(
+            "departments/social/tests/test_guards.py",
+            "departments/social/tests/test_publish_chain.py",
+            "departments/social/tests/test_records_integrity.py",
+        ),
+        owned,
+    ),
+    "expect_files": [],
+    "verified": "guards fail closed, shadow dispatch proves delivered_count==0, delivery verification rejects scheduler echoes, records keep fenced order",
+})
+
+# ---------------------------------------------------------------- T4 LLM nodes
+owned = [
+    "departments/social/runtime/draft_post.py",
+    "departments/social/runtime/qa_post.py",
+    "departments/social/runtime/engines.example.yaml",
+    "departments/social/tests/test_llm_nodes.py",
+]
+TASKS.append({
+    "key": "llm-nodes",
+    "engine": "codex",
+    "task_type": "code-feature",
+    "timeout_s": 5400,
+    "engine_args": ["-c", "model_reasoning_effort=high"],
+    "spec": f"""You are a build worker implementing the social department's two model-capable nodes: draft_post (N4) and qa_post (N5), with the enumerate-then-edit QA loop contract.
+
+{CONTEXT}
+{INTERFACE}
+OWNERSHIP: you own ONLY: {', '.join(owned)}. Create them; never touch anything else.
+
+ENGINE ADAPTER (shared shape inside each file, no cross-import): engines config yaml (--engines-file; ship engines.example.yaml) maps engine names to argv templates, e.g. codex_oauth: ['codex','exec','--sandbox','read-only','{{prompt_file}}'] and claude_subscription: ['claude','-p','--output-format','text','{{prompt_file}}']. ALLOWLIST LAW (charter budget.engine_allowlist): refuse any engine not named codex_oauth or claude_subscription with a clear error; tests inject fake argv templates pointing at a tmp script. All engine calls go through kernel model-gateway accounting when available: import departments/social/runtime/kernel_bridge.py IF PRESENT via a soft seam (--no-kernel flag for tests and for this build round; the file is another lane's product).
+
+TASKS:
+1. draft_post.py — input: sanitized_bundle ONLY (--bundle; REFUSE any input whose sanitized flag is not true — consuming raw context is a floor violation, concept C15.3). Builds a per-surface prompt (prompt template inline in the file, parameterized by surface constraints below) and calls the engine adapter. Output: draft JSON with sources[] mapping every factual claim/number to its source (from the bundle). --revise mode: consumes a prior draft + qa_report defects[] and produces round+1 (max round 2 enforced here AND by caller). Per-surface constraints (embed as data, enforce on output where mechanically checkable): x_mybcat <=280 chars; linkedin_* <=1300 chars preferred hard cap 3000; instagram/tiktok <=2200; facebook <=2000; youtube description <=5000; exactly ONE cta_url; no em dashes.
+2. qa_post.py — CROSS-MODEL gate (charter qa_shape.cross_model_required): input draft + sanitized_bundle + --engine <name>; REFUSE (exit 2) when its engine equals the draft's engine field. Produces qa_report ENUMERATING defects (charter C11 — enumerate then edit), never a bare pass/fail. Deterministic checks (no model needed, always run): em dashes present; banned words (leverage, seamless, holistic, delve, game-changer, unlock, revolutionize, transform your practice); >1 cta_url or zero; surface length cap exceeded; any factual claim/number in body absent from sources[] (grounded-research floor C7.4 — number-token heuristic: digits/percent/dollar tokens must appear in a sources[].claim); time-anchored phrases; sanitized flag missing. Model-judged checks (voice gate C15.2) go through the engine adapter with the fake in tests: prompt asks for defect list in JSON, parse defensively — engine failure = defect 'qa_engine_unavailable' and pass:false (fail closed, never fail open).
+3. tests/test_llm_nodes.py — fakes only (tmp scripts as engines): draft refuses unsanitized bundle; allowlist refuses unknown engine; cross-model refusal when engines match; deterministic defects each fire on crafted bad drafts (em dash, banned word, two CTAs, over-length, ungrounded number, time anchor) and stay silent on a clean draft; revise round consumes defects and increments round, round 3 refused; engine crash → pass:false with qa_engine_unavailable (never pass:true).
+
+HOW TO RUN (this is also the check): {pytest_cmd('departments/social/tests/test_llm_nodes.py')}
+
+{RULES}""",
+    "check": check_cmd("llm-nodes", pytest_cmd("departments/social/tests/test_llm_nodes.py"), owned),
+    "expect_files": [],
+    "verified": "draft/qa nodes enforce sanitized-input-only, engine allowlist, cross-model QA, enumerated defects, bounded 2-round edit loop, fail-closed on engine errors",
+})
+
+# ---------------------------------------------------------------- T5 learn lane
+owned = [
+    "departments/social/runtime/read_metrics_records.py",
+    "departments/social/runtime/propose_insights.py",
+    "departments/social/runtime/proposal_card_to_outbox.py",
+    "departments/social/tests/test_learn_lane.py",
+]
+TASKS.append({
+    "key": "learn-lane",
+    "engine": "codex",
+    "task_type": "code-feature",
+    "timeout_s": 3600,
+    "spec": f"""You are a build worker implementing the SG-LEARN lane (learn-and-adapt: proposals only, the department NEVER self-modifies) of the social department.
+
+{CONTEXT}
+{INTERFACE}
+OWNERSHIP: you own ONLY: {', '.join(owned)}. Create them; never touch anything else.
+
+TASKS:
+1. read_metrics_records.py — read ONLY SG-SENSE observation rows (--observations jsonl; charter C16: never the department's self-graded claims). Aggregate per surface/lane/item-type: what published, engagement stats, quarantine counts, QA-defect frequency by code. Output an evidence pack JSON with row-level provenance preserved (each aggregate lists the source row ids/ts it derives from).
+2. propose_insights.py — model-capable node via the same engine-adapter shape as the draft lane (engines yaml --engines-file, allowlist codex_oauth/claude_subscription only, injectable fake in tests; soft kernel seam --no-kernel). Input: evidence pack. Output: proposal_card list. VALIDATOR INSIDE THE NODE (fail closed): every proposal must cite >=1 evidence row id from the pack; a proposal whose evidence ids are absent from the pack is DROPPED and logged as defect 'ungrounded_proposal'. Proposals that would change drafting prompts get class 'prompt_update'; process changes get 'process_change' (charter C11: prompt evolution is a recorded process change, never silent).
+3. proposal_card_to_outbox.py — append cards to state/approval_queue.jsonl (create dir if missing) with: exactly ONE question phrased approve/skip/fix (charter escalation.question_format), class, evidence, ts, ttl_hours 24, status 'pending'. Idempotent by content hash (same card twice = one entry). NEVER writes anywhere else; NEVER applies a change itself.
+4. tests/test_learn_lane.py — fakes only: aggregates carry row provenance; ungrounded proposals dropped + logged; prompt_update class assigned; outbox idempotency; card carries one question + ttl; a crafted 'self-modify' style proposal (class missing) is rejected.
+
+HOW TO RUN (this is also the check): {pytest_cmd('departments/social/tests/test_learn_lane.py')}
+
+{RULES}""",
+    "check": check_cmd("learn-lane", pytest_cmd("departments/social/tests/test_learn_lane.py"), owned),
+    "expect_files": [],
+    "verified": "learn lane proposes with row-level evidence or not at all, routes prompt updates as recorded process changes, and only ever writes proposal cards",
+})
+
+manifest = {
+    "run_name": "social-dept-build",
+    "workdir": WORKDIR,
+    "max_parallel": 5,
+    "worktrees": True,
+    "repo": REPO,
+    "tasks": TASKS,
+}
+
+out = Path(__file__).parent / "manifest-r1-build.json"
+out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+print(f"wrote {out} ({len(TASKS)} tasks)")

@@ -1,0 +1,39 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r28",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "clip-words-lag",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3000,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker fixing a certification checker's false-negative. Copy /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/clip_words_check.py into your current working directory as ./clip_words_check.py and fix it in place. READ access to /mnt/d_drive/repos/podcast; never write to it. Pure stdlib + numpy + ffmpeg subprocess. No git, no MCP, no network.\n\nWHAT THE CHECKER DOES: verifies each promo clip's audio truly comes from the claimed source span of the speaker stems, by cross-correlating clip audio against the stem at the claimed raw offset.\n\nTHE PROVEN FALSE-NEGATIVE, measured on a real episode: a clip whose true source is stem t=558.96s (independent full-lag FFT sweep: r=0.983; it also sits in the final render exactly where its manifest claims) was reported peak=-0.019 / best_lag=0.000 / runner=0.000 / margin=0.000 FAIL, because the manifest's claimed start is rounded to whole seconds (559) and the checker extracts an exactly-clip-sized stem window at that offset, leaving ZERO lag freedom: a 40ms offset (rounding + AAC priming) fully decorrelates waveform correlation. The degenerate best_lag=0.000/runner=0.000 outputs are the tell.\n\nTHE FIX: extract the stem window PADDED by a named CLIP_LAG_TOLERANCE_S = 1.5 on each side of the claimed span, run full-lag sample-accurate normalized FFT cross-correlation (subtract means, normalize by energies), and PASS when the peak |r| clears the existing threshold AND the implied source start is within CLIP_LAG_TOLERANCE_S of the claimed start; report the implied true start and the offset. Keep the existing peak threshold, runner-up-margin logic (recompute runner-up EXCLUDING +/-0.5s around the best lag so the margin is meaningful), per-variant loop, and output format. Degenerate zero-search-space must be impossible by construction.\n\nADD --self-test (hermetic, ffmpeg lavfi): synthesize a 60s noise 'stem' and cut a 6s 'clip' from t=20.00; assert (1) claimed start 20.0 PASSes; (2) claimed start rounded to 20 with the clip actually cut from 20.42 (i.e. 420ms off) still PASSes and reports the offset; (3) a clip cut from t=45 with claimed start 20 FAILs (wrong source); (4) claimed start 22.0 for the t=20 clip FAILs if 2.0s exceeds tolerance. Self-test exit 0 only when red cases are red and green cases green.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' clip_words_check.py argparse '2026-06-10,fred-cho' && timeout 600 python3 clip_words_check.py --self-test && echo PASS",
+      "expect_files": [
+        "clip_words_check.py"
+      ],
+      "verified": "clip source check gains lag tolerance + full-lag search, red-proved by hermetic self-test"
+    },
+    {
+      "key": "cuts-receipt-clock",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3000,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no network.\n\nGRADING: a checker fails you for touching files outside the owned list, production change with no tests, fewer than 4 new def test_..., no negative test, or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/content_edit.py\n  tests/test_applied_cuts_receipt.py\n  tests/test_content_edit.py\n\nTHE PROBLEM, from a real episode's receipt. processed/_applied_cuts.json \u2014 the receipt of which spans were removed from the program \u2014 is written clock-inconsistent and non-normalized. Observed content: [{\"id\":\"cut_00\",\"start_s\":0.0,\"end_s\":491.0},{\"id\":\"cut_01\",\"start_s\":2842.196,\"end_s\":3008.0},{\"id\":\"cut_02\",\"start_s\":0.0,\"end_s\":491.0},...]. Defects: (a) cut_00 and cut_02 are DUPLICATES of the same span; (b) cut_01's end (3008.0) is in the RAW-TRACK clock while its start (2842.196, exactly the grid session end) is in the GRID clock \u2014 the session grid is ~2842.2s, so a downstream cut-absence verifier refuses the receipt as unusable (\"cut cut_01 ends at 3008.000s, beyond the common span\", exit 2). The RENDER math is correct (duration proves each cut applied once); only the RECEIPT lies about clocks and multiplicity.\n\nTHE FIX, in the code that writes _applied_cuts.json (locate it in server/pipeline/content_edit.py; if the writer lives elsewhere, STOP and report rather than editing an unowned file): before writing, NORMALIZE the cut list: (1) express every span in the session-grid clock; (2) clamp end_s to the grid session duration (available where the writer runs; thread it as a parameter if needed); (3) merge duplicates and overlapping spans (identical or overlapping spans become one; keep deterministic ids cut_00..cut_NN after sorting by start); (4) drop zero/negative-length spans after clamping; (5) write a \"clock\":\"session-grid\" field and a \"session_duration_s\" field at the top level so verifiers can refuse foreign clocks explicitly. The applied EDIT behavior must not change \u2014 this is receipt normalization at write time.\n\nTESTS (tests/test_applied_cuts_receipt.py, pure, no ffmpeg; at least 4): (1) duplicates collapse to one span; (2) an end beyond session duration clamps to it; (3) overlapping spans merge; (4) NEGATIVE: normalized output never contains end_s > session_duration_s nor duplicate spans (property-style over the observed real-world payload pasted as a fixture); (5) ids are deterministic and sorted by start.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_content_edit.py tests/test_applied_cuts_receipt.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r28/cuts.patch' --owned-files 'server/pipeline/content_edit.py,tests/test_applied_cuts_receipt.py,tests/test_content_edit.py' --min-new-tests 4",
+      "expect_files": [],
+      "verified": "applied-cuts receipt normalized to one clock, deduped, clamped, self-describing"
+    }
+  ]
+}

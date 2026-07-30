@@ -1,0 +1,98 @@
+{
+  "hash": "31d45329ef6cfeec",
+  "source_ref": "94534f9",
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "9181c9188d3013a043bdad3dc6ad542662d6c89ee348a62f695993911af817bf"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "04d7a51ef24cadf35165f6fac88fc826a9b38cba251bb38139801214ae3d696d"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "0ed912aee735065fa6b541d1e88ae3a24dfd2e3b0cac0af4519a6ae5454538ef"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "39ffa752bed3e01f52ca9ff2edd81991787a1505ae810b2010174a8b2dde6354"
+    },
+    {
+      "path": "runtime/assemble_context.py",
+      "sha256": "0747acb3554ff588b820d4b8987f1403a75b8ae6098d2feea73567a4ef6fe5d3"
+    },
+    {
+      "path": "runtime/assemble_weekly_digest.py",
+      "sha256": "41083f989746359dd8c6a244f3d108acea8d1b7dfe29cf7240a1099d598a2132"
+    },
+    {
+      "path": "runtime/compare_charter.py",
+      "sha256": "1eb71c465450e16bd343a8ed35cfe85d1098dcef26be0ef4a68f41f1e8ca2e75"
+    },
+    {
+      "path": "runtime/delivery_verify.py",
+      "sha256": "3832623aea9aea7343b3f4136f6b6a2048583caf0d9589ba4376fbc733b4cd9d"
+    },
+    {
+      "path": "runtime/dispatch.py",
+      "sha256": "5f08724b5c7d5038d1be09dfbcab896ea5042cd0092cb2bf51700ec05c57be06"
+    },
+    {
+      "path": "runtime/draft_post.py",
+      "sha256": "32b9b67a9cde0d76e6e54121605cbdca0696e0d5c0f46426f5db3cc762b7622a"
+    },
+    {
+      "path": "runtime/guards.py",
+      "sha256": "d6277ad1fc446eb8e0eb749b6af21dc34d56c51c3fd1438ac5a58340f1dcf5a8"
+    },
+    {
+      "path": "runtime/inventory_backcatalog.py",
+      "sha256": "86477a118b90f52b96c59f2c6a6afb7a78f166bd519b44acef281f68fb75388c"
+    },
+    {
+      "path": "runtime/kernel_bridge.py",
+      "sha256": "ff1d6c0ef9574b4ff067d0022f742c35dc01372e16869cf1263a4a66bbf38dd1"
+    },
+    {
+      "path": "runtime/proposal_card_to_outbox.py",
+      "sha256": "2ce1c9b011f0838deb16a0362005ebfa8995c32992188546ffe4a36b63a07171"
+    },
+    {
+      "path": "runtime/propose_insights.py",
+      "sha256": "ff2097d7c2f3bcf5ba0ac45e44fe9de5166e3e955dced7e58f36f27e31fb697a"
+    },
+    {
+      "path": "runtime/pull_call_joins.py",
+      "sha256": "37994af84cf9fd17c9622b0d5336e5ab3d7b05a898a842caf0cf4eab633b8a8e"
+    },
+    {
+      "path": "runtime/pull_zernio_analytics.py",
+      "sha256": "24b671c4e795190518d7044ca65328feeecd342fa81741ef4f279f2605bfa66a"
+    },
+    {
+      "path": "runtime/qa_post.py",
+      "sha256": "c4318df6769ce5085f2c0235c0215fda68fb5e6303015f712f5f4b4f25627c82"
+    },
+    {
+      "path": "runtime/read_metrics_records.py",
+      "sha256": "aaeff53b2941fd7d41b88ba562eb2459155984ae79df29e7eb750f0e3b7df165"
+    },
+    {
+      "path": "runtime/record.py",
+      "sha256": "b4f5a04d7a10d672d2374040eed805a5d6b59bb221baa7d3a70d12374120cb87"
+    },
+    {
+      "path": "runtime/select_candidate.py",
+      "sha256": "403ab733595670e32ff595139a9663a67afc3317653bf28c0830e878cd28e743"
+    },
+    {
+      "path": "runtime/social_daily.sh",
+      "sha256": "98a97b55b1cdba9042cbf61e8c7732ca8c6e55c819d04444dc5467d2c85f98c4"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "71cbd28461ed31065a23a43a249f6ae672f9ca665928241aaf604f8f5e3fc1ad"
+    }
+  ]
+}

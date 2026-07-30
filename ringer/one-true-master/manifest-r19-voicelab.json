@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r19",
+  "worktrees": false,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "voice-master-lab",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory: ./voice_master_lab.py. READ access to /mnt/d_drive/repos/podcast; never write to it. No git, no MCP, no network.\n\nCONTEXT. A podcast's spoken voices sound MUFFLED next to its crisp outro music. Measured: voice spectral centroid ~1120Hz and high-band(6-16k)-minus-lowmid(250-2k) of -41.7dB, versus the outro target of ~2342Hz and -24.8dB. An EQ-only chain (highpass 85, -4dB @300Hz, +11dB highshelf@3200, +6dB@9000, de-ess notch, limiter) only reached 1798Hz. The owner picked that chain's character (\"medium\": crisp not tinny) but wants MORE crispness toward the outro, and correctly says EQ alone is not enough. The additional levers, in the order of expected impact:\n1. HARMONIC EXCITEMENT (ffmpeg aexciter): synthesizes NEW upper harmonics; EQ can only boost what a dull capture contains. This is the classic fix for a muffled voice.\n2. NOISE-FLOOR REDUCTION (afftdn, gentle, e.g. nr=10-12 nf=-30): room tone masks consonant detail; removing it raises perceived clarity. GENTLE only; aggressive denoise = underwater artifacts.\n3. FAST-ATTACK COMPRESSION (acompressor: ratio ~3:1, attack 5-10ms, release 100-200ms, makeup): evens the voice and sharpens transients.\n4. AIR SHELF (+3-4dB @ 12kHz) after excitement.\n5. De-ess notch (~6.8kHz) AFTER brightening, and alimiter=0.95 last. Loudness-normalize each rendered variant to the same integrated LUFS (two-pass loudnorm to -16) so the comparison is level-matched and only timbre differs.\n\nFILE CONTRACT: ./voice_master_lab.py, argparse CLI:\n  voice_master_lab.py --stem PATH --out DIR --label NAME [--spans \"a-b,c-d\"] [--target-centroid 2342] [--target-hilomid -24.8] [--json OUT]\nIt must:\n(a) Extract the given spans (or a default 10s) from the stem into a working WAV.\n(b) Render FIVE variants, each a named constant CHAIN_* string: V0_original (no processing), V1_eq_medium (exactly the owner-picked chain above), V2_eq_excite (V1 plus aexciter with moderate settings, e.g. amount=2-3, drive on the 3-9kHz region), V3_full (V2 plus gentle afftdn FIRST in chain, plus acompressor before EQ), V4_full_air (V3 plus +3.5dB shelf @12kHz). Loudness-match all five to -16 LUFS integrated (two-pass) so level does not bias the ear test.\n(c) MEASURE each variant: spectral centroid, high-band minus lowmid (same band defs as above), integrated LUFS; print a table with the target row; write --json if given.\n(d) Concatenate the five variants back to back with 0.4s silence gaps into <out>/<label>_variants.mp3 (160k), announced order V0..V4, and print the file path.\nFail loudly (exit 2) on missing stem/ffmpeg. No hard-coded episode names or absolute episode paths inside the script; everything comes from CLI args.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' voice_master_lab.py argparse '2026-06-10,fred-cho' && (grep -q aexciter voice_master_lab.py || (echo 'FAIL: no harmonic excitement stage'; exit 1)) && (grep -q acompressor voice_master_lab.py || (echo 'FAIL: no compression stage'; exit 1)) && (grep -q afftdn voice_master_lab.py || (echo 'FAIL: no noise-floor stage'; exit 1)) && (grep -qE 'sys.exit\\(2\\)|exit\\(2\\)|return 2' voice_master_lab.py || (echo 'FAIL: no exit-2 path'; exit 1)) && echo PASS",
+      "expect_files": [
+        "voice_master_lab.py"
+      ],
+      "verified": "a generic voice-mastering lab: 5 level-matched variants per speaker with excitement/compression/denoise stages, measured against the outro target"
+    }
+  ]
+}

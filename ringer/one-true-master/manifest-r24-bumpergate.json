@@ -1,0 +1,41 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r24-tp",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "bumper-tp-headroom",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no network.\n\nGRADING: a checker fails you for touching files outside the owned list, production change with no tests, fewer than 3 new def test_..., no negative test, or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  tests/test_bumper_loudness_master.py\n\nTHE BUG, measured on a real render. Bumper audio mastering (master_bumper_audio in server/pipeline/video_assembly.py) targets true peak BUMPER_TRUE_PEAK_DB = -1.0 dBTP. The program BODY is mastered to TP=-1.5. After final AAC encoding, inter-sample overshoot pushed the finished episode's measured true peak to -0.900 dBTP, violating the -1.0 dBTP platform safety ceiling the certification gate enforces (measured: TRUE_PEAK -0.900 vs maximum -1.000). The body never violates because its -1.5 pre-encode ceiling leaves 0.5 dB for codec overshoot; the bumpers' -1.0 leaves none.\n\nTHE FIX: set the bumper mastering true-peak ceiling to -1.5 dBTP (same as the program body) so the whole timeline carries 0.5 dB of codec-overshoot headroom. Concretely: change BUMPER_TRUE_PEAK_DB from -1.0 to -1.5 with a comment stating the measured -0.900 overshoot rationale; bump BUMPER_MASTER_RECIPE_VERSION so every cached bumper mastered under the old ceiling is invalidated (stale cache reuse would silently keep the violation); keep the adaptive effective-target logic (peak_safe_target uses the ceiling constant, so it must follow automatically \u2014 verify, do not fork the logic) and the raise-on-dynamic guard unchanged.\n\nTESTS (mock subprocess, no real ffmpeg; extend tests/test_bumper_loudness_master.py): (1) the measure/apply loudnorm filters now request TP=-1.5; negative: assert no built filter requests TP=-1.0; (2) recipe/cache version changed from the previous literal (read the old value from git: `git show HEAD:server/pipeline/video_assembly.py` if needed, and assert inequality with the new constant); (3) adaptive target math now uses -1.5: a peaky asset (input_i=-24.5, input_tp=-6.3) yields effective target input_i + (-1.5 - input_tp) - 0.5 margin, quieter than before; (4) existing tests that hard-code TP=-1.0 must be UPDATED with a one-line comment, not deleted.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_bumper_loudness_master.py tests/test_video_assembly.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r24-tp/tp.patch' --owned-files 'server/pipeline/video_assembly.py,tests/test_bumper_loudness_master.py' --min-new-tests 3",
+      "expect_files": [],
+      "verified": "bumper mastering ceiling moved to -1.5 dBTP with cache invalidation so AAC overshoot stays under the -1.0 platform ceiling"
+    },
+    {
+      "key": "bumper-gate-recal",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "workdir": "/home/ankit114/ringer-work/one-true-master-r24-gate",
+      "worktrees": false,
+      "spec": "You are an implementation worker. Rewrite exactly ONE file in your current working directory: ./bumper_check.py (a fresh standalone replacement for a certification checker). READ access to /mnt/d_drive/repos/podcast; never write to it. Pure stdlib + numpy + ffmpeg/ffprobe subprocess. No git, no MCP, no network.\n\nCONTEXT. The existing checker verifies that a finished podcast episode contains its intro and outro bumpers, each exactly once, at an acceptable loudness. Two defects were proven on a real episode:\n(a) PRESENCE FALSE-RED: its correlation probe missed an outro that IS present (sample-accurate FFT cross-correlation finds it at r=0.921, offset +43ms = AAC priming delay). Coarse or window-limited correlation cannot see waveform alignment; presence must use full-lag sample-accurate normalized cross-correlation with an explicit lag tolerance.\n(b) LEVEL BASELINE WRONG: it compared bumper loudness to the episode BODY (delta tolerance 3 LU), but the owner's approved design masters bumpers to their own per-asset targets (~-19 LUFS, adaptive to peak headroom) against a -16 body \u2014 a ~3 LU delta BY DESIGN. Level must compare each bumper's measured in-episode loudness to an EXPECTED target supplied by the caller, tolerance +/-0.75 LU.\n\nFILE CONTRACT: ./bumper_check.py, argparse CLI:\n  bumper_check.py --final PATH --intro PATH --outro PATH [--expected-intro-lufs F] [--expected-outro-lufs F] [--lag-tolerance-s 0.75] [--min-corr 0.60] [--tolerance-lu 0.75] [--json OUT]\n  bumper_check.py --self-test\nExit 0 all checks pass, 1 on any FAIL, 2 unusable inputs. Every line of output states the check, PASS/FAIL/SKIP, the measured numbers, and a WHY on failure.\n\nCHECKS (in order):\n1. INTRO_PRESENCE / OUTRO_PRESENCE: decode the final's head (first intro_duration+5s) and tail (last outro_duration+5s) and each bumper's audio to mono float32 at 8kHz; full-lag FFT normalized cross-correlation (subtract means; normalize by global energies; scan ALL lags). PASS if peak |r| >= --min-corr AND the implied bumper start lies within --lag-tolerance-s of its expected slot (intro at 0, outro at final_duration - outro_duration). Report r, implied offset, and the margin over the second-best DISTANT peak (exclude +/-0.5s around the best lag).\n2. INTRO_UNIQUENESS / OUTRO_UNIQUENESS: correlate each bumper against the MIDDLE of the episode (a window well away from both slots); FAIL if any interior correlation exceeds 0.5*min_corr (bumper leaked into the body).\n3. INTRO_LEVEL / OUTRO_LEVEL: measure integrated LUFS of the final's bumper spans (ffmpeg loudnorm print_format=json on the trimmed span). If the caller supplied --expected-*-lufs, PASS iff |measured - expected| <= --tolerance-lu; if not supplied, print SKIP with the measured value (never guess a baseline; an unproven default is a false gate).\n4. If a bumper file is missing/unreadable: exit 2, not a silent pass.\n\nSELF-TEST (--self-test, hermetic, no repo access): in a temp dir, synthesize with ffmpeg lavfi: intro = 3s of a two-tone+AM-noise signature, outro = 3s of a DIFFERENT signature, body = 20s of band-limited noise at a different level; build final = intro+body+outro (concat, AAC encode so priming delay is real). Then assert, printing each case: (1) matched final PASSes presence+uniqueness; (2) a final built with the WRONG outro (a third signature) FAILs OUTRO_PRESENCE; (3) a final missing its outro entirely FAILs OUTRO_PRESENCE; (4) level: expected -19 vs a span measured near -19 PASSes at 0.75 LU while expected -16 FAILs (use the measured value to construct both cases); (5) AAC priming offset (~43ms) does NOT fail presence at the default lag tolerance. Self-test exits 0 only if every red case is red and every green case is green \u2014 a red-proved checker, not a trusted one.\n\nKeep every threshold a named constant with a one-line rationale. No hard-coded episode paths.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' bumper_check.py argparse '2026-06-10,fred-cho' && cd '/home/ankit114/ringer-work/one-true-master-r24-gate' && timeout 600 python3 bumper_check.py --self-test && echo PASS",
+      "expect_files": [
+        "bumper_check.py"
+      ],
+      "verified": "recalibrated bumper gate: sample-accurate presence with AAC-priming lag tolerance, level vs caller-declared targets +/-0.75 LU, red-proved by hermetic self-test"
+    }
+  ]
+}

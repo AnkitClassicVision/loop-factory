@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r25",
+  "worktrees": false,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "bumper-gate-fix2",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker fixing a defective certification checker. Copy /home/ankit114/ringer-work/one-true-master-r24-tp/bumper-gate-recal/bumper_check.py into your current working directory as ./bumper_check.py, then FIX it in place. Read access to that path only; never write outside your cwd. Pure stdlib + numpy + ffmpeg subprocess. No git, no MCP, no network.\n\nTHE CHECKER'S JOB: verify a finished podcast episode contains its intro/outro bumpers exactly once at expected loudness, via full-lag sample-accurate FFT normalized cross-correlation.\n\nTWO PROVEN DEFECTS, measured on a real episode:\n1. MISSED PRESENT BUMPER. Against the real final, the checker reported OUTRO_PRESENCE peak |r|=0.0256 (FAIL). Independent ground truth on the checker's EXACT windows (final tail 38.32s decoded from t=2179.662, mastered outro 33.32s, both mono 8kHz, means subtracted, full-lag FFT cross-correlation, global-energy normalization): r=0.903 at lag +5.042s \u2014 the outro audio genuinely starts 5.042s into that window (final t=2184.704, 43ms of AAC priming after the 2184.661 slot). The checker also reported implied_start_s=2184.6606 with a noise-level r, meaning its lag search or its lag->implied-start mapping is wrong: a peak at +5.042s inside the window was invisible to it, while its own self-test passes because every self-test bumper sits at (or a few ms from) the START of its window. Diagnose the actual arithmetic bug \u2014 plausible suspects: correlating against only a prefix of the window, wrong sign/branch when splitting the FFT result into positive/negative lags, searching only lags near the expected slot instead of all lags then checking tolerance, or an off-by-window-start in implied_start computation. Fix the real cause; do not band-aid by widening thresholds.\n2. EXIT CODE LIES. That run printed OUTRO_PRESENCE FAIL yet the process exited 0. Any FAIL line must produce exit 1 (unusable inputs exit 2). Find why the failure did not propagate and fix it.\n\nREQUIRED SELF-TEST ADDITIONS (--self-test must stay hermetic, ffmpeg lavfi synthesis):\n(a) OFFSET-BUMPER CASE shaped like the real defect: build a window where the outro-signature starts ~5s into a segment ~5s longer than the bumper (bumper NOT at window start), AND the assembled final's outro slot computation still expects it there; assert presence PASSes with |r|>=0.9 and the implied start is recovered within 100ms. You MUST first demonstrate red: run the UNFIXED logic path against this case mentally impossible \u2014 instead, structure the fix so the new test case provably exercises the changed code path, and print the measured lag it recovers.\n(b) EXIT-CODE CASE: invoke the checker's main against the wrong-outro fixture in-process and assert the return/exit code is 1, not just that FAIL text was printed.\nKeep every prior self-test case green. Print every case with measured numbers.\n\nOutput contract: ./bumper_check.py fixed in place, same CLI as before (--final --intro --outro [--expected-intro-lufs F] [--expected-outro-lufs F] [--lag-tolerance-s] [--min-corr] [--tolerance-lu] [--json] | --self-test). Exit 0 only when everything passes.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' bumper_check.py argparse '2026-06-10,fred-cho' && cd '/home/ankit114/ringer-work/one-true-master-r25' && timeout 900 python3 bumper_check.py --self-test && echo PASS",
+      "expect_files": [
+        "bumper_check.py"
+      ],
+      "verified": "presence search finds an offset bumper (real-episode red case) and FAIL propagates to exit 1, proven by extended hermetic self-test"
+    }
+  ]
+}

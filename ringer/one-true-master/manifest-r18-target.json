@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r18",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "bumper-adaptive-target",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Edit files there directly. Do NOT git commit/branch/push/stash. No MCP, no external capture.\n\nGRADING: a checker fails you for touching a file outside the owned list, changing production code with no tests, fewer than 4 new def test_..., no negative test (pytest.raises / assert ... is False), or the verify command failing.\n\nOWNED FILES (only these):\n  server/pipeline/video_assembly.py\n  tests/test_bumper_loudness_master.py\n\nTHE PROBLEM, from two consecutive real runs. The bumper loudness-mastering step normalizes each bumper to BUMPER_TARGET_LUFS (-19) with TP=-1 in two-pass LINEAR loudnorm, and correctly RAISES when ffmpeg falls back to 'dynamic'. It keeps firing:\n  \"Bumper loudness mastering refused ffmpeg normalization_type='dynamic'; expected 'linear'\"\nAn adaptive-LRA fix (target LRA = max(floor, ceil(measured input_lra))) fixed the LRA axis for the intro. But the OUTRO still fails on the TRUE-PEAK axis: it measures input_i=-24.5 LUFS, input_tp=-6.3 dBTP. Lifting it to -19 is +5.5 dB, projecting a true peak of -0.8 dBTP, which EXCEEDS the -1.0 dBTP ceiling, so ffmpeg drops linear->dynamic. Each asset's peakiness limits how loud it can go while staying linear-clean.\n\nTHE FIX: make the target loudness PER-BUMPER ADAPTIVE so linear always holds on BOTH axes. After the MEASURE pass parses input_i and input_tp, compute the loudest LINEAR-FEASIBLE target for THIS asset:\n  headroom = TRUE_PEAK_CEILING - measured_input_tp        # how much we can lift before hitting the TP ceiling\n  peak_safe_target = measured_input_i + headroom - TP_SAFETY_MARGIN   # a small named margin, e.g. 0.5 LU, for measurement error\n  effective_target = min(BUMPER_TARGET_LUFS, peak_safe_target)\nUse effective_target as the I= value in BOTH the (re-run) measure-consistent and the apply pass, keeping the adaptive LRA fix and TP=-1 and linear=true. This lifts each bumper as close to -19 as it can safely go without forcing dynamic mode. The intro (peak headroom large) reaches -19; the outro settles slightly lower (~-19.2 to -20) but stays clean and linear. Add a named constant TP_SAFETY_MARGIN (0.5) with a comment.\n\nKeep everything else: the raise-on-dynamic guard (still correct as a final safety), no afftdn, the hash cache. Bump BUMPER_MASTER_RECIPE_VERSION (e.g. -v3) so stale cached bumpers from the -19-fixed-target policy are not reused.\n\nAlso lower the TP_SAFETY intent clearly: we would rather a bumper be 1 LU quieter than the ideal than have it clip or go dynamic. That is the owner's stated priority (clean over perfectly-matched).\n\nTESTS (mock ffmpeg): prove (1) a peaky bumper (input_i=-24.5, input_tp=-6.3) gets an effective target BELOW -19 (assert it is <= -19.0 - small, i.e. quieter, so linear can hold) -- negative test: assert the apply filter does NOT request I=-19.0 for that asset; (2) a bumper with ample headroom (input_i=-24.4, input_tp=-12.0) reaches the full -19 target; (3) the effective target never exceeds BUMPER_TARGET_LUFS (never louder than -19); (4) the raise-on-dynamic guard and linear=true requirement are unchanged; (5) recipe/cache version changed. Mock subprocess; no real ffmpeg.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_bumper_loudness_master.py tests/test_video_assembly.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r18/bumper-target.patch' --owned-files 'server/pipeline/video_assembly.py,tests/test_bumper_loudness_master.py' --min-new-tests 4",
+      "expect_files": [],
+      "verified": "per-bumper target adapts to true-peak headroom so linear loudnorm always holds; never louder than -19"
+    }
+  ]
+}
