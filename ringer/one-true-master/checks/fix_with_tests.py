@@ -48,9 +48,15 @@ def main():
 
     owned = [p.strip() for p in args.owned_files.split(",") if p.strip()]
 
-    # ---- stage only owned paths, and prove nothing else was touched --------
-    run(["git", "add", "-A", "--", "server", "tests"])
-    changed = run(["git", "diff", "--cached", "--name-only"]).stdout.split()
+    # ---- stage the whole tree, and prove nothing outside owned was touched.
+    # Was `git add -A -- server tests`: podcast-repo path assumptions silently
+    # dropped scripts/ and departments/ edits (prep-bridge patch lost 2 of 4
+    # files; dag-supervisor lane read as "nothing changed", 2026-07-31).
+    # Harness-created files are not the worker's doing and are exempt.
+    HARNESS_FILES = {"worker.log"}
+    run(["git", "add", "-A"])
+    changed = [p for p in run(["git", "diff", "--cached", "--name-only"]).stdout.split()
+               if p not in HARNESS_FILES]
     stray = [p for p in changed if p not in owned]
     if stray:
         fail(
@@ -60,13 +66,16 @@ def main():
             "at integration." % (", ".join(stray), ", ".join(owned))
         )
     if not changed:
-        fail("nothing was changed. The lane produced no edits under server/ or tests/.")
+        fail("nothing was changed. The lane produced no edits anywhere in the tree.")
 
     diff = run(["git", "diff", "--cached"]).stdout
 
     # ---- the rule the prose could not enforce: tests must exist -----------
-    touched_src = [p for p in changed if p.startswith("server/")]
-    touched_tests = [p for p in changed if p.startswith("tests/")]
+    def _is_test(p):
+        parts = p.split("/")
+        return "tests" in parts or parts[-1].startswith("test_")
+    touched_src = [p for p in changed if not _is_test(p)]
+    touched_tests = [p for p in changed if _is_test(p)]
 
     if touched_src and not touched_tests:
         fail(
@@ -87,9 +96,14 @@ def main():
         )
 
     # ---- a test suite that only proves the happy path is not a proof ------
+    # Raise-shaped negatives AND record-shaped negatives: modules specced to
+    # "record, never raise" prove their failure path via exit codes and
+    # *_failed action assertions, not exceptions (prep-bridge false-red,
+    # 2026-07-31 — the heuristic must not force exception-style APIs).
     negatives = re.findall(
         r"^\+.*(pytest\.raises|assert_blocked|\[.passed.\]\s*is\s*False|"
-        r"passed.*is\s*False|must\s+(?:block|fail|raise|halt)|refus)",
+        r"passed.*is\s*False|must\s+(?:block|fail|raise|halt)|refus|"
+        r"SystemExit|exit_?code|returncode|_failed\b|invalid_)",
         diff, re.M | re.I)
     if not negatives:
         fail(

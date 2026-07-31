@@ -23,6 +23,23 @@
       ]
     },
     {
+      "id": "SG-DAG-SUPERVISION",
+      "concept_refs": ["C1", "C2", "C11", "C16", "C19"],
+      "not_applicable": {
+        "S1": "validates pipeline-owned DAG and episode identifiers without joining person entities",
+        "S2": "no contact targeting; read-only projection supervision",
+        "S3": "no model-capable nodes; deterministic hash and audit validation (C14)",
+        "S8": "no cost-incurring nodes; local deterministic validation only (C8)",
+        "S4": "read-only projection supervision; no external dispatch",
+        "S5": "read-only projection supervision; no external dispatch",
+        "S6": "read-only projection supervision; no external dispatch",
+        "S7": "read-only projection supervision; no external dispatch"
+      },
+      "nodes": [
+        {"id": "N1", "impl": "runtime/dag_supervisor.py"}
+      ]
+    },
+    {
       "id": "SG-PIPELINE",
       "concept_refs": ["C1", "C3", "C4", "C15"],
       "not_applicable": {

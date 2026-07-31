@@ -41,6 +41,7 @@ tracked in HubSpot.
 | C16 | Subtle failures (lived, now first-class): silent media corruption that survives sampling QA (E102 PTS collapse) and silent infra failure that kills its own alert channel (2026-07-22 prep-sweep IAM) → executed checks as gates + escalation-channel liveness sensing; negative tests: poisoned fixtures must FAIL gates | Q12/Q13 (evidence-derived, confirmed) | |
 | C17 | Cross-department seams: podcast emits handoff packets consumable by a future sales department and other future departments; each department owns its own state; wiring a new consumer is an owner-level estate event | readback r1 | "shoudl als interact with sles and future deparntmetns" |
 | C18 | Records: local receipts/runs/STATE always on under departments/podcast/state/; never recorded: credentials, PHI, raw message bodies | Q15 (evidence-derived, confirmed) | |
+| C19 | DAG projection supervision: the podcast pipeline repo is the single execution authority and only episode-state writer; this department consumes its versioned, content-hashed projection, independently verifies graph/skip integrity and freshness, and escalates gaps without scheduling steps or writing back | Q1, Q12/Q13 (owner-reviewed architecture decision, 2026-07-31) | Enforces the owner's zero-silent-failure requirement without creating split-brain execution authority |
 
 ## Edges (what feeds what)
 
@@ -58,6 +59,8 @@ graph LR
   C15 --> C5
   C7 --> C17
   C4 --> C12
+  C16 --> C19
+  C2 --> C19
 ```
 
 ## Open questions (never fake definitions)

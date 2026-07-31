@@ -1,0 +1,23 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r58",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "orphan-ci-gate",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 3600,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "Your current working directory IS a git worktree of the podcast repo. Create ONE new test file. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls. Do NOT edit any production code.\n\nGRADING: a checker fails you for touching files outside the owned list, fewer than 4 new def test_..., no negative test, or the verify command failing.\n\nOWNED FILE (only this, new):\n  tests/test_no_orphan_modules.py\n\nWHY. This repo's recurring defect class: a capability is built, tested, and never wired\n\u2014 it emits no signal, so every audit rediscovers it. A static scan this week found 12 of\n102 server/pipeline modules with no caller, including two built THAT WEEK to fix this\nexact problem. The owner's rule: an unused module either has a caller, a DAG step, or an\nexplicit on-the-record reason. This test is the enforcement.\n\nBUILD tests/test_no_orphan_modules.py:\n  * Static import scan, stdlib only (ast). For every module server/pipeline/<name>.py\n    (skip __init__), find REAL callers: any module under server/ or scripts/ (tests/ do\n    NOT count as callers) whose AST imports it (`import server.pipeline.<name>`,\n    `from server.pipeline import <name>`, `from server.pipeline.<name> import ...`,\n    including aliased forms). Entry points don't need callers: a module with a\n    `if __name__ == \"__main__\"` block that is referenced by name from any file under\n    scripts/ or scripts/systemd/ (string match in .sh/.service/.timer files counts)\n    is considered called.\n  * A module with zero callers must appear in the explicit ALLOWLIST dict in this test\n    file: {module_name: reason}. Reasons must be honest one-liners. Seed the allowlist\n    by RUNNING your scan and triaging every current orphan: a module that one of this\n    week's changes wired (check the scan result, do not assume) must NOT be\n    allowlisted; a genuinely unwired module gets a reason of the form\n    \"known-orphan (AUDIT-2026-07-31): <why it exists / what should wire it>\".\n  * test_no_unexplained_orphans: scan set minus called set minus allowlist == empty,\n    with a failure message that names each offender and says how to fix it (wire it,\n    delete it, or allowlist it WITH a reason).\n  * test_allowlist_is_not_stale: every allowlisted module (a) still exists and (b)\n    still has zero callers \u2014 a wired module must be REMOVED from the allowlist so the\n    list never rots into a bypass.\n  * test_scan_finds_known_wiring (positive control): assert the scanner sees at least\n    one known-true caller edge, e.g. that server.pipeline.post_prep is imported by\n    something under server/ or scripts/ \u2014 proving the scanner itself works (a scanner\n    that finds nothing would otherwise pass everything).\n  * NEGATIVE control test: run the scanner over a tmp tree you construct in the test\n    with a deliberately orphaned module and assert it is detected \u2014 the check must be\n    able to fail.\n  * Deterministic: sort everything; no filesystem-order dependence.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_no_orphan_modules.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/one-true-master-r58/orphan.patch' --owned-files 'tests/test_no_orphan_modules.py' --min-new-tests 4",
+      "expect_files": [],
+      "verified": "a pipeline module with no caller and no on-the-record reason now fails the suite \u2014 unused capability can no longer hide"
+    }
+  ]
+}

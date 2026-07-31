@@ -1,0 +1,46 @@
+{
+  "schema": "dag-projection-v1",
+  "generated_at": "2026-07-30T12:00:00Z",
+  "source_ref": "0123456789abcdef0123456789abcdef01234567",
+  "dag_hash": "b5cb94d9ce7cb1f247263f9ba30b4ebb5dc73514bccc1b464148e07381e0e4b2",
+  "steps": [
+    {
+      "id": "edit",
+      "requires": ["recording"],
+      "produces": ["master_audio"],
+      "optional": false
+    },
+    {
+      "id": "publish",
+      "requires": ["master_audio"],
+      "produces": ["rss_item"],
+      "optional": false
+    }
+  ],
+  "episodes": [
+    {
+      "episode_id": "episode-101",
+      "stage": "published",
+      "completed": ["edit", "publish"],
+      "skip_artifacts": {},
+      "audit": {
+        "complete": true,
+        "silent_skips": [],
+        "authorized_skips": [],
+        "invalid_skips": []
+      }
+    },
+    {
+      "episode_id": "episode-102",
+      "stage": "editing",
+      "completed": ["edit"],
+      "skip_artifacts": {},
+      "audit": {
+        "complete": false,
+        "silent_skips": [],
+        "authorized_skips": [],
+        "invalid_skips": []
+      }
+    }
+  ]
+}

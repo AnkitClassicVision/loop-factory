@@ -10,7 +10,7 @@ Every node: declared inputs → output contract → EXECUTED QA check → receip
 runs. Scripts get NO QA exemption (C14: this department is script-only in V1 —
 no model-capable nodes; LLM work stays in the estate's loops).
 
-This department is a WATCHDOG (C2): all five lanes are read-only sensing except
+This department is a WATCHDOG (C2): all six lanes are read-only sensing except
 SG-HEAL, which mutates only via known playbooks and is propose-only in shadow.
 It never dispatches externally; its outbound is escalation cards to the
 human-in-the-loop outbox (delivered via the kernel escalation seam once wired).
@@ -42,6 +42,22 @@ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
 + log error patterns for the 7 loops + support lanes, (b) escalation-channel
 liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
 (c) VPS reachability + service state (read-only SSH).
+
+## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+
+```
+[pipeline-owned dag-projection-v1 receipt] → N1 dag_supervisor
+  → local observation + critical incident candidates → existing watchdog dedup/outbox
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | dag_supervisor | SCRIPT | recomputes canonical DAG and skip-artifact hashes, fails closed on stale/missing/unreadable projections, and alarms on silent skips; source inspection confirms it never schedules pipeline steps or writes pipeline state | C1, C2, C11, C16, C19, Q1, Q12/Q13 |
+
+The pipeline repository remains the single execution authority and only writer
+of episode state. This lane only reads the exported projection and writes local
+supervisory observations/candidates; scheduling or choosing a next step here is
+a split-brain defect.
 
 ## SG-PIPELINE — independent guest-count sensor (C1/C4)
 
