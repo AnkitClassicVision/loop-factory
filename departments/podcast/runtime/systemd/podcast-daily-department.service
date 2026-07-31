@@ -1,0 +1,22 @@
+# podcast department loop — oneshot, SHADOW-safe, hardened.
+# Instantiated from templates/systemd/dept-loop.service.tmpl on 2026-07-31.
+# Enabled deliberately by Ankit (chat GO after manual dry-runs rc=0 same day).
+[Unit]
+Description=podcast department loop (loop-factory)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/d_drive/repos/loop-factory
+ExecStart=/usr/bin/env bash /mnt/d_drive/repos/loop-factory/departments/podcast/runtime/podcast_daily.sh
+TimeoutStartSec=600
+# Confinement (deny-by-default; departments hold no credentials):
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/d_drive/repos/loop-factory/departments/podcast/state /mnt/d_drive/repos/loop-factory/state
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET
+# NO credential-bearing Environment= lines. The lock service reads secrets; the
+# department process never does.
