@@ -25,6 +25,19 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/pipeline_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
+# DAG supervisor (map node N1): validates the pipeline's hashed projection
+# receipt. The PIPELINE exports the file on its own timer (podcast repo,
+# podcast-dag-projection.timer); this department only reads it — supervisory
+# plane, never a scheduler. Exit 2 is a VALID alarm verdict whose findings the
+# dedup/escalate chain below must process, so it must not abort the run; any
+# other nonzero exit is a node failure and stops the chain as usual.
+DAG_PROJECTION="/mnt/d_drive/repos/podcast/state/receipts/dag-projection.json"
+sup_rc=0
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/dag_supervisor.py" --projection "${DAG_PROJECTION}" --state-dir "${STATE_DIR}" || sup_rc=$?
+if [ "${sup_rc}" -ne 0 ] && [ "${sup_rc}" -ne 2 ]; then
+    echo "dag_supervisor failed with rc=${sup_rc} (not an alarm verdict)" >&2
+    exit "${sup_rc}"
+fi
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/compare_charter.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/fingerprint_dedup.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/escalate_outbox.py" --shadow

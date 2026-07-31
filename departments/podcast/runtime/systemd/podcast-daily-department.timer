@@ -1,0 +1,13 @@
+# podcast department loop timer. Runs daily at 07:00 local, after the
+# pipeline's 06:30 DAG-projection export, so the supervisor reads a fresh
+# receipt. Enabled deliberately by the owner on 2026-07-31.
+[Unit]
+Description=Run the podcast department loop on schedule
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

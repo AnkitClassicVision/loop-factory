@@ -21,12 +21,22 @@ DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 DEFAULT_CHARTER_PATH = REPO_ROOT / "departments" / "podcast" / "charter.yaml"
 
 FAILURE_CLASSES = {
+    # dag_supervisor alarms when the pipeline's hashed DAG projection shows a
+    # silent skip, forged/invalid skip artifact, hash mismatch, or a stale or
+    # missing projection — every one is a never-skip contract violation.
+    ("dag_supervisor", "alarm"): ("dag_receipt_violation", "critical"),
     ("timer", "fail"): ("timer_failed", "high"),
     ("receipt", "fail"): ("receipt_stale", "high"),
     ("log", "fail"): ("log_error", "high"),
     ("channel", "fail"): ("channel_failed", "critical"),
     ("vps", "fail"): ("vps_service_failed", "critical"),
     ("timer", "unknown"): ("timer_unknown", "med"),
+    # A ledger lane the watchdog cannot see is blindness, not health
+    # (the 8af90d8 ledger-sensor fix exists because every lane was blind);
+    # surfaced 2026-07-31 when the first full daily run hit an unmapped
+    # ("ledger", "unknown") observation and correctly refused to continue.
+    ("ledger", "unknown"): ("ledger_blind", "high"),
+    ("ledger", "fail"): ("ledger_failed", "high"),
     ("receipt", "unknown"): ("receipt_unknown", "med"),
     ("log", "unknown"): ("log_unknown", "med"),
     ("channel", "unknown"): ("channel_unknown", "med"),
@@ -51,6 +61,8 @@ FAILURE_HINT_CLASSES = {
 }
 
 QUESTIONS = {
+    "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
+    "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
     "receipt": "What blocked this unit from producing a fresh execution receipt?",
     "log": "Which versioned repair playbook should handle this logged failure?",
