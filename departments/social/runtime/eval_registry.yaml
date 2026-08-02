@@ -1,0 +1,21 @@
+draft_qa:
+  tier1:
+    - bundle_sanitized
+    - draft_schema
+    - body_schema
+    - body_em_dash_absent
+    - body_banned_phrases_absent
+    - cta_url_cardinality
+    - surface_known_and_within_length
+    - sources_present_and_allowlisted
+    - numeric_claims_grounded
+    - time_anchors_absent
+  tier2:
+    required: true
+    cross_model: true
+    # Locked rule: null keeps Tier-2 advisory until a golden set lands and passes.
+    golden_set: null
+    verdict_thresholds:
+      block_critical: 1
+      block_major: 3
+      revise_major: 1

@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Factory — Estate Board</title>
+<style>
+  :root{
+    --bg:oklch(1 0 0);
+    --surface:oklch(0.965 0.002 0);
+    --rule:oklch(0.885 0.003 0);
+    --ink:oklch(0.18 0.01 0);
+    --muted:oklch(0.44 0.008 0);
+    --red:oklch(0.50 0.194 0);
+    --red-tint:oklch(0.94 0.03 0);
+    --green:oklch(0.52 0.12 155);
+    --green-soft:oklch(0.72 0.09 155);
+    --amber:oklch(0.65 0.13 70);
+    --violet:oklch(0.52 0.09 300);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:16px}
+  body{
+    background:var(--bg);color:var(--ink);
+    font:400 0.95rem/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:2.5rem clamp(1.25rem,4vw,4rem) 4rem;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  .num{font-variant-numeric:tabular-nums}
+
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.75rem 1.5rem;padding-bottom:1.1rem;border-bottom:1px solid var(--ink)}
+  header h1{font-size:1.3rem;font-weight:650;letter-spacing:-0.01em}
+  header .proto{font-size:.78rem;color:var(--muted)}
+  header .meta{margin-left:auto;font-size:.82rem;color:var(--muted)}
+
+  section{margin-top:3.1rem}
+  .zone-h{display:flex;align-items:baseline;gap:1rem;margin-bottom:1.3rem}
+  .zone-h h2{font-size:.95rem;font-weight:650}
+  .zone-h .note{font-size:.8rem;color:var(--muted);margin-left:auto}
+  .zone-rule{border:0;border-top:1px solid var(--rule);margin-bottom:1.3rem}
+
+  svg{display:block;width:100%;height:auto}
+  svg text{font:600 12px system-ui,sans-serif;fill:var(--ink)}
+  svg text.mut{fill:var(--muted);font-weight:400}
+  svg text.onbar{fill:#fff}
+  svg text.big{font-size:15px}
+
+  /* objective indicator rows */
+  .objgrid{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:2.5rem;align-items:start}
+  .obj .goalline{font-size:.8rem;color:var(--muted);margin-bottom:.5rem}
+  .obj .goalline b{color:var(--ink)}
+  .obj .fig{font-size:2.6rem;font-weight:650;letter-spacing:-0.01em;line-height:1.1}
+  .obj .fig .unit{font-size:1rem;font-weight:400;color:var(--muted)}
+  .obj .sub{font-size:.82rem;color:var(--muted);margin-top:.2rem}
+  .ok-mark{color:var(--green)}
+  .weekstrip{display:flex;gap:4px;margin-top:.8rem}
+  .weekstrip i{flex:1;height:.65rem;border-radius:2px;background:var(--green)}
+  .weekstrip i.miss{background:var(--amber)}
+  .weekstrip i.future{background:var(--surface)}
+  .strip-lbl{font-size:.72rem;color:var(--muted);margin-top:.3rem}
+
+  .statline{display:flex;flex-wrap:wrap;gap:2.2rem;margin-top:1.4rem}
+  .stat .v{font-size:1.45rem;font-weight:650;letter-spacing:-0.01em}
+  .stat .l{color:var(--muted);font-size:.8rem;margin-top:.1rem}
+  .stat .v .good{color:var(--green)}
+
+  .funnel-note{font-size:.82rem;color:var(--muted);max-width:34rem;margin-top:.6rem}
+  .funnel-note b{color:var(--ink)}
+
+  /* now zone */
+  .now{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:2.5rem}
+  .chip{display:flex;align-items:center;gap:.6rem;padding:.5rem 0;font-size:.95rem}
+  .chip .dot{width:.6rem;height:.6rem;border-radius:50%;flex:none}
+  .chip .state{color:var(--muted);font-size:.82rem;margin-left:auto}
+  .dot.ok{background:var(--green)}.dot.deg{background:var(--violet)}
+  .andon{background:var(--red);color:#fff;border-radius:6px;padding:1.1rem 1.25rem;animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.86}}
+  @media (prefers-reduced-motion: reduce){.andon{animation:none}}
+  .andon .k{font-size:.75rem;opacity:.85}
+  .andon .fault{font-size:1.15rem;font-weight:650;margin:.2rem 0 .4rem}
+  .andon p{font-size:.85rem;line-height:1.45}
+  .andon code{background:rgba(255,255,255,.16);border-radius:4px;padding:.1rem .4rem;font:0.82rem/1 ui-monospace,monospace}
+  .appr-row{display:flex;gap:1rem;padding:.55rem 0;border-bottom:1px dashed var(--rule);font-size:.88rem;align-items:baseline}
+  .appr-row:last-child{border-bottom:0}
+  .appr-row .age{margin-left:auto;color:var(--amber);font-weight:600;font-size:.82rem;white-space:nowrap}
+
+  /* program bars */
+  .bars{display:flex;flex-direction:column;gap:1.3rem;max-width:52rem}
+  .bar-row .top{display:flex;align-items:baseline;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap}
+  .bar-row .name{font-weight:600}
+  .bar-row .fig{font-size:1.35rem;font-weight:650}
+  .bar-row .frac{color:var(--muted);font-size:.82rem}
+  .segbar{display:flex;gap:3px;height:.75rem}
+  .segbar i{flex:1;background:var(--surface);border-radius:2px}
+  .segbar i.done{background:var(--green)}
+  .track{height:.75rem;background:var(--surface);border-radius:2px;overflow:hidden}
+  .track i{display:block;height:100%;background:var(--green)}
+
+  .split{display:grid;grid-template-columns:1.5fr 1fr;gap:2.5rem}
+  .healbudget{margin-top:1.5rem;max-width:22rem}
+  .healbudget .top{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted);margin-bottom:.35rem}
+  .healbudget .track i{background:var(--violet)}
+
+  footer{margin-top:3.5rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.78rem;color:var(--muted)}
+  footer code{font:.75rem ui-monospace,monospace}
+
+  @media(max-width:900px){
+    .objgrid,.now,.split{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+  <h1>Loop Factory — Estate Board</h1>
+  <span class="proto">PROTOTYPE — synthetic data</span>
+  <span class="meta num">Sat Aug 2, 3:42 pm · estate epoch 412 · all effects in shadow</span>
+</header>
+
+<!-- ZONE 1 · OBJECTIVES -->
+<section aria-label="Objectives">
+  <div class="zone-h"><h2>Objectives — is each loop winning?</h2><span class="note">setpoint vs actual, straight from the charters</span></div>
+  <hr class="zone-rule">
+
+  <div class="objgrid">
+    <!-- publish reliability -->
+    <div class="obj">
+      <div class="goalline"><b>Podcast · goal 1</b> — episodes online, on time, 100% of the time</div>
+      <div class="fig num">100<span class="unit">%</span> <span class="ok-mark">●</span></div>
+      <div class="sub num">34 of 34 episodes live · 8 clean weeks running</div>
+      <div class="weekstrip" role="img" aria-label="12 weeks of on-time publication, one late week in early July">
+        <i></i><i></i><i></i><i class="miss"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="strip-lbl num">12 weeks · amber = wk Jul 6, live 6h late · quarter: 98%</div>
+    </div>
+
+    <!-- hopper bullet -->
+    <div class="obj">
+      <div class="goalline"><b>Podcast · goal 2</b> — recordings in the hopper · minimum 2, target 6</div>
+      <svg viewBox="0 0 640 96" role="img" aria-label="3 recordings in hopper against minimum 2 and target 6">
+        <rect x="0" y="34" width="600" height="18" rx="2" fill="oklch(0.965 0.002 0)"/>
+        <rect x="0" y="34" width="171" height="18" rx="2" fill="oklch(0.94 0.03 0)"/>
+        <rect x="0" y="38" width="257" height="10" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <line x1="171" y1="26" x2="171" y2="60" stroke="oklch(0.50 0.194 0)" stroke-width="2"/>
+        <line x1="514" y1="26" x2="514" y2="60" stroke="oklch(0.18 0.01 0)" stroke-width="2"/>
+        <text x="0" y="16" class="big num">3 in hopper</text>
+        <text x="120" y="16" class="mut num">2 interview · 1 solo</text>
+        <text x="171" y="76" text-anchor="middle" class="mut num">min 2</text>
+        <text x="514" y="76" text-anchor="middle" class="num">target 6</text>
+        <text x="600" y="76" text-anchor="end" class="mut num">scale 0–7</text>
+      </svg>
+      <div class="sub">above minimum, <b style="color:var(--ink)">3 short of target</b> — funnel below must book 3 more</div>
+    </div>
+
+    <!-- audience -->
+    <div class="obj">
+      <div class="goalline"><b>Audience &amp; promotion</b> — is the work traveling?</div>
+      <svg viewBox="0 0 300 74" role="img" aria-label="Downloads trend over 7 days, 1994 total">
+        <polyline fill="none" stroke="oklch(0.52 0.12 155)" stroke-width="2"
+          points="10,52 56,40 102,45 148,28 194,33 240,20 286,14"/>
+        <circle cx="286" cy="14" r="3.5" fill="oklch(0.52 0.12 155)"/>
+        <text x="10" y="70" class="mut">downloads · 7 days</text>
+        <text x="286" y="30" text-anchor="end" class="num">354/day</text>
+      </svg>
+      <div class="statline" style="margin-top:.9rem">
+        <div class="stat"><div class="v num">1,994</div><div class="l">downloads this week</div></div>
+        <div class="stat"><div class="v num">41</div><div class="l">shares</div></div>
+        <div class="stat"><div class="v num">12</div><div class="l">promo posts · 2 awaiting you</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- guest funnel -->
+  <div style="margin-top:2.6rem">
+    <div class="goalline" style="font-size:.8rem;color:var(--muted);margin-bottom:.6rem"><b style="color:var(--ink)">Guest funnel</b> — prospecting that feeds goal 2 (booked interviews → hopper)</div>
+    <svg viewBox="0 0 640 268" role="img" aria-label="Guest funnel: 42 outreaches, 11 first responses, 7 in conversation, 4 pre-call scheduled, 3 interviews scheduled, 2 info and headshot in, 1 recorded this cycle">
+      <g class="num">
+        <text x="0" y="20" class="mut">outreaches sent</text>
+        <rect x="170" y="6"  width="420" height="20" rx="2" fill="oklch(0.72 0.09 155)"/>
+        <text x="598" y="21" class="num">42</text>
+
+        <text x="0" y="56" class="mut">first responses</text>
+        <rect x="170" y="42" width="110" height="20" rx="2" fill="oklch(0.72 0.09 155)"/>
+        <text x="288" y="57" class="num">11 · 26%</text>
+
+        <text x="0" y="92" class="mut">in conversation</text>
+        <rect x="170" y="78" width="70" height="20" rx="2" fill="oklch(0.72 0.09 155)"/>
+        <text x="248" y="93" class="num">7</text>
+
+        <text x="0" y="128" class="mut">pre-call scheduled</text>
+        <rect x="170" y="114" width="40" height="20" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <text x="218" y="129" class="num">4</text>
+
+        <text x="0" y="164" class="mut">interview scheduled</text>
+        <rect x="170" y="150" width="30" height="20" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <text x="208" y="165" class="num">3</text>
+
+        <text x="0" y="200" class="mut">info + headshot in</text>
+        <rect x="170" y="186" width="20" height="20" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <text x="198" y="201" class="num">2 <tspan class="mut">· 1 missing headshot</tspan></text>
+
+        <text x="0" y="236" class="mut">recorded this cycle</text>
+        <rect x="170" y="222" width="10" height="20" rx="2" fill="oklch(0.18 0.01 0)"/>
+        <text x="188" y="237" class="num">1</text>
+      </g>
+      <line x1="170" y1="0" x2="170" y2="248" stroke="oklch(0.885 0.003 0)"/>
+      <text x="0" y="264" class="mut">stage</text><text x="598" y="264" class="mut" text-anchor="end">count this cycle</text>
+    </svg>
+    <p class="funnel-note">At today's rates it takes <b>≈ 14 outreaches per booked interview</b>. Target 6 recordings needs <b>3 more bookings</b> → keep ≥ 42 outreaches/wk in motion, chase the <b>1 missing headshot</b> before its interview date.</p>
+  </div>
+</section>
+
+<!-- ZONE 2 · NOW -->
+<section aria-label="Health right now">
+  <div class="zone-h"><h2>Now</h2><span class="note num">sensed 3:40 pm</span></div>
+  <hr class="zone-rule">
+  <div class="now">
+    <div>
+      <div class="chip"><span class="dot ok"></span><b>podcast</b><span class="state">healthy · cycle green</span></div>
+      <div class="chip"><span class="dot deg"></span><b>social</b><span class="state">degraded · 1 node quarantined, healing</span></div>
+    </div>
+    <div class="andon" role="alert">
+      <div class="k">ANDON · needs a human · 42 min</div>
+      <div class="fault">Login expired — codex lane</div>
+      <p>social drafting is paused, 3 steps queued, nothing lost. Sensors and the manager keep running. Fix: run <code>codex login</code> — work resumes on the next cycle.</p>
+    </div>
+    <div>
+      <div class="appr-row"><span><b>social</b> · post draft r2 — evaluator passed, awaiting your review</span><span class="age num">3.1 h</span></div>
+      <div class="appr-row"><span><b>social</b> · re-auth codex lane (the andon fix)</span><span class="age num">42 m</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 3 · PROGRAM -->
+<section aria-label="Program progress">
+  <div class="zone-h"><h2>Program — Loop Factory v2 build</h2><span class="note num">0 external actions · shadow holds</span></div>
+  <hr class="zone-rule">
+  <div class="bars">
+    <div class="bar-row">
+      <div class="top"><span class="name">Decisions + research</span><span class="fig num">14 / 19</span><span class="frac">all contracts locked</span></div>
+      <div class="segbar" role="img" aria-label="14 of 19 tickets done">
+        <i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </div>
+    <div class="bar-row">
+      <div class="top"><span class="name">Build phase</span><span class="fig num">0 / 5</span><span class="frac">round 1 running — telemetry fixes on podcast</span></div>
+      <div class="segbar" aria-label="0 of 5 builds done"><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="top"><span class="name">Podcast shadow burn-in</span><span class="fig num">day 9 / 14</span><span class="frac">clean days before promotion review</span></div>
+      <div class="track" aria-label="9 of 14 burn-in days"><i style="width:64.3%"></i></div>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 4 · TODAY -->
+<section aria-label="Today's runs and issues">
+  <div class="zone-h"><h2>Today</h2><span class="note num">78 runs across 2 departments</span></div>
+  <hr class="zone-rule">
+  <div class="split">
+    <div>
+      <svg viewBox="0 0 640 118" role="img" aria-label="Run outcomes today: podcast 46 ok 1 error of 47; social 27 ok 3 blocked 1 error of 31">
+        <text x="0" y="14">podcast</text><text x="640" y="14" text-anchor="end" class="mut num">47 runs</text>
+        <rect x="0"   y="22" width="611" height="22" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <rect x="614" y="22" width="13"  height="22" rx="2" fill="oklch(0.50 0.194 0)"/>
+        <text x="8" y="38" class="onbar num">46 ok</text>
+        <text x="627" y="60" text-anchor="end" class="mut num">1 error</text>
+
+        <text x="0" y="84">social</text><text x="640" y="84" text-anchor="end" class="mut num">31 runs</text>
+        <rect x="0"   y="92" width="552" height="22" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <rect x="555" y="92" width="61"  height="22" rx="2" fill="oklch(0.65 0.13 70)"/>
+        <rect x="619" y="92" width="21"  height="22" rx="2" fill="oklch(0.50 0.194 0)"/>
+        <text x="8" y="108" class="onbar num">27 ok</text>
+        <text x="562" y="108" class="onbar num">3</text>
+        <text x="628" y="108" class="onbar num" text-anchor="middle">1</text>
+      </svg>
+      <div class="statline">
+        <div class="stat"><div class="v num">83%</div><div class="l">social evaluator pass · 2 revise loops</div></div>
+        <div class="stat"><div class="v num">100%</div><div class="l">podcast checks green</div></div>
+        <div class="stat"><div class="v num">3</div><div class="l">steps queued behind the andon</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="statline" style="margin-top:0">
+        <div class="stat"><div class="v num">2</div><div class="l">self-heals applied today, 0 failed</div></div>
+      </div>
+      <div class="healbudget">
+        <div class="top"><span>weekly auto-patch budget</span><span class="num">2 / 10</span></div>
+        <div class="track"><i style="width:20%"></i></div>
+      </div>
+      <p style="color:var(--muted);font-size:.82rem;margin-top:1.4rem;max-width:24rem">
+        Heal ladder today: 1 retry (L0), 1 known-fix rebuild (L1), 1 self-patch re-pinned (L2), 1 in QA now. No human rungs reached.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 5 · SEVEN DAYS -->
+<section aria-label="Seven day trends">
+  <div class="zone-h"><h2>Seven days</h2><span class="note">trend, not noise</span></div>
+  <hr class="zone-rule">
+  <div class="split">
+    <div>
+      <svg viewBox="0 0 640 190" role="img" aria-label="First-try success rate over 7 days rising from 86 to 91 percent">
+        <text x="0" y="14">first-try success</text><text x="640" y="14" text-anchor="end" class="mut">target ≥ 90%</text>
+        <line x1="0" y1="60" x2="640" y2="60" stroke="oklch(0.885 0.003 0)" stroke-dasharray="3 4"/>
+        <text x="0" y="52" class="mut num">90</text>
+        <polyline fill="none" stroke="oklch(0.52 0.12 155)" stroke-width="2.5"
+          points="20,132 120,114 220,123 320,96 420,78 520,96 620,87"/>
+        <g fill="oklch(0.52 0.12 155)">
+          <circle cx="20" cy="132" r="3.5"/><circle cx="120" cy="114" r="3.5"/><circle cx="220" cy="123" r="3.5"/>
+          <circle cx="320" cy="96" r="3.5"/><circle cx="420" cy="78" r="3.5"/><circle cx="520" cy="96" r="3.5"/><circle cx="620" cy="87" r="3.5"/>
+        </g>
+        <text x="20" y="152" text-anchor="middle" class="mut num">86</text>
+        <text x="120" y="134" text-anchor="middle" class="mut num">88</text>
+        <text x="220" y="143" text-anchor="middle" class="mut num">87</text>
+        <text x="320" y="116" text-anchor="middle" class="mut num">90</text>
+        <text x="420" y="70" text-anchor="middle" class="num">92</text>
+        <text x="520" y="116" text-anchor="middle" class="mut num">90</text>
+        <text x="620" y="79" text-anchor="middle" class="num">91</text>
+        <g>
+          <text x="20" y="182" text-anchor="middle" class="mut">Sun</text><text x="120" y="182" text-anchor="middle" class="mut">Mon</text>
+          <text x="220" y="182" text-anchor="middle" class="mut">Tue</text><text x="320" y="182" text-anchor="middle" class="mut">Wed</text>
+          <text x="420" y="182" text-anchor="middle" class="mut">Thu</text><text x="520" y="182" text-anchor="middle" class="mut">Fri</text>
+          <text x="620" y="182" text-anchor="middle" class="mut">Sat</text>
+        </g>
+      </svg>
+    </div>
+    <div>
+      <svg viewBox="0 0 300 150" role="img" aria-label="Babysitting events: 9 last week down to 2 this week">
+        <text x="0" y="14">times you were needed</text>
+        <rect x="30"  y="30" width="70" height="90" rx="2" fill="oklch(0.885 0.003 0)"/>
+        <rect x="150" y="100" width="70" height="20" rx="2" fill="oklch(0.52 0.12 155)"/>
+        <text x="65"  y="58" text-anchor="middle" class="num">9</text>
+        <text x="185" y="94" text-anchor="middle" class="num">2</text>
+        <text x="65"  y="140" text-anchor="middle" class="mut">last week</text>
+        <text x="185" y="140" text-anchor="middle" class="mut">this week</text>
+      </svg>
+      <div class="statline">
+        <div class="stat"><div class="v num">512</div><div class="l">runs</div></div>
+        <div class="stat"><div class="v num">11</div><div class="l">auto-heals</div></div>
+        <div class="stat"><div class="v num">2</div><div class="l">escalations</div></div>
+        <div class="stat"><div class="v num">1.9M</div><div class="l">tokens · all subscription</div></div>
+        <div class="stat"><div class="v num good">$0</div><div class="l">metered spend</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Prototype for wayfinder ticket 11 · the live board (ticket 17) renders this page from <code>estate/state/board-feed.ndjson</code> alone — if the feed can't show it, humans can't see it. Objective setpoints come from department charters; funnel and audience counts come from department records. No PHI, no message bodies, pointers only.
+</footer>
+
+</div></body>
+</html>

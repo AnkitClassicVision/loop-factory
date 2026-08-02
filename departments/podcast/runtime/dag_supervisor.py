@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,12 +17,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from factory import runrecord
 from departments.podcast.runtime import record as record_node
 
 
 SCHEMA = "dag-projection-v1"
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 STALE_AFTER = timedelta(hours=48)
+LOGGER = logging.getLogger(__name__)
 
 
 def _canonical_hash(value: Any) -> str:
@@ -194,7 +198,7 @@ def _incident_candidate(
     }
 
 
-def sense(
+def _sense(
     projection_path: str | Path,
     state_dir: str | Path,
     *,
@@ -253,6 +257,72 @@ def sense(
         "observation": observation,
         "incident_candidates_appended": len(critical),
     }
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+    artifacts: list[Path],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="dag_supervisor",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-dag_supervisor"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("dag_supervisor failed to append its runs-v2 record")
+        raise
+
+
+def sense(
+    projection_path: str | Path,
+    state_dir: str | Path,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    observation_path = state_path / "observations.jsonl"
+    try:
+        result = _sense(projection_path, state_path, now=now)
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+            artifacts=[observation_path],
+        )
+        raise
+    errors = [str(finding["kind"]) for finding in result["findings"]]
+    artifacts = [observation_path]
+    if result["incident_candidates_appended"]:
+        artifacts.append(state_path / "incident_candidates.json")
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+        artifacts=artifacts,
+    )
+    return result
 
 
 def _arg_now(value: str) -> datetime:

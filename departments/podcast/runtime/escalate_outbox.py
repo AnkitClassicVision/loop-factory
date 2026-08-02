@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -14,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from factory import runrecord
 from factory.human_in_the_loop import escalate
 from departments.podcast.runtime import record as record_node
 
@@ -22,6 +25,7 @@ DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 EscalateFn = Callable[..., dict[str, Any]]
 _FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 _DEFECT_MARKER = re.compile(r"^department_defect:[1-9][0-9]*$")
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
@@ -186,7 +190,7 @@ def escalate_new_incidents(
     }
 
 
-def run_escalate(state_dir: str | Path, *, shadow: bool = True) -> dict[str, Any]:
+def _run_escalate(state_dir: str | Path, *, shadow: bool = True) -> dict[str, Any]:
     state_dir = Path(state_dir)
     result = escalate_new_incidents(
         state_dir / "incidents.json",
@@ -194,6 +198,86 @@ def run_escalate(state_dir: str | Path, *, shadow: bool = True) -> dict[str, Any
         shadow=shadow,
     )
     record_node.write_record(state_dir, "escalate_outbox", result, shadow=shadow)
+    return result
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+    artifacts: list[Path],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="escalate_outbox",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-escalate_outbox"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("escalate_outbox failed to append its runs-v2 record")
+        raise
+
+
+def _file_signature(path: Path) -> tuple[int, int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def run_escalate(state_dir: str | Path, *, shadow: bool = True) -> dict[str, Any]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    possible_artifacts = [
+        state_path / "runs.jsonl",
+        state_path / "incidents.json",
+        state_path / "decisions_outbox.jsonl",
+    ]
+    before = {path: _file_signature(path) for path in possible_artifacts}
+    try:
+        result = _run_escalate(state_path, shadow=shadow)
+    except Exception as exc:
+        artifacts = [
+            path
+            for path in possible_artifacts
+            if _file_signature(path) != before[path]
+        ]
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+            artifacts=artifacts,
+        )
+        raise
+    artifacts = [
+        path
+        for path in possible_artifacts
+        if _file_signature(path) != before[path]
+    ]
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="ok",
+        errors=[],
+        artifacts=artifacts,
+    )
     return result
 
 

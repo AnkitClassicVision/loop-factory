@@ -1,0 +1,110 @@
+{
+  "hash": "21d236ef56471668",
+  "source_ref": "816794abcd5ea106f452af0566eecf4172ac88ea",
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "df061bbb60ce63f74240a598bb06fe501bcc87afc57a83ce3f7e83cdf2ea35fc"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "04d7a51ef24cadf35165f6fac88fc826a9b38cba251bb38139801214ae3d696d"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "0ed912aee735065fa6b541d1e88ae3a24dfd2e3b0cac0af4519a6ae5454538ef"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "39ffa752bed3e01f52ca9ff2edd81991787a1505ae810b2010174a8b2dde6354"
+    },
+    {
+      "path": "runtime/assemble_context.py",
+      "sha256": "a913bcce100d5beadb8c4587939f6b2da8e226b02972aef1d5ff5fec2c0bf48b"
+    },
+    {
+      "path": "runtime/assemble_weekly_digest.py",
+      "sha256": "41083f989746359dd8c6a244f3d108acea8d1b7dfe29cf7240a1099d598a2132"
+    },
+    {
+      "path": "runtime/compare_charter.py",
+      "sha256": "1eb71c465450e16bd343a8ed35cfe85d1098dcef26be0ef4a68f41f1e8ca2e75"
+    },
+    {
+      "path": "runtime/create_review_card.py",
+      "sha256": "b28510cd8316f1a0a5d04c46538fb7d42a6822f70bad854a8df18954af39f6bf"
+    },
+    {
+      "path": "runtime/delivery_verify.py",
+      "sha256": "3832623aea9aea7343b3f4136f6b6a2048583caf0d9589ba4376fbc733b4cd9d"
+    },
+    {
+      "path": "runtime/dispatch.py",
+      "sha256": "32348f1abc5cbfa1510a7d4265fed1882c3e1647ef85e6e8649603cca439690d"
+    },
+    {
+      "path": "runtime/draft_post.py",
+      "sha256": "9ebe94c7eadef5df2ac6875dccc3fcb473f8814523cd8c02ba06c0e6b1be9ff3"
+    },
+    {
+      "path": "runtime/guards.py",
+      "sha256": "8445bfd6a4d130ba5eb0a1f6d9a50840409ae567fc911f99c04dbdd496cb2e2e"
+    },
+    {
+      "path": "runtime/inventory_backcatalog.py",
+      "sha256": "79431d6fee0df76916fe3d3f7a1108ffd55fa86d815404c8542eb61061ff922f"
+    },
+    {
+      "path": "runtime/kernel_bridge.py",
+      "sha256": "ff1d6c0ef9574b4ff067d0022f742c35dc01372e16869cf1263a4a66bbf38dd1"
+    },
+    {
+      "path": "runtime/linear_close_issue.py",
+      "sha256": "394e9296227b98042e14971df1fa326b204f7a97af98d4f6759c28e736d34a21"
+    },
+    {
+      "path": "runtime/linear_read_comments.py",
+      "sha256": "4d44921192fef514fd1dbd1bed96abf7616dc70d24e69cfd60fcc9c128a72f87"
+    },
+    {
+      "path": "runtime/proposal_card_to_outbox.py",
+      "sha256": "2ce1c9b011f0838deb16a0362005ebfa8995c32992188546ffe4a36b63a07171"
+    },
+    {
+      "path": "runtime/propose_insights.py",
+      "sha256": "ff2097d7c2f3bcf5ba0ac45e44fe9de5166e3e955dced7e58f36f27e31fb697a"
+    },
+    {
+      "path": "runtime/pull_call_joins.py",
+      "sha256": "37994af84cf9fd17c9622b0d5336e5ab3d7b05a898a842caf0cf4eab633b8a8e"
+    },
+    {
+      "path": "runtime/pull_zernio_analytics.py",
+      "sha256": "24b671c4e795190518d7044ca65328feeecd342fa81741ef4f279f2605bfa66a"
+    },
+    {
+      "path": "runtime/qa_post.py",
+      "sha256": "ed2c04c49f5833a16bf47a71a265bd1cfc95e21b85de6f1f7cbb33d32fc9974e"
+    },
+    {
+      "path": "runtime/read_metrics_records.py",
+      "sha256": "aaeff53b2941fd7d41b88ba562eb2459155984ae79df29e7eb750f0e3b7df165"
+    },
+    {
+      "path": "runtime/record.py",
+      "sha256": "b4f5a04d7a10d672d2374040eed805a5d6b59bb221baa7d3a70d12374120cb87"
+    },
+    {
+      "path": "runtime/select_candidate.py",
+      "sha256": "403ab733595670e32ff595139a9663a67afc3317653bf28c0830e878cd28e743"
+    },
+    {
+      "path": "runtime/social_daily.sh",
+      "sha256": "55cb8a0078ddd731cc723e6c6eb48c5c6ebf2558f7b681f8d04d45d4479354e2"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "9f612b627cdea37e3fec6daf1e57fe8919558a81c88e8ef1cc887ef5a42a9b19"
+    }
+  ]
+}

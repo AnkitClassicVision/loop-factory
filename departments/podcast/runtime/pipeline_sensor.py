@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from factory import runrecord
 from factory.charter_loader import load_charter
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _append(state_dir: Path, observation: dict) -> None:
@@ -47,7 +53,7 @@ def _key(row: dict) -> tuple[str, str]:
             str(row.get("name") or row.get("guest") or "").strip().casefold())
 
 
-def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+def _run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
     calendar_path = sources / "calendar.json"
     contacts_path = sources / "hubspot_contacts.json"
     missing = next((path for path in (calendar_path, contacts_path) if not path.is_file()), None)
@@ -147,6 +153,66 @@ def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
     obs = _observation(status, f"{calendar_path},{contacts_path}", detail, metrics)
     _append(state_dir, obs)
     return obs
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="pipeline_sensor",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-pipeline_sensor"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(state_dir / "observations.jsonl")]
+            if (state_dir / "observations.jsonl").exists()
+            else [],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("pipeline_sensor failed to append its runs-v2 record")
+        raise
+
+
+def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+    state_dir = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        observation = _run(state_dir, Path(sources), Path(charter_path))
+    except Exception as exc:
+        _emit_run_record(
+            state_dir,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = (
+        []
+        if observation["status"] == "ok"
+        else [f"pipeline:{observation['status']}"]
+    )
+    _emit_run_record(
+        state_dir,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+    )
+    return observation
 
 
 def main() -> None:

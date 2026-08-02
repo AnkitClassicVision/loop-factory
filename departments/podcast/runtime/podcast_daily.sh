@@ -47,3 +47,32 @@ python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO
 
 # 3) Publish pending approvals to the human-in-the-loop outbox.
 python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
+
+# 4) Propose allowlisted heals for every open incident (SHADOW). Heal failures
+#    do not abort the daily chain because the manager senses their run records
+#    and heal receipts and drives the heal ladder or human escalation.
+while IFS= read -r fingerprint; do
+    selection="$(
+        python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_select.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --shadow || true
+    )"
+    if [ -z "${selection}" ]; then
+        continue
+    fi
+    playbook="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<<"${selection}" || true)"
+    if [ -z "${playbook}" ]; then
+        continue
+    fi
+    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_apply.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow || true
+    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_verify.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow || true
+done < <(
+    python3 -c 'import json, sys; incidents = json.load(open(sys.argv[1], encoding="utf-8")); print("\n".join(sorted(key for key, incident in incidents.items() if isinstance(incident, dict) and incident.get("state") in {"open", "department_defect"})))' "${STATE_DIR}/incidents.json" || true
+)
+
+# 5) Bound retained observation evidence after the daily consumers finish.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/rotate_observations.py" --state-dir "${STATE_DIR}" --max-lines 5000
+
+# 6) Regenerate the estate-wide and podcast-specific operator boards.
+python3 -m factory.boardfeed --repo-root "${REPO}"
+python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
+# Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
+# Legacy command replaced by tabs: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --department "${DEPARTMENT}" --out "${REPO}/estate/state/${DEPARTMENT}-board.html"

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Factory — Estate Board</title>
+<style>
+  :root{
+    --bg:oklch(1 0 0);
+    --surface:oklch(0.965 0.002 0);
+    --rule:oklch(0.885 0.003 0);
+    --ink:oklch(0.18 0.01 0);
+    --muted:oklch(0.44 0.008 0);
+    --red:oklch(0.50 0.194 0);
+    --red-tint:oklch(0.94 0.03 0);
+    --green:oklch(0.52 0.12 155);
+    --green-soft:oklch(0.72 0.09 155);
+    --amber:oklch(0.65 0.13 70);        /* marks only, never text */
+    --amber-text:oklch(0.50 0.12 70);   /* AA-safe on white */
+    --violet:oklch(0.52 0.09 300);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:16px}
+  body{
+    background:var(--bg);color:var(--ink);
+    font:400 0.95rem/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:2.5rem clamp(1.25rem,4vw,4rem) 4rem;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  .num{font-variant-numeric:tabular-nums}
+
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.75rem 1.5rem;padding-bottom:1.1rem;border-bottom:1px solid var(--ink)}
+  header h1{font-size:1.3rem;font-weight:650;letter-spacing:-0.01em}
+  header .proto{font-size:.78rem;color:var(--muted)}
+  header .meta{margin-left:auto;font-size:.82rem;color:var(--muted)}
+
+  section{margin-top:3.1rem}
+  .zone-h{display:flex;align-items:baseline;gap:1rem;margin-bottom:1.3rem;flex-wrap:wrap}
+  .zone-h h2{font-size:.95rem;font-weight:650}
+  .zone-h .note{font-size:.8rem;color:var(--muted);margin-left:auto}
+  .zone-rule{border:0;border-top:1px solid var(--rule);margin-bottom:1.3rem}
+
+  .chart-h{font-size:.82rem;font-weight:600;margin-bottom:.5rem;display:flex;gap:1rem;align-items:baseline}
+  .chart-h .side{color:var(--muted);font-weight:400;margin-left:auto}
+  svg{display:block;width:100%;height:auto}
+  svg text{font:600 12px system-ui,sans-serif;fill:var(--ink)}
+  svg text.mut{fill:var(--muted);font-weight:400;font-size:11px}
+  svg.lc text{font-size:14px}
+  svg.lc text.mut{font-size:13px}
+
+  /* zone 1 — objectives */
+  .objgrid{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:2.5rem;align-items:start}
+  .obj .goalline{font-size:.8rem;color:var(--muted);margin-bottom:.6rem;min-height:2.4em}
+  .obj .goalline b{color:var(--ink)}
+  .obj .fig{font-size:2.3rem;font-weight:650;letter-spacing:-0.01em;line-height:1.1;white-space:nowrap}
+  .obj .fig .unit{font-size:1rem;font-weight:400;color:var(--muted)}
+  .obj .sub{font-size:.82rem;color:var(--muted);margin-top:.25rem}
+  .obj .sub b{color:var(--ink)}
+  .ok-mark{color:var(--green)}
+  .weekstrip{display:flex;gap:4px;margin-top:.9rem}
+  .weekstrip i{flex:1;height:.65rem;border-radius:2px;background:var(--green)}
+  .weekstrip i.miss{background:oklch(0.58 0.13 70)}
+  .strip-lbl{font-size:.72rem;color:var(--muted);margin-top:.35rem}
+
+  .bullet-wrap{margin-top:1rem;max-width:34rem}
+  .bullet{position:relative;height:1.05rem;background:var(--surface);border-radius:2px}
+  .bullet .minzone{position:absolute;left:0;top:0;bottom:0;width:28.6%;background:var(--red-tint);border-radius:2px 0 0 2px}
+  .bullet .val{position:absolute;left:0;top:22%;height:56%;width:42.9%;background:var(--green);border-radius:2px}
+  .bullet .tick{position:absolute;top:-0.3rem;bottom:-0.3rem;width:2px}
+  .bullet .tick.min{left:28.6%;background:var(--red)}
+  .bullet .tick.target{left:85.7%;background:var(--ink)}
+  .bullet-lbls{position:relative;height:1.2rem;margin-top:.35rem;font-size:.72rem}
+  .bullet-lbls span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+  .bullet-lbls .min{left:28.6%;color:var(--red);font-weight:600}
+  .bullet-lbls .target{left:85.7%;font-weight:600}
+  .bullet-lbls .scale{right:0;left:auto;transform:none;color:var(--muted)}
+
+  .funnel{margin-top:2.6rem}
+  .funnel .cap{font-size:.8rem;color:var(--muted);margin-bottom:.8rem}
+  .funnel .cap b{color:var(--ink)}
+  .f-row{display:grid;grid-template-columns:10.5rem 1fr;gap:1rem;align-items:center;padding:.28rem 0}
+  .f-lbl{font-size:.85rem;color:var(--muted)}
+  .f-track{display:flex;align-items:center;gap:.6rem}
+  .f-bar{height:1.05rem;border-radius:2px;background:var(--green-soft);min-width:6px}
+  .f-bar.hot{background:var(--green)}
+  .f-bar.final{background:var(--ink)}
+  .f-count{font-size:.85rem;font-weight:600;white-space:nowrap}
+  .f-count .mut{color:var(--muted);font-weight:400}
+  .f-flag{color:var(--amber-text);font-weight:600}
+  .funnel-note{font-size:.82rem;color:var(--muted);max-width:36rem;margin-top:.8rem}
+  .funnel-note b{color:var(--ink)}
+
+  /* now zone */
+  .now{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:2.5rem}
+  .chip{display:flex;align-items:center;gap:.6rem;padding:.5rem 0;font-size:.95rem}
+  .chip .dot{width:.6rem;height:.6rem;border-radius:50%;flex:none}
+  .chip .state{color:var(--muted);font-size:.82rem;margin-left:auto}
+  .dot.ok{background:var(--green)}.dot.deg{background:var(--violet)}
+  .andon{background:var(--red);color:#fff;border-radius:6px;padding:1.1rem 1.25rem;animation:glow 2s ease-in-out infinite}
+  @keyframes glow{50%{box-shadow:0 0 0 7px oklch(0.50 0.194 0 / 0.16)}}
+  @media (prefers-reduced-motion: reduce){.andon{animation:none}}
+  .andon .k{font-size:.75rem;color:#fff}
+  .andon .fault{font-size:1.15rem;font-weight:650;margin:.2rem 0 .4rem}
+  .andon p{font-size:.85rem;line-height:1.45}
+  .andon code{background:rgba(255,255,255,.16);border-radius:4px;padding:.1rem .4rem;font:0.82rem/1 ui-monospace,monospace}
+  .appr-row{display:flex;gap:1rem;padding:.55rem 0;border-bottom:1px dashed var(--rule);font-size:.88rem;align-items:baseline}
+  .appr-row:last-child{border-bottom:0}
+  .appr-row .age{margin-left:auto;color:var(--amber-text);font-weight:600;font-size:.82rem;white-space:nowrap}
+
+  /* program */
+  .bars{display:flex;flex-direction:column;gap:1.3rem;max-width:52rem}
+  .bar-row .top{display:flex;align-items:baseline;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap}
+  .bar-row .name{font-weight:600}
+  .bar-row .fig{font-size:1.35rem;font-weight:650;white-space:nowrap}
+  .bar-row .frac{color:var(--muted);font-size:.82rem}
+  .segbar{display:flex;gap:3px;height:.75rem}
+  .segbar i{flex:1;background:var(--surface);border-radius:2px}
+  .segbar i.done{background:var(--green)}
+  .track{height:.75rem;background:var(--surface);border-radius:2px;overflow:hidden}
+  .track i{display:block;height:100%;background:var(--green)}
+
+  /* today outcome bars */
+  .o-row{margin-bottom:1.1rem}
+  .o-row .top{display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:.35rem}
+  .o-row .top b{font-weight:600}
+  .o-row .top .t{color:var(--muted)}
+  .o-bar{display:flex;gap:2px;height:1.15rem}
+  .o-bar i{border-radius:2px}
+  .o-bar .ok{background:var(--green)}
+  .o-bar .blk{background:var(--amber)}
+  .o-bar .err{background:var(--red)}
+  .o-key{font-size:.78rem;color:var(--muted);margin-top:.4rem}
+  .o-key .k-ok{color:var(--green);font-weight:600}
+  .o-key .k-blk{color:var(--amber-text);font-weight:600}
+  .o-key .k-err{color:var(--red);font-weight:600}
+
+  /* telemetry */
+  .t-row{display:grid;grid-template-columns:12.5rem 1fr 10.5rem;gap:1rem;align-items:center;padding:.42rem 0}
+  .t-row .route{justify-self:end}
+  .t-lbl{font-size:.88rem}
+  .t-lbl b{font-weight:600}
+  .t-lbl .m{color:var(--muted);font-size:.8rem}
+  .t-track{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
+  .t-bar{height:1.05rem;border-radius:2px;background:var(--green-soft);min-width:4px}
+  .t-count{font-size:.85rem;font-weight:600;white-space:nowrap}
+  .t-count .mut{color:var(--muted);font-weight:400}
+  .route{font-size:.7rem;font-weight:650;border:1px solid var(--rule);border-radius:99px;padding:.12rem .55rem;white-space:nowrap}
+  .route.oauth{color:var(--green);border-color:var(--green)}
+  .route.api{color:var(--red);border-color:var(--red)}
+  .t-note{font-size:.82rem;color:var(--muted);margin-top:.8rem;max-width:36rem}
+  .t-note b{color:var(--ink)}
+
+  .statline{display:flex;flex-wrap:wrap;gap:1.6rem 2.2rem;margin-top:1.4rem}
+  .stat .v{font-size:1.45rem;font-weight:650;letter-spacing:-0.01em;white-space:nowrap}
+  .stat .l{color:var(--muted);font-size:.8rem;margin-top:.1rem}
+  .stat .v .good{color:var(--green)}
+  .split{display:grid;grid-template-columns:1.5fr 1fr;gap:2.5rem}
+  .healbudget{margin-top:1.5rem;max-width:22rem}
+  .healbudget .top{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted);margin-bottom:.35rem}
+  .healbudget .track i{background:var(--violet)}
+  .chart-cap{max-width:480px}
+  .chart-cap-s{max-width:300px}
+
+  footer{margin-top:3.5rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.78rem;color:var(--muted)}
+  footer code{font:.75rem ui-monospace,monospace}
+
+  @media(max-width:900px){
+    section{margin-top:2.3rem}
+    .objgrid,.now,.split{grid-template-columns:1fr;gap:1.8rem}
+    .obj .goalline{min-height:0}
+    .f-row{grid-template-columns:8.5rem 1fr}
+    .t-row{grid-template-columns:1fr;gap:.3rem}
+    .t-row .route{justify-self:start}
+  }
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+  <h1>Loop Factory — Estate Board</h1>
+  <span class="proto">PROTOTYPE — synthetic data</span>
+  <span class="meta num">Sat Aug 2, 3:42 pm · estate epoch 412 · all effects in shadow</span>
+</header>
+
+<!-- ZONE 1 · OBJECTIVES (approved) -->
+<section aria-label="Objectives">
+  <div class="zone-h"><h2>Objectives — is each loop winning?</h2><span class="note">setpoint vs actual, straight from the charters</span></div>
+  <hr class="zone-rule">
+
+  <div class="objgrid">
+    <div class="obj">
+      <div class="goalline"><b>Podcast · goal 1</b> — episodes online, on time, 100% of the time</div>
+      <div class="fig num">100<span class="unit">%</span> <span class="ok-mark">●</span></div>
+      <div class="sub num">34 of 34 episodes live · 8 clean weeks running</div>
+      <div class="weekstrip" role="img" aria-label="12 weeks of on-time publication, one late week in early July">
+        <i></i><i></i><i></i><i class="miss"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="strip-lbl num">12 weeks · amber = wk Jul 6, live 6h late · quarter: 98%</div>
+    </div>
+
+    <div class="obj">
+      <div class="goalline"><b>Podcast · goal 2</b> — recordings in the hopper · minimum 2, target 6</div>
+      <div class="fig num">3 <span class="unit">in hopper</span></div>
+      <div class="sub num">2 interview · 1 solo — above minimum, <b>3 short of target</b></div>
+      <div class="bullet-wrap">
+        <div class="bullet" role="img" aria-label="3 recordings against minimum 2 and target 6 on a 0 to 7 scale">
+          <span class="minzone"></span>
+          <span class="val"></span>
+          <span class="tick min"></span>
+          <span class="tick target"></span>
+        </div>
+        <div class="bullet-lbls num"><span class="min">min 2</span><span class="target">target 6</span><span class="scale">0–7</span></div>
+      </div>
+    </div>
+
+    <div class="obj">
+      <div class="goalline"><b>Audience &amp; promotion</b> — is the work traveling?</div>
+      <div class="fig num">1,994 <span class="unit">downloads / wk</span></div>
+      <div class="sub num">41 shares · 12 promo posts · 2 awaiting you</div>
+      <div class="chart-cap-s" style="margin-top:.9rem">
+        <svg viewBox="0 0 300 64" role="img" aria-label="Downloads per day rising to 354">
+          <polyline fill="none" stroke="oklch(0.52 0.12 155)" stroke-width="2"
+            points="6,46 54,36 102,40 150,25 198,29 246,17 288,11"/>
+          <circle cx="288" cy="11" r="3.5" fill="oklch(0.52 0.12 155)"/>
+          <text x="6" y="61" class="mut">7 days</text>
+          <text x="288" y="27" text-anchor="end" class="num">354/day</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="funnel">
+    <div class="cap"><b>Guest funnel</b> — prospecting that feeds goal 2 (booked interviews → hopper)</div>
+    <div class="f-row"><span class="f-lbl">outreaches sent</span><span class="f-track"><i class="f-bar" style="width:100%"></i><span class="f-count num">42</span></span></div>
+    <div class="f-row"><span class="f-lbl">first responses</span><span class="f-track"><i class="f-bar" style="width:26.2%"></i><span class="f-count num">11 <span class="mut">· 26%</span></span></span></div>
+    <div class="f-row"><span class="f-lbl">in conversation</span><span class="f-track"><i class="f-bar" style="width:16.7%"></i><span class="f-count num">7</span></span></div>
+    <div class="f-row"><span class="f-lbl">pre-call scheduled</span><span class="f-track"><i class="f-bar hot" style="width:9.5%"></i><span class="f-count num">4</span></span></div>
+    <div class="f-row"><span class="f-lbl">interview scheduled</span><span class="f-track"><i class="f-bar hot" style="width:7.1%"></i><span class="f-count num">3</span></span></div>
+    <div class="f-row"><span class="f-lbl">info + headshot in</span><span class="f-track"><i class="f-bar hot" style="width:4.8%"></i><span class="f-count num">2 <span class="f-flag">· 1 missing headshot</span></span></span></div>
+    <div class="f-row"><span class="f-lbl">recorded this cycle</span><span class="f-track"><i class="f-bar final" style="width:2.4%"></i><span class="f-count num">1</span></span></div>
+    <p class="funnel-note">At today's rates it takes <b>≈ 14 outreaches per booked interview</b>. Target 6 recordings needs <b>3 more bookings</b> → keep ≥ 42 outreaches/wk in motion, chase the <b>1 missing headshot</b> before its interview date.</p>
+  </div>
+</section>
+
+<!-- ZONE 2 · SEVEN DAYS (approved, moved to top block) -->
+<section aria-label="Seven day trends">
+  <div class="zone-h"><h2>Seven days</h2><span class="note">trend, not noise</span></div>
+  <hr class="zone-rule">
+  <div class="split">
+    <div>
+      <div class="chart-h">first-try success<span class="side">target ≥ 90%</span></div>
+      <div class="chart-cap">
+        <svg class="lc" viewBox="0 0 480 150" role="img" aria-label="First-try success rate over 7 days rising from 86 to 91 percent">
+          <line x1="0" y1="48" x2="480" y2="48" stroke="oklch(0.885 0.003 0)" stroke-dasharray="3 4"/>
+          <text x="0" y="42" class="mut num">90</text>
+          <polyline fill="none" stroke="oklch(0.52 0.12 155)" stroke-width="2.5"
+            points="20,100 93,86 166,93 239,72 312,58 385,72 458,65"/>
+          <g fill="oklch(0.52 0.12 155)">
+            <circle cx="20" cy="100" r="3"/><circle cx="93" cy="86" r="3"/><circle cx="166" cy="93" r="3"/>
+            <circle cx="239" cy="72" r="3"/><circle cx="312" cy="58" r="3"/><circle cx="385" cy="72" r="3"/><circle cx="458" cy="65" r="3"/>
+          </g>
+          <text x="20" y="118" text-anchor="middle" class="mut num">86</text>
+          <text x="93" y="104" text-anchor="middle" class="mut num">88</text>
+          <text x="166" y="111" text-anchor="middle" class="mut num">87</text>
+          <text x="239" y="90" text-anchor="middle" class="mut num">90</text>
+          <text x="312" y="50" text-anchor="middle" class="num">92</text>
+          <text x="385" y="90" text-anchor="middle" class="mut num">90</text>
+          <text x="458" y="57" text-anchor="middle" class="num">91</text>
+          <g>
+            <text x="20" y="142" text-anchor="middle" class="mut">Sun</text><text x="93" y="142" text-anchor="middle" class="mut">Mon</text>
+            <text x="166" y="142" text-anchor="middle" class="mut">Tue</text><text x="239" y="142" text-anchor="middle" class="mut">Wed</text>
+            <text x="312" y="142" text-anchor="middle" class="mut">Thu</text><text x="385" y="142" text-anchor="middle" class="mut">Fri</text>
+            <text x="458" y="142" text-anchor="middle" class="mut">Sat</text>
+          </g>
+        </svg>
+      </div>
+      <div class="statline">
+        <div class="stat"><div class="v num">512</div><div class="l">jobs run</div></div>
+        <div class="stat"><div class="v num">11</div><div class="l">self-fixes</div></div>
+        <div class="stat"><div class="v num">2</div><div class="l">needed a human</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="chart-h">times you were needed</div>
+      <div class="chart-cap-s">
+        <svg viewBox="0 0 260 130" role="img" aria-label="Babysitting events: 9 last week down to 2 this week">
+          <rect x="25"  y="18" width="60" height="88" rx="2" fill="oklch(0.885 0.003 0)"/>
+          <rect x="145" y="86" width="60" height="20" rx="2" fill="oklch(0.52 0.12 155)"/>
+          <text x="55"  y="44" text-anchor="middle" class="num">9</text>
+          <text x="175" y="80" text-anchor="middle" class="num">2</text>
+          <text x="55"  y="124" text-anchor="middle" class="mut">last week</text>
+          <text x="175" y="124" text-anchor="middle" class="mut">this week</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 3 · NOW (approved) -->
+<section aria-label="Health right now">
+  <div class="zone-h"><h2>Now</h2><span class="note num">sensed 3:40 pm</span></div>
+  <hr class="zone-rule">
+  <div class="now">
+    <div>
+      <div class="chip"><span class="dot ok"></span><b>podcast</b><span class="state">healthy · cycle green</span></div>
+      <div class="chip"><span class="dot deg"></span><b>social</b><span class="state">degraded · 1 node quarantined, healing</span></div>
+    </div>
+    <div class="andon" role="alert">
+      <div class="k">ANDON · needs a human · 42 min</div>
+      <div class="fault">Login expired — codex lane</div>
+      <p>social drafting is paused, 3 steps queued, nothing lost. Sensors and the manager keep running. Fix: run <code>codex login</code> — work resumes on the next cycle.</p>
+    </div>
+    <div>
+      <div class="appr-row"><span><b>social</b> · post draft r2 — evaluator passed, awaiting your review</span><span class="age num">3.1 h</span></div>
+      <div class="appr-row"><span><b>social</b> · re-auth codex lane (the andon fix)</span><span class="age num">42 m</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 4 · TODAY (clarified) -->
+<section aria-label="Today's jobs">
+  <div class="zone-h"><h2>Today — what the loops did</h2><span class="note">every job each department ran today, and how it ended</span></div>
+  <hr class="zone-rule">
+  <div class="split">
+    <div>
+      <div class="o-row">
+        <div class="top"><b>podcast</b><span class="t num">47 jobs</span></div>
+        <div class="o-bar" role="img" aria-label="podcast: 46 finished clean, 1 failed">
+          <i class="ok" style="width:97.9%"></i><i class="err" style="width:2.1%"></i>
+        </div>
+      </div>
+      <div class="o-row">
+        <div class="top"><b>social</b><span class="t num">31 jobs</span></div>
+        <div class="o-bar" role="img" aria-label="social: 27 finished clean, 3 waiting on the login fix, 1 failed">
+          <i class="ok" style="width:87.1%"></i><i class="blk" style="width:9.7%"></i><i class="err" style="width:3.2%"></i>
+        </div>
+      </div>
+      <div class="o-key num"><span class="k-ok">73 finished clean</span> · <span class="k-blk">3 waiting on the login fix</span> · <span class="k-err">2 failed — being healed</span></div>
+      <div class="statline">
+        <div class="stat"><div class="v num">83%</div><div class="l">social drafts passing QA first try · 2 sent back for edits</div></div>
+        <div class="stat"><div class="v num">100%</div><div class="l">podcast quality checks green</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="statline" style="margin-top:0">
+        <div class="stat"><div class="v num">2</div><div class="l">problems the system fixed itself today, 0 failed fixes</div></div>
+      </div>
+      <div class="healbudget">
+        <div class="top"><span>self-fix allowance this week</span><span class="num">2 / 10</span></div>
+        <div class="track"><i style="width:20%"></i></div>
+      </div>
+      <p style="color:var(--muted);font-size:.82rem;margin-top:1.4rem;max-width:24rem">
+        Self-fix ladder today: 1 simple retry, 1 known-fix rebuild, 1 self-written patch (fully re-tested before applying), 1 fix in testing now. No human needed.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ZONE 5 · TELEMETRY (new) -->
+<section aria-label="Telemetry">
+  <div class="zone-h"><h2>Telemetry — models, tokens, route</h2><span class="note">every AI call this week, read from run receipts</span></div>
+  <hr class="zone-rule">
+  <div class="t-row">
+    <span class="t-lbl"><b>Claude</b> · claude-sonnet-5<br><span class="m num">41 calls · social drafting + QA</span></span>
+    <span class="t-track"><i class="t-bar" style="width:67%"></i><span class="t-count num">1.28M <span class="mut">tokens · 1.13M in / 148k out</span></span></span><span class="route oauth">OAuth · subscription</span>
+  </div>
+  <div class="t-row">
+    <span class="t-lbl"><b>Codex</b> · gpt-5.6<br><span class="m num">19 calls · cross-model QA + repair</span></span>
+    <span class="t-track"><i class="t-bar" style="width:32.5%"></i><span class="t-count num">620k <span class="mut">tokens · 549k in / 71k out</span></span></span><span class="route oauth">OAuth · subscription</span>
+  </div>
+  <div class="t-row">
+    <span class="t-lbl"><b>Metered API</b> · any provider<br><span class="m num">forbidden lane</span></span>
+    <span class="t-track"><span class="t-count num">0 calls · $0</span></span><span class="route api">API · metered</span>
+  </div>
+  <p class="t-note"><b>1.9M tokens total, all on flat-fee subscriptions — $0 metered.</b> If a metered API call ever appears here, it arrives as a red andon: that lane is forbidden by policy, so any use is itself an incident.</p>
+</section>
+
+<!-- ZONE 6 · UPGRADE PROGRAM (clarified, temporary) -->
+<section aria-label="Upgrade program">
+  <div class="zone-h"><h2>Upgrade program — Loop Factory v2</h2><span class="note">the one-time upgrade making every loop receipt-proven, QA-gated, self-healing · this section retires when it's done</span></div>
+  <hr class="zone-rule">
+  <div class="bars">
+    <div class="bar-row">
+      <div class="top"><span class="name">Decisions made</span><span class="fig num">14 / 19</span><span class="frac">what to build is fully decided and locked</span></div>
+      <div class="segbar" role="img" aria-label="14 of 19 decisions done">
+        <i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </div>
+    <div class="bar-row">
+      <div class="top"><span class="name">Construction</span><span class="fig num">0 / 5</span><span class="frac">five build jobs on the podcast department — job 1 running now</span></div>
+      <div class="segbar" aria-label="0 of 5 builds done"><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="top"><span class="name">Proving it</span><span class="fig num">day 9 / 14</span><span class="frac">clean shadow days required before you approve promotion</span></div>
+      <div class="track" aria-label="9 of 14 burn-in days"><i style="width:64.3%"></i></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Prototype for wayfinder ticket 11 · the live board (ticket 17) renders this page from <code>estate/state/board-feed.ndjson</code> alone — if the feed can't show it, humans can't see it. Objective setpoints come from department charters; funnel, audience, and telemetry come from department run receipts. No PHI, no message bodies, pointers only.
+</footer>
+
+</div></body>
+</html>

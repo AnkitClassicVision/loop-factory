@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - guarded at runtime
 
 LOGGER = logging.getLogger("social.qa_post")
 DEFAULT_CHARTER = Path(__file__).resolve().parents[1] / "charter.yaml"
+DEFAULT_EVAL_REGISTRY = Path(__file__).with_name("eval_registry.yaml")
 SURFACE_LIMITS = {
     "linkedin_mybcat": 3000,
     "linkedin_personal": 3000,
@@ -112,7 +113,7 @@ def _quarantine(state_dir: Path, item_id: str, reasons: list[str]) -> None:
     )
 
 
-def _load_engines(path: Path) -> dict[str, list[str]]:
+def _load_engines(path: Path) -> dict[str, dict[str, Any]]:
     if yaml is None:
         raise EngineUnavailable("PyYAML is required for the engines file")
     if not path.is_file():
@@ -125,16 +126,41 @@ def _load_engines(path: Path) -> dict[str, list[str]]:
         loaded = loaded["engines"]
     if not isinstance(loaded, dict):
         raise EngineUnavailable("engines file must map engine names to argv lists")
-    engines: dict[str, list[str]] = {}
-    for name, argv in loaded.items():
-        if not isinstance(name, str) or not isinstance(argv, list) or not argv:
-            raise EngineUnavailable("each engine must have a non-empty argv list")
+    engines: dict[str, dict[str, Any]] = {}
+    for name, value in loaded.items():
+        config = {"command": value} if isinstance(value, list) else value
+        if not isinstance(name, str) or not isinstance(config, dict):
+            raise EngineUnavailable("each engine must be an argv list or config object")
+        argv = config.get("command")
+        if not isinstance(argv, list) or not argv:
+            raise EngineUnavailable("each engine must have a non-empty command argv list")
         if not all(isinstance(part, str) and part for part in argv):
             raise EngineUnavailable(
                 f"engine {name!r} argv must contain non-empty strings"
             )
-        engines[name] = list(argv)
+        auth_probe = config.get("auth_probe")
+        if auth_probe not in (None, []) and (
+            not isinstance(auth_probe, list)
+            or not all(isinstance(part, str) and part for part in auth_probe)
+        ):
+            raise EngineUnavailable(f"engine {name!r} auth_probe must be an argv list")
+        engines[name] = {
+            "command": list(argv), "auth_class": config.get("auth_class"),
+            "auth_probe": list(auth_probe or []),
+            "telemetry_contract": isinstance(value, dict),
+        }
     return engines
+
+
+def parse_engine_envelope(stdout: str, engine_cfg: dict) -> dict:
+    """Use the shared N4 envelope contract without importing or logging content."""
+    draft_path = Path(__file__).with_name("draft_post.py")
+    spec = importlib.util.spec_from_file_location("social_draft_envelope_parser", draft_path)
+    if spec is None or spec.loader is None:
+        raise EngineUnavailable("engine envelope parser could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.parse_engine_envelope(stdout, engine_cfg)
 
 
 def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
@@ -160,7 +186,7 @@ def _engine_argv(
     engines = _load_engines(engines_file)
     if engine not in engines:
         raise EngineUnavailable(f"allowlisted engine {engine!r} is absent from engines file")
-    template = engines[engine]
+    template = engines[engine]["command"]
     if not any(
         "{prompt}" in part or "{prompt_file}" in part
         for part in template
@@ -198,6 +224,38 @@ def _run_argv(argv: list[str], timeout: int) -> str:
     if not completed.stdout.strip():
         raise EngineUnavailable("engine returned an empty response")
     return completed.stdout.strip()
+
+
+def _auth_probe(engine_cfg: dict, timeout: int) -> bool:
+    argv = engine_cfg.get("auth_probe") or []
+    if not argv:
+        return True
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _record_run(state_dir: Path, node: str, payload: dict) -> None:
+    record_path = Path(__file__).with_name("record.py")
+    spec = importlib.util.spec_from_file_location(f"social_record_for_{node}", record_path)
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("record writer could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Run records carry telemetry only — defect details and draft content
+    # stay in the receipt files, never in runs.jsonl.
+    summary_keys = (
+        "status", "error", "engine", "model", "usage",
+        "duration_ms", "auth_class", "round", "surface", "pass", "evaluator",
+    )
+    summary = {key: payload[key] for key in summary_keys if key in payload}
+    if isinstance(payload.get("defects"), list):
+        summary["defect_codes"] = [
+            d.get("code") for d in payload["defects"] if isinstance(d, dict)
+        ]
+    module.write_record(state_dir, node, summary, shadow=True)
 
 
 def _load_kernel_bridge(path: Path):
@@ -319,29 +377,30 @@ def _cta_urls(draft: dict) -> set[str]:
 def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
     defects: list[dict[str, str]] = []
 
-    def add(code: str, detail: str) -> None:
-        defects.append({"code": code, "detail": detail})
+    def add(code: str, detail: str, severity: str) -> None:
+        defects.append({"code": code, "detail": detail, "severity": severity})
 
     if not isinstance(bundle, dict) or bundle.get("sanitized") is not True:
         add(
             "unsanitized_bundle",
             "bundle sanitized flag must be true before any model-capable QA",
+            "critical",
         )
     if not isinstance(draft, dict):
-        add("invalid_draft", "draft must be a JSON object")
+        add("invalid_draft", "draft must be a JSON object", "major")
         return defects
 
     body = draft.get("body")
     if not isinstance(body, str):
-        add("invalid_body", "draft.body must be a string")
+        add("invalid_body", "draft.body must be a string", "major")
         body = ""
     if "\u2014" in body:
-        add("em_dash", "body contains an em dash")
+        add("em_dash", "body contains an em dash", "minor")
 
     folded = body.casefold()
     for phrase in BANNED_WORDS:
         if re.search(r"(?<![\w-])" + re.escape(phrase) + r"(?![\w-])", folded):
-            add("banned_word", f"body contains banned phrase: {phrase}")
+            add("banned_word", f"body contains banned phrase: {phrase}", "major")
 
     urls = _cta_urls(draft)
     cta_url = draft.get("cta_url")
@@ -354,15 +413,17 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
         add(
             "cta_url_count",
             f"draft must contain exactly one distinct HTTP(S) CTA URL; found {len(urls)}",
+            "major",
         )
 
     surface = draft.get("surface")
     if surface not in SURFACE_LIMITS:
-        add("unknown_surface", f"unknown surface: {surface!r}")
+        add("unknown_surface", f"unknown surface: {surface!r}", "major")
     elif len(body) > SURFACE_LIMITS[surface]:
         add(
             "surface_length_exceeded",
             f"{surface} body length {len(body)} exceeds hard cap {SURFACE_LIMITS[surface]}",
+            "major",
         )
 
     sources = draft.get("sources")
@@ -370,18 +431,20 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
         add(
             "missing_sources",
             "draft sources must contain at least one entry",
+            "critical",
         )
     if isinstance(sources, list):
         allowed_source_ids = _allowed_source_ids(bundle)
         for index, source in enumerate(sources):
             if not isinstance(source, dict):
-                add("invalid_source", f"sources[{index}] must be an object")
+                add("invalid_source", f"sources[{index}] must be an object", "critical")
                 continue
             source_ref = source.get("source")
             if not isinstance(source_ref, str) or not source_ref.strip():
                 add(
                     "invalid_source",
                     f"sources[{index}].source must be a non-empty string",
+                    "critical",
                 )
                 continue
             if source_ref not in allowed_source_ids:
@@ -389,6 +452,7 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
                     "invalid_source",
                     f"sources[{index}].source {source_ref!r} is not in "
                     "ALLOWED_SOURCE_IDS",
+                    "critical",
                 )
 
     grounded: set[str] = set()
@@ -399,11 +463,12 @@ def deterministic_defects(draft: Any, bundle: Any) -> list[dict[str, str]]:
         add(
             "ungrounded_number",
             f"number token {token!r} does not appear in any sources[].claim",
+            "major",
         )
 
     anchors = sorted({match.group(0) for match in TIME_ANCHOR_RE.finditer(body)})
     for anchor in anchors:
-        add("time_anchor", f"body contains time-anchored phrase: {anchor}")
+        add("time_anchor", f"body contains time-anchored phrase: {anchor}", "major")
     return defects
 
 
@@ -446,8 +511,42 @@ def _model_defects(response_text: str) -> list[dict[str, str]]:
             raise EngineUnavailable(f"engine defect {index} has no code")
         if not isinstance(detail, str) or not detail.strip():
             raise EngineUnavailable(f"engine defect {index} has no detail")
-        defects.append({"code": code.strip(), "detail": detail.strip()})
+        severity = defect.get("severity")
+        if severity not in {"critical", "major", "minor"}:
+            severity = "major"
+        defects.append({
+            "code": code.strip(), "detail": detail.strip(), "severity": severity,
+        })
     return defects
+
+
+def _apply_evaluator_policy(
+    report: dict[str, Any], registry_path: Path = DEFAULT_EVAL_REGISTRY
+) -> None:
+    """Attach advisory Tier-2 policy without changing the legacy pass gate."""
+    if not registry_path.is_file():
+        report["registry"] = "absent"
+        return
+    contract_path = Path(__file__).resolve().parents[3] / "factory" / "evalregistry.py"
+    spec = importlib.util.spec_from_file_location(
+        "evalregistry_for_social_qa", contract_path
+    )
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("evaluator registry contract could not be loaded")
+    evalregistry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evalregistry)
+
+    registry = evalregistry.load_registry(registry_path)
+    config = evalregistry.resolve(registry, "draft_qa")
+    tier2 = config.get("tier2", {})
+    verdict = evalregistry.classify_defects(
+        report.get("defects", []), tier2.get("verdict_thresholds", {})
+    )
+    gate_state = evalregistry.gating(config, golden_set_passed=False)
+    report.update({"verdict": verdict, "gating": gate_state})
+    report["evaluator"] = {
+        "pass": report["pass"], "verdict": verdict, "gating": gate_state,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -496,11 +595,23 @@ def main(argv: list[str] | None = None) -> int:
 
         defects = deterministic_defects(draft, bundle)
         sanitized = isinstance(bundle, dict) and bundle.get("sanitized") is True
+        engine_cfg = _load_engines(args.engines_file).get(args.engine)
+        if engine_cfg is None:
+            raise EngineUnavailable(f"allowlisted engine {args.engine!r} is absent from engines file")
+        if sanitized and not _auth_probe(engine_cfg, args.engine_timeout):
+            blocked = {
+                "status": "blocked", "error": {"code": "AUTH_EXPIRED"},
+                "engine": args.engine, "model": None,
+                "usage": {"input_tokens": None, "output_tokens": None, "cache_read": None, "cache_creation": None},
+                "duration_ms": None, "auth_class": "blocked",
+            }
+            _write_json(args.out, blocked)
+            _record_run(args.state_dir, "qa_post", blocked)
+            return 2
+        telemetry = parse_engine_envelope("", engine_cfg)
         if sanitized:
             try:
-                defects.extend(
-                    _model_defects(
-                        _call_engine(
+                stdout = _call_engine(
                             _model_prompt(draft, bundle),
                             engine=args.engine,
                             engines_file=args.engines_file,
@@ -508,14 +619,29 @@ def main(argv: list[str] | None = None) -> int:
                             no_kernel=args.no_kernel,
                             timeout=args.engine_timeout,
                         )
-                    )
-                )
+                telemetry = parse_engine_envelope(stdout, engine_cfg)
+                envelope = _extract_json(stdout)
+                result = envelope.get("result") if isinstance(envelope, dict) else None
+                defects.extend(_model_defects(result if isinstance(result, str) else stdout))
             except EngineUnavailable as exc:
                 defects.append(
-                    {"code": "qa_engine_unavailable", "detail": str(exc)}
+                    {
+                        "code": "qa_engine_unavailable", "detail": str(exc),
+                        "severity": "major",
+                    }
                 )
+        # Tier-2 remains advisory, so the established boolean is still the
+        # gating truth and must remain exactly equivalent to ``not defects``.
         report = {"pass": not defects, "defects": defects, "engine": args.engine}
+        _apply_evaluator_policy(report)
+        if engine_cfg.get("telemetry_contract"):
+            report.update({
+                "model": telemetry["model"], "usage": telemetry["usage"],
+                "duration_ms": telemetry["duration_ms"],
+                "auth_class": engine_cfg.get("auth_class"),
+            })
         _write_json(args.out, report)
+        _record_run(args.state_dir, "qa_post", report)
         return 0
     except GateBlocked as exc:
         reasons = exc.reasons or [str(exc)]

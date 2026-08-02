@@ -26,3 +26,10 @@ python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO
 
 # 4) Publish pending approvals to the human-in-the-loop outbox.
 python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
+
+# 5) Regenerate the estate feed, estate board, and this department's board.
+python3 -m factory.timersense --out "${REPO}/estate/state/timers.json" --tolerate-missing
+python3 -m factory.boardfeed --repo-root "${REPO}"
+python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
+# Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
+# Legacy department flag replaced by tabs: --department "${DEPARTMENT}"

@@ -2,17 +2,24 @@
 # full prompt as one argv element without invoking a shell. {prompt_file}
 # remains available for engines that explicitly require a file path.
 codex_oauth:
-  - codex
-  - exec
-  - --sandbox
-  - read-only
-  - "{prompt}"
+  command:
+    - codex
+    - exec
+    - --sandbox
+    - read-only
+    - "{prompt}"
+  auth_class: oauth_cli
+  # Optional argv-only preflight. Empty disables the probe.
+  auth_probe: []
 claude_subscription:
-  - claude
-  - -p
-  - --disable-slash-commands
-  - --exclude-dynamic-system-prompt-sections
-  - --output-format
-  - text
-  - --no-session-persistence
-  - "{prompt}"
+  command:
+    - claude
+    - -p
+    - --disable-slash-commands
+    - --exclude-dynamic-system-prompt-sections
+    - --output-format
+    - json
+    - --no-session-persistence
+    - "{prompt}"
+  auth_class: oauth_cli
+  auth_probe: []

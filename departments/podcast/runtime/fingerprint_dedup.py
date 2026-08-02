@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,11 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from factory import runrecord
 from departments.podcast.runtime import record as record_node
 
 
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 DEFAULT_ESTATE_PATH = Path(__file__).with_name("estate.json")
+LOGGER = logging.getLogger(__name__)
 SEVERITY_RANK = {"low": 0, "med": 1, "high": 2, "critical": 3}
 STATE_RANK = {"resolved": 0, "open": 1, "department_defect": 2}
 
@@ -343,7 +347,7 @@ def merge_candidates(
     return merged, stats
 
 
-def run_dedup(state_dir: str | Path, *, shadow: bool = True) -> dict[str, dict[str, Any]]:
+def _run_dedup(state_dir: str | Path, *, shadow: bool = True) -> dict[str, dict[str, Any]]:
     state_dir = Path(state_dir)
     candidates_path = state_dir / "incident_candidates.json"
     candidates_error: str | None = None
@@ -386,6 +390,70 @@ def run_dedup(state_dir: str | Path, *, shadow: bool = True) -> dict[str, dict[s
         record_node.atomic_write_json(state_dir / "incidents.json", merged)
     record_node.write_record(state_dir, "fingerprint_dedup", stats, shadow=shadow)
     return merged
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    artifacts = [state_dir / "incidents.json", state_dir / "runs.jsonl"]
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="fingerprint_dedup",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-fingerprint_dedup"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("fingerprint_dedup failed to append its runs-v2 record")
+        raise
+
+
+def run_dedup(
+    state_dir: str | Path, *, shadow: bool = True
+) -> dict[str, dict[str, Any]]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    candidates_path = state_path / "incident_candidates.json"
+    try:
+        json.loads(candidates_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        evidence_error = True
+    else:
+        evidence_error = False
+    try:
+        incidents = _run_dedup(state_path, shadow=shadow)
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = ["incident_candidates_unavailable"] if evidence_error else []
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+    )
+    return incidents
 
 
 def main() -> None:

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,12 +15,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from factory import runrecord
 from factory.charter_loader import load_charter
 from departments.podcast.runtime import record as record_node
 
 
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 DEFAULT_CHARTER_PATH = REPO_ROOT / "departments" / "podcast" / "charter.yaml"
+LOGGER = logging.getLogger(__name__)
 
 FAILURE_CLASSES = {
     # dag_supervisor alarms when the pipeline's hashed DAG projection shows a
@@ -246,7 +250,7 @@ def write_candidates(path: str | Path, candidates: list[dict[str, Any]]) -> None
     record_node.atomic_write_json(Path(path), candidates)
 
 
-def run_compare(
+def _run_compare(
     state_dir: str | Path,
     *,
     charter_path: str | Path = DEFAULT_CHARTER_PATH,
@@ -273,6 +277,73 @@ def run_compare(
             "candidates": len(candidates),
         },
         shadow=shadow,
+    )
+    return candidates
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    artifacts = [
+        state_dir / "incident_candidates.json",
+        state_dir / "runs.jsonl",
+    ]
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="compare_charter",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-compare_charter"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("compare_charter failed to append its runs-v2 record")
+        raise
+
+
+def run_compare(
+    state_dir: str | Path,
+    *,
+    charter_path: str | Path = DEFAULT_CHARTER_PATH,
+    shadow: bool = True,
+) -> list[dict[str, Any]]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        candidates = _run_compare(
+            state_path,
+            charter_path=charter_path,
+            shadow=shadow,
+        )
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = [str(candidate["failure_class"]) for candidate in candidates]
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
     )
     return candidates
 

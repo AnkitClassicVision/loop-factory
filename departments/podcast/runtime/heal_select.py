@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from factory.charter_loader import CharterError, immutable_invariants, load_charter
+from factory import runrecord
 from factory.heal_ladder import (
     ImmutableHealError,
     assert_heal_target_allowed as assert_factory_heal_target_allowed,
@@ -27,6 +30,7 @@ from factory.heal_ladder import (
 DEFAULT_STATE_DIR = ROOT / "departments/podcast/state"
 DEFAULT_PLAYBOOKS_PATH = Path(__file__).with_name("playbooks.json")
 DEFAULT_CHARTER_PATH = Path(__file__).resolve().parents[1] / "charter.yaml"
+LOGGER = logging.getLogger(__name__)
 
 
 def assert_heal_target_allowed(target: str) -> None:
@@ -214,6 +218,71 @@ def select_heal(
     return selected
 
 
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    artifacts = [state_dir / "heals.jsonl"]
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="heal_select",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-heal_select"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("heal_select failed to append its runs-v2 record")
+        raise
+
+
+def run_select(
+    state_dir: str | Path,
+    fingerprint: str,
+    *,
+    playbooks_path=DEFAULT_PLAYBOOKS_PATH,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        selected = select_heal(
+            state_path,
+            fingerprint,
+            playbooks_path=playbooks_path,
+            now=now,
+        )
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="ok",
+        errors=[],
+    )
+    return selected
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Select an allowlisted podcast heal")
     parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
@@ -224,7 +293,7 @@ def main() -> None:
     mode.add_argument("--live", dest="shadow", action="store_false")
     parser.set_defaults(shadow=True)
     args = parser.parse_args()
-    selected = select_heal(
+    selected = run_select(
         args.state_dir, args.fingerprint, playbooks_path=args.playbooks
     )
     if selected is not None:
