@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -204,33 +205,57 @@ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
 
     Deny-by-default: a check that cannot run reports drift_error rather than
     quietly reading as healthy. A releases/ dir with no `current` pin surfaces
-    as not-ok with the check_drift reason. A department with no releases/ dir
-    at all (pre-F4) reports drift_checked=False with a visible skip reason.
+    as not-ok with the check_drift reason. The ONLY quiet-ish outcome is a
+    department that exists but has never had a releases/ dir (pre-F4), which
+    reports drift_checked=False with a visible skip reason; a missing or
+    unreadable department dir, or a releases path that exists but is not a
+    directory, is a broken deployment and reports drift_error.
     """
     dept_dir = Path(dept_dir)
     release_root = Path(release_root) if release_root else dept_dir / "releases"
-    if not release_root.is_dir():
+
+    def _error(message: str) -> dict[str, Any]:
+        return {
+            "drift_checked": True,
+            "drift_ok": False,
+            "drift_error": message,
+            "drift_release": None,
+            "drift_mismatch_count": 0,
+            "drift_mismatches": [],
+            "drift_mismatches_truncated": False,
+        }
+
+    try:
+        dept_stat = os.stat(dept_dir)
+    except FileNotFoundError:
+        return _error(f"department directory does not exist: {dept_dir}")
+    except OSError as exc:
+        return _error(f"department directory unreadable: {type(exc).__name__}: {exc}")
+    if not stat.S_ISDIR(dept_stat.st_mode):
+        return _error(f"department path is not a directory: {dept_dir}")
+
+    try:
+        root_stat = os.stat(release_root)
+    except FileNotFoundError:
         return {
             "drift_checked": False,
             "drift_skipped_reason": "no releases directory — nothing pinned yet (pre-F4)",
         }
-    import importlib.util
+    except OSError as exc:
+        return _error(f"release root unreadable: {type(exc).__name__}: {exc}")
+    if not stat.S_ISDIR(root_stat.st_mode):
+        return _error(f"release root exists but is not a directory: {release_root}")
 
-    graphs_path = Path(__file__).resolve().parent / "graphs.py"
-    spec = importlib.util.spec_from_file_location("graphs", graphs_path)
-    graphs = importlib.util.module_from_spec(spec)
-    try:
+    try:  # fail-closed: an unrunnable check (loader included) is a finding
+        import importlib.util
+
+        graphs_path = Path(__file__).resolve().parent / "graphs.py"
+        spec = importlib.util.spec_from_file_location("graphs", graphs_path)
+        graphs = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(graphs)
         verdict = graphs.check_drift(dept_dir, release_root)
-    except Exception as exc:  # fail-closed: an unrunnable check is a finding
-        return {
-            "drift_checked": True,
-            "drift_ok": False,
-            "drift_error": f"{type(exc).__name__}: {exc}",
-            "drift_release": None,
-            "drift_mismatch_count": 0,
-            "drift_mismatches": [],
-        }
+    except Exception as exc:
+        return _error(f"{type(exc).__name__}: {exc}")
     mismatches = sorted(verdict.get("mismatches") or [])
     return {
         "drift_checked": True,
@@ -240,6 +265,7 @@ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
         "drift_reason": verdict.get("reason"),
         "drift_mismatch_count": len(mismatches),
         "drift_mismatches": mismatches[:20],  # bounded for STATE.json
+        "drift_mismatches_truncated": len(mismatches) > 20,
     }
 
 
@@ -675,11 +701,13 @@ def main() -> None:
         def escalate_fn(issue, context=None):  # noqa: E306
             hil.escalate(args.department, issue, args.outbox, context=context)
 
-    dept_dir = root / "departments" / args.department
+    # dept_dir passes unconditionally: a CLI invocation whose department dir
+    # cannot be resolved must surface drift_check_failed, never silently take
+    # the legacy no-drift path (that path is for programmatic callers only).
     report = run_manager_cycle(
         state_dir, autonomy_state=autonomy, thresholds=thresholds,
         escalate_fn=escalate_fn, department=args.department,
-        dept_dir=dept_dir if dept_dir.is_dir() else None,
+        dept_dir=root / "departments" / args.department,
     )
     print(json.dumps({
         "department": args.department,

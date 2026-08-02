@@ -128,6 +128,27 @@ Social (blocked until maps are patched):
 6. `python3 loopfactory.py release pin --name social --source-ref <sha> --flip`
 7. `python3 loopfactory.py qa --name social` → clean.
 
+## How social gets recurring drift sensing (cross-review fix, 2026-08-02)
+
+`social_daily.sh` never invokes the manager (`grep -c manager` = 0), so the
+manager-tick drift alarm alone would never have fired for social — and the
+social worker loop is itself dead since 2026-07-31, so wiring the manager
+INTO that driver would leave the watcher sharing fate with the very worker
+whose death it must catch. The fix is a dedicated timer, not a driver edit:
+
+- `departments/social/runtime/systemd/loop-factory-social-manager.service` +
+  `.timer` — every 30 min (staggered :15/:45), runs
+  `factory/manager.py --department social --root … --outbox
+  departments/social/state/decisions_outbox.jsonl`, hardened like the podcast
+  units, fully network-denied (the manager is model-free).
+- `runtime/systemd/` is outside both the release `ARTIFACT_GLOBS` and the
+  traceability globs (podcast precedent), so this adds **zero new drift** to
+  social's already-drifted release — verified: `qa --name social` reports the
+  identical 10 mismatches and 3 traceability errors before and after.
+- Per factory convention the unit is NEVER auto-enabled. Owner enables it:
+  `systemctl --user enable --now loop-factory-social-manager.timer` (one-time,
+  add to the post-merge sequence above; independent of every re-pin decision).
+
 ## Appendix — executed QA output (worktree, 2026-08-02)
 
 `python3 loopfactory.py qa --name podcast` (exit 1):

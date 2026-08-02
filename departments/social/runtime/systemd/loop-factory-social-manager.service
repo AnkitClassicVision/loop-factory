@@ -1,0 +1,29 @@
+# social department MANAGER tick — oneshot, deterministic, model-free.
+# The manager is the watch loop: it must not share fate with the worker loop
+# it watches (social_daily.sh stalled 2026-07-31 and nothing noticed because
+# nothing independent was ticking). This unit runs Sense→Compare→Decide→Record
+# — including the release-drift sensor — on its own cadence, worker dead or
+# alive. Escalations land in the department decisions outbox, which the
+# existing outbox-push timers already ship to Telegram/Linear.
+# Named loop-factory-social-manager.* to stay distinct from the estate-level
+# units (deploy/systemd/, polly/fix-estate-watchdog) in systemd's flat
+# namespace. NEVER auto-enabled by the factory; the owner enables deliberately:
+#   systemctl --user enable --now loop-factory-social-manager.timer
+[Unit]
+Description=social department manager tick (loop-factory)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/d_drive/repos/loop-factory
+ExecStart=/usr/bin/python3 /mnt/d_drive/repos/loop-factory/factory/manager.py --department social --root /mnt/d_drive/repos/loop-factory --outbox /mnt/d_drive/repos/loop-factory/departments/social/state/decisions_outbox.jsonl
+TimeoutStartSec=120
+# Confinement (deny-by-default; the manager reads local telemetry only):
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/d_drive/repos/loop-factory/departments/social/state
+# The manager is model-free and makes no network calls at all.
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+# NO credential-bearing Environment= lines, ever.

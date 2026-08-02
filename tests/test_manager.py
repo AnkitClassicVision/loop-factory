@@ -262,6 +262,7 @@ def test_drifted_release_is_breach_and_escalates(tmp_path):
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["release_drift"]["severity"] == "breach"
     assert codes["release_drift"]["observed"] == 1
+    assert report["sensed"]["drift_mismatches_truncated"] is False
     assert any("release_drift" in e for e in escalations)
     # the alarm lands in the durable records: STATE + heartbeat
     state = json.loads((dept / "state" / "STATE.json").read_text(encoding="utf-8"))
@@ -325,6 +326,63 @@ def test_drift_alarm_never_remediates(tmp_path):
     assert (dept / "releases" / "current").read_text(encoding="utf-8") == current_before
     assert sorted(p.name for p in (dept / "releases").iterdir()) == release_dirs_before
     assert all(a["act"] in M.SHADOW_ACTS for a in report["actions"])
+
+
+def test_release_root_that_is_a_file_fails_closed(tmp_path):
+    # an existing-but-not-directory releases path is NOT pre-F4 — it is a
+    # broken deployment, and deny-by-default means it alarms
+    dept = tmp_path / "dept"
+    (dept / "runtime").mkdir(parents=True)
+    (dept / "state").mkdir()
+    (dept / "releases").write_text("not a directory", encoding="utf-8")
+    escalations = []
+    report = M.run_manager_cycle(
+        state_dir=dept / "state", dept_dir=dept, now=NOW,
+        escalate_fn=lambda issue, context=None: escalations.append(issue),
+    )
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["drift_check_failed"]["severity"] == "breach"
+    assert any("drift_check_failed" in e for e in escalations)
+
+
+def test_missing_dept_dir_is_breach_not_silent(tmp_path):
+    # a dept_dir that cannot be resolved is a misconfiguration, not a
+    # reason to silently skip drift sensing
+    escalations = []
+    report = M.run_manager_cycle(
+        state_dir=tmp_path / "state", dept_dir=tmp_path / "no-such-dept", now=NOW,
+        escalate_fn=lambda issue, context=None: escalations.append(issue),
+    )
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["drift_check_failed"]["severity"] == "breach"
+    assert any("drift_check_failed" in e for e in escalations)
+
+
+def test_cli_unresolvable_department_surfaces_breach(tmp_path):
+    # through main(): a mistyped --department must alarm, never silently
+    # fall back to the legacy no-drift path
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, str(RUNTIME_DIR / "manager.py"),
+         "--department", "ghost", "--root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.splitlines()[-1])
+    assert "drift_check_failed" in out["findings"]
+
+
+def test_mismatch_list_is_bounded_and_flagged(tmp_path):
+    dept = _pinned_dept(tmp_path)
+    for i in range(25):
+        (dept / "runtime" / f"extra_{i:02d}.py").write_text("x = 1\n", encoding="utf-8")
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    sensed = report["sensed"]
+    assert sensed["drift_mismatch_count"] == 25
+    assert len(sensed["drift_mismatches"]) == 20
+    assert sensed["drift_mismatches_truncated"] is True
 
 
 def test_cycle_without_dept_dir_is_unchanged(tmp_path):
