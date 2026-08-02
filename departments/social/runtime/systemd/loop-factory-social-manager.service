@@ -7,7 +7,10 @@
 # existing outbox-push timers already ship to Telegram/Linear.
 # Named loop-factory-social-manager.* to stay distinct from the estate-level
 # units (deploy/systemd/, polly/fix-estate-watchdog) in systemd's flat
-# namespace. NEVER auto-enabled by the factory; the owner enables deliberately:
+# namespace. NEVER auto-enabled by the factory; the owner links these files
+# into the user-unit search path, then enables, deliberately:
+#   systemctl --user link <abs-path>/loop-factory-social-manager.service <abs-path>/loop-factory-social-manager.timer
+#   systemctl --user daemon-reload
 #   systemctl --user enable --now loop-factory-social-manager.timer
 [Unit]
 Description=social department manager tick (loop-factory)

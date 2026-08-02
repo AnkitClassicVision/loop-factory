@@ -228,6 +228,10 @@ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
     try:
         dept_stat = os.stat(dept_dir)
     except FileNotFoundError:
+        # os.stat follows symlinks, so a dangling link raises as if absent;
+        # islink (lstat-based) distinguishes the broken-deployment case.
+        if os.path.islink(dept_dir):
+            return _error(f"department path is a dangling symlink: {dept_dir}")
         return _error(f"department directory does not exist: {dept_dir}")
     except OSError as exc:
         return _error(f"department directory unreadable: {type(exc).__name__}: {exc}")
@@ -237,6 +241,10 @@ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
     try:
         root_stat = os.stat(release_root)
     except FileNotFoundError:
+        # only a genuinely absent path is pre-F4; a dangling releases symlink
+        # EXISTS and is a broken deployment — it must breach, never warn.
+        if os.path.islink(release_root):
+            return _error(f"release root is a dangling symlink: {release_root}")
         return {
             "drift_checked": False,
             "drift_skipped_reason": "no releases directory — nothing pinned yet (pre-F4)",

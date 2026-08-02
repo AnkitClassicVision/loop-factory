@@ -145,9 +145,12 @@ whose death it must catch. The fix is a dedicated timer, not a driver edit:
   traceability globs (podcast precedent), so this adds **zero new drift** to
   social's already-drifted release — verified: `qa --name social` reports the
   identical 10 mismatches and 3 traceability errors before and after.
-- Per factory convention the unit is NEVER auto-enabled. Owner enables it:
-  `systemctl --user enable --now loop-factory-social-manager.timer` (one-time,
-  add to the post-merge sequence above; independent of every re-pin decision).
+- Per factory convention the unit is NEVER auto-enabled, and the repo files
+  are not in systemd's user-unit search path until linked. One-time owner
+  sequence (independent of every re-pin decision):
+  1. `systemctl --user link /mnt/d_drive/repos/loop-factory/departments/social/runtime/systemd/loop-factory-social-manager.service /mnt/d_drive/repos/loop-factory/departments/social/runtime/systemd/loop-factory-social-manager.timer`
+  2. `systemctl --user daemon-reload`
+  3. `systemctl --user enable --now loop-factory-social-manager.timer`
 
 ## Appendix — executed QA output (worktree, 2026-08-02)
 

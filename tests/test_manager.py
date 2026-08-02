@@ -345,6 +345,24 @@ def test_release_root_that_is_a_file_fails_closed(tmp_path):
     assert any("drift_check_failed" in e for e in escalations)
 
 
+def test_dangling_releases_symlink_fails_closed(tmp_path):
+    # a releases symlink whose target is gone EXISTS — it is a broken
+    # deployment, not a pre-F4 department; it must breach, never warn
+    dept = tmp_path / "dept"
+    (dept / "runtime").mkdir(parents=True)
+    (dept / "state").mkdir()
+    (dept / "releases").symlink_to(tmp_path / "no-such-target")
+    escalations = []
+    report = M.run_manager_cycle(
+        state_dir=dept / "state", dept_dir=dept, now=NOW,
+        escalate_fn=lambda issue, context=None: escalations.append(issue),
+    )
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["drift_check_failed"]["severity"] == "breach"
+    assert any("drift_check_failed" in e for e in escalations)
+    assert "drift_unverifiable" not in codes
+
+
 def test_missing_dept_dir_is_breach_not_silent(tmp_path):
     # a dept_dir that cannot be resolved is a misconfiguration, not a
     # reason to silently skip drift sensing
