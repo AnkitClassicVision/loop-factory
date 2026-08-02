@@ -1,8 +1,8 @@
 ---
 title: v2 inheritance — the new-loop entering process
-status: open
+status: closed
 type: task
-assignee:
+assignee: coordinator-fable
 blocked_by: [16, 17, 18]
 ---
 
@@ -23,3 +23,20 @@ policy defaults (ticket 14). Executed proof: scaffold a THROWAWAY department
 in a temp checkout, run validate + a smoke shadow cycle, assert runs-v2
 records + board-feed rows appear, then delete it — the entering process is
 proven by entering, not by inspection.
+
+## Resolution
+
+Complete with executed proof (2026-08-02, commit e8ebc64). Scaffold now
+instantiates from templates/: charter with a commented setpoints.objectives
+section (board Zone 1 lights up when F1 fills it), eval-registry template
+carrying the golden-set advisory rule, subscription-only engines template
+(command + auth_class + auth_probe shape), a runtime-node template
+implementing the fail-closed timed_emit runrecord pattern, and a daily
+trigger that regenerates the estate feed + estate board + the department's
+own board. 8 new tests including two EXECUTED proofs (template node emits a
+validating runs-v2 record; boardfeed runs on a scaffolded tree). Live
+throwaway proof: department 'demoproof' scaffolded (7 artifacts) → node run →
+record emitted → feed built (4 lines, 0 malformed) → board rendered (6
+mentions) → deleted. Note: closed before 16/18 finish — the entering process
+inherits their remaining pieces automatically because it instantiates from
+the same templates and factory modules those tickets extend.
