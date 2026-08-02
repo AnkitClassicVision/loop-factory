@@ -9,5 +9,4 @@ Type=oneshot
 WorkingDirectory={{REPO}}
 ExecStart=/usr/bin/python3 -m factory.timersense --out estate/state/timers.json --tolerate-missing
 ExecStart=/usr/bin/python3 -m factory.boardfeed --repo-root .
-ExecStart=/usr/bin/python3 -m factory.board --feed estate/state/board-feed.ndjson --out estate/state/board.html
-
+ExecStart=/usr/bin/python3 -m factory.board --feed estate/state/board-feed.ndjson --site estate/state/boards

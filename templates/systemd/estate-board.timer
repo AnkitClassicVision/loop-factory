@@ -2,10 +2,10 @@
 # enables it deliberately after review. Shadow-safe: read-only sensing plus
 # local feed and HTML writes only.
 [Unit]
-Description=Refresh the Loop Factory estate board every 15 minutes
+Description=Refresh the Loop Factory estate board 5x daily (7a 11a 3p 7p 11p)
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*-*-* 07,11,15,19,23:00:00
 Persistent=true
 
 [Install]

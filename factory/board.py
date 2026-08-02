@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,8 @@ body{background:var(--bg);color:var(--ink);font:400 .95rem/1.5 system-ui,-apple-
 header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.75rem 1.5rem;padding-bottom:1.1rem;border-bottom:1px solid var(--ink)}
 header h1{font-size:1.3rem;font-weight:650;letter-spacing:-.01em}
 header .proto{font-size:.78rem;color:var(--muted)}header .meta{margin-left:auto;font-size:.82rem;color:var(--muted)}
+.tabs{display:flex;flex-wrap:wrap;gap:.45rem 1.15rem;padding:.8rem 0;border-bottom:1px solid var(--rule)}
+.tab{color:var(--muted);font-size:.82rem;text-decoration:none}.tab.active{color:var(--ink);font-weight:650;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.3rem}
 .status-summary{display:flex;flex-wrap:wrap;gap:.4rem 1.5rem;margin-top:.8rem}.chip{display:flex;align-items:center;gap:.5rem;font-size:.82rem}.chip .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none}.dot.ok{background:var(--green)}.dot.deg{background:var(--violet)}.chip .state{color:var(--muted)}
 section{margin-top:3.1rem}.zone-h{display:flex;align-items:baseline;gap:1rem;margin-bottom:1.3rem;flex-wrap:wrap}
 .zone-h h2{font-size:.95rem;font-weight:650}.zone-h .note{font-size:.8rem;color:var(--muted);margin-left:auto}
@@ -203,6 +206,8 @@ DAILY_KEYS = {
     "model_calls", "evaluator_pass_rate", "self_fixes", "failed_fixes",
     "heal_budget_used", "heal_budget_limit",
 }
+
+TAB_DEPARTMENT_KINDS = {"dept_status", "metrics", "andon", "approval", "active_run"}
 
 
 def _is_daily(record: dict[str, Any]) -> bool:
@@ -473,7 +478,52 @@ def _render_fallback(records: Sequence[dict[str, Any]]) -> str:
     return "".join(rendered)
 
 
-def render_html(records: Sequence[dict[str, Any]], *, malformed_count: int = 0, department: str | None = None, title: str | None = None) -> str:
+def _slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]", "-", name.lower())
+    return slug or "tab"
+
+
+def _tab_manifest(records: Sequence[dict[str, Any]]) -> list[tuple[str, str]]:
+    names = {
+        row["department"]
+        for row in records
+        if row["kind"] in TAB_DEPARTMENT_KINDS or row["kind"] == "loop_status"
+    }
+    used: set[str] = set()
+    tabs: list[tuple[str, str]] = []
+    for name in sorted(names, key=lambda value: (value.casefold(), value)):
+        base = _slug(name)
+        slug = base
+        suffix = 2
+        while slug in used:
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        used.add(slug)
+        tabs.append((name, f"{slug}.html"))
+    return tabs
+
+
+def _render_tabs(tabs: Sequence[tuple[str, str]], current_tab: str | None) -> str:
+    estate_class = "tab active" if current_tab is None else "tab"
+    estate_current = ' aria-current="page"' if current_tab is None else ""
+    links = [f'<a class="{estate_class}" href="index.html"{estate_current}>Estate</a>']
+    for name, href in tabs:
+        active = name == current_tab
+        tab_class = "tab active" if active else "tab"
+        current = ' aria-current="page"' if active else ""
+        links.append(f'<a class="{tab_class}" href="{_esc(href)}"{current}>{_esc(name)}</a>')
+    return f'<nav class="tabs" aria-label="Board tabs">{"".join(links)}</nav>'
+
+
+def render_html(
+    records: Sequence[dict[str, Any]],
+    *,
+    malformed_count: int = 0,
+    department: str | None = None,
+    title: str | None = None,
+    tabs: Sequence[tuple[str, str]] | None = None,
+    current_tab: str | None = None,
+) -> str:
     """Render already-validated records into a deterministic HTML document."""
     selected = [row for row in records if department is None or row["department"] == department]
     selected.sort(key=_record_key)
@@ -532,6 +582,7 @@ def render_html(records: Sequence[dict[str, Any]], *, malformed_count: int = 0, 
 </head>
 <body><div class="wrap">
 <header><h1>{_esc(page_title)}</h1><span class="proto">LIVE — rendered from board-feed.ndjson</span><span class="meta num">{_esc(status_meta)}</span></header>
+{_render_tabs(tabs, current_tab) if tabs is not None else ""}
 {_render_status_summary(departments, statuses)}{empty_notice}
 <section aria-label="Metrics"><div class="zone-h"><h2>1 · Metrics</h2><span class="note">objectives and daily measures</span></div><hr class="zone-rule">
   <div class="objgrid">{objective_html}</div>{_render_metric_stats(daily)}
@@ -560,15 +611,50 @@ def render_board(feed_path: str | Path, out_path: str | Path, *, department: str
     return rendered
 
 
+def render_site(feed_path: str | Path, out_dir: str | Path, *, title: str | None = None) -> dict[str, str]:
+    """Render an estate index and one portable, linked page per feed tab."""
+    records, malformed = read_feed(feed_path)
+    tabs = _tab_manifest(records)
+    output_dir = Path(out_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rendered: dict[str, str] = {}
+    rendered["index.html"] = render_html(
+        records,
+        malformed_count=malformed,
+        title=title,
+        tabs=tabs,
+    )
+    for name, filename in tabs:
+        rendered[filename] = render_html(
+            records,
+            malformed_count=malformed,
+            department=name,
+            title=f"{name} — Loop Board",
+            tabs=tabs,
+            current_tab=name,
+        )
+    for filename, page in rendered.items():
+        (output_dir / filename).write_text(page, encoding="utf-8")
+    return rendered
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render a Loop Factory board-feed as static HTML")
     parser.add_argument("--feed", required=True, type=Path)
-    parser.add_argument("--out", required=True, type=Path)
+    destination = parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--out", type=Path)
+    destination.add_argument("--site", type=Path)
     parser.add_argument("--department")
     parser.add_argument("--title")
     args = parser.parse_args(argv)
+    if args.site is not None and args.department is not None:
+        parser.error("--department requires --out")
     try:
-        render_board(args.feed, args.out, department=args.department, title=args.title)
+        if args.site is not None:
+            render_site(args.feed, args.site, title=args.title)
+        else:
+            render_board(args.feed, args.out, department=args.department, title=args.title)
     except OSError as exc:
         parser.error(str(exc))
     return 0

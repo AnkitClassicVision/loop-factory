@@ -73,5 +73,6 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 
 # 6) Regenerate the estate-wide and podcast-specific operator boards.
 python3 -m factory.boardfeed --repo-root "${REPO}"
-python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
-python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --department "${DEPARTMENT}" --out "${REPO}/estate/state/${DEPARTMENT}-board.html"
+python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
+# Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
+# Legacy command replaced by tabs: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --department "${DEPARTMENT}" --out "${REPO}/estate/state/${DEPARTMENT}-board.html"
