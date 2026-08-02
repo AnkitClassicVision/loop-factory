@@ -12,6 +12,7 @@ Commands map 1:1 to the factory pipeline (see runbooks/factory-pipeline.md):
   heal           record a node failure/success against the self-heal ladder
   hil            human-in-the-loop queue: push / apply / escalate
   qa             full deterministic QA: charter + maps + release drift
+  rollup         rebuild SQLite reporting state and optional NDJSON exports
   check          factory self-test: compileall + pytest
 
 Everything here is deterministic and model-free. The LLM-directed parts of the
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -164,6 +166,25 @@ def cmd_qa(args) -> int:
     return 0 if verdict["ok"] else 1
 
 
+def cmd_rollup(args) -> int:
+    rollup = _load("rollup", "factory/rollup.py")
+    root = Path(args.root or ROOT)
+    db_path = Path(args.db) if args.db else root / "estate" / "state" / "rollup.sqlite3"
+    result = rollup.rebuild(root, db_path)
+    if not result["complete"]:
+        logging.getLogger(__name__).error(
+            "rollup incomplete; prior complete database preserved: %s",
+            json.dumps(result, sort_keys=True),
+        )
+        return 1
+    if args.export:
+        result["export"] = rollup.export_ndjson(result["database"], args.export)
+    logging.getLogger(__name__).info(
+        "rollup complete: %s", json.dumps(result, sort_keys=True)
+    )
+    return 0
+
+
 def cmd_check(args) -> int:
     ok = True
     for step in (
@@ -239,10 +260,17 @@ def main() -> int:
     p.add_argument("--root", default=None)
     p.set_defaults(fn=cmd_qa)
 
+    p = sub.add_parser("rollup", help="rebuild SQLite rollup and optional NDJSON feed")
+    p.add_argument("--root", default=None)
+    p.add_argument("--db", default=None)
+    p.add_argument("--export", default=None, metavar="DIR")
+    p.set_defaults(fn=cmd_rollup)
+
     p = sub.add_parser("check", help="factory self-test (compileall + pytest)")
     p.set_defaults(fn=cmd_check)
 
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     return args.fn(args)
 
 

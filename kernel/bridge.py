@@ -16,7 +16,39 @@ from pathlib import Path
 _KERNEL_DIR = Path(__file__).resolve().parent
 
 
+def _ensure_kernel_package() -> None:
+    """Register the real kernel package for file-path-loaded department lanes.
+
+    Social loads this bridge under a standalone module name with no repository
+    root on ``sys.path``. Registering the package here keeps package-absolute
+    gateway imports working and preserves one ``kernel.jsonl_store`` identity.
+    """
+    existing = sys.modules.get("kernel")
+    if existing is not None:
+        package_paths = {
+            Path(path).resolve() for path in getattr(existing, "__path__", ())
+        }
+        if _KERNEL_DIR not in package_paths:
+            raise ImportError("loaded kernel package does not match bridge directory")
+        return
+    spec = importlib.util.spec_from_file_location(
+        "kernel",
+        _KERNEL_DIR / "__init__.py",
+        submodule_search_locations=[str(_KERNEL_DIR)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot register kernel package")
+    package = importlib.util.module_from_spec(spec)
+    sys.modules["kernel"] = package
+    try:
+        spec.loader.exec_module(package)
+    except Exception:
+        sys.modules.pop("kernel", None)
+        raise
+
+
 def _load(name: str):
+    _ensure_kernel_package()
     spec = importlib.util.spec_from_file_location(name, _KERNEL_DIR / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(name, module)
