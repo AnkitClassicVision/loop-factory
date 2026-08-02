@@ -1,0 +1,13 @@
+# Estate board refresh service. Installed DISABLED by convention; the owner
+# enables its timer deliberately after review. Shadow-safe: read-only sensing
+# plus local feed and HTML writes only.
+[Unit]
+Description=Refresh the Loop Factory estate board
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart=/usr/bin/python3 -m factory.timersense --out estate/state/timers.json --tolerate-missing
+ExecStart=/usr/bin/python3 -m factory.boardfeed --repo-root .
+ExecStart=/usr/bin/python3 -m factory.board --feed estate/state/board-feed.ndjson --out estate/state/board.html
+

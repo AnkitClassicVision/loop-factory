@@ -1,0 +1,13 @@
+# Estate board refresh timer. Installed DISABLED by convention; the owner
+# enables it deliberately after review. Shadow-safe: read-only sensing plus
+# local feed and HTML writes only.
+[Unit]
+Description=Refresh the Loop Factory estate board every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -63,11 +64,13 @@ section{margin-top:3.1rem}.zone-h{display:flex;align-items:baseline;gap:1rem;mar
 .t-row{display:grid;grid-template-columns:12.5rem 1fr 10.5rem;gap:1rem;align-items:center;padding:.42rem 0}.t-row .route{justify-self:end}.t-lbl{font-size:.88rem}.t-lbl b{font-weight:600}.t-lbl .m{color:var(--muted);font-size:.8rem}
 .t-track{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}.t-bar{height:1.05rem;border-radius:2px;background:var(--green-soft);min-width:4px}.t-count{font-size:.85rem;font-weight:600;white-space:nowrap}.t-count .mut{color:var(--muted);font-weight:400}
 .route{font-size:.7rem;font-weight:650;border:1px solid var(--rule);border-radius:99px;padding:.12rem .55rem;white-space:nowrap}.route.oauth{color:var(--green);border-color:var(--green)}.route.api{color:var(--red);border-color:var(--red)}
+.loop-group{margin-top:1rem;max-width:62rem}.loop-row{display:grid;grid-template-columns:minmax(12rem,1fr) minmax(12rem,1.4fr) minmax(12rem,1.4fr) auto;gap:.8rem 1.2rem;align-items:center;padding:.5rem 0;border-bottom:1px dashed var(--rule);font-size:.85rem}.loop-row:last-child{border-bottom:0}
+.loop-ident{display:flex;align-items:center;gap:.55rem}.loop-dot{width:.58rem;height:.58rem;border-radius:50%;flex:none}.loop-dot.success{background:var(--green)}.loop-dot.failure{background:var(--red)}.loop-dot.muted{background:var(--muted)}.loop-time{color:var(--muted)}.disabled-tag{font-size:.7rem;font-weight:650;color:var(--muted);border:1px solid var(--rule);border-radius:99px;padding:.1rem .5rem;white-space:nowrap}
 .telemetry-alert{margin:.6rem 0}.funnel{margin-top:1.5rem}.funnel .cap{font-size:.8rem;color:var(--muted);margin-bottom:.8rem}.funnel .cap b{color:var(--ink)}
 .f-row{display:grid;grid-template-columns:10.5rem 1fr;gap:1rem;align-items:center;padding:.28rem 0}.f-lbl{font-size:.85rem;color:var(--muted)}.f-track{display:flex;align-items:center;gap:.6rem}.f-bar{height:1.05rem;border-radius:2px;background:var(--green-soft);min-width:6px}.f-bar.hot{background:var(--green)}.f-bar.final{background:var(--ink)}.f-count{font-size:.85rem;font-weight:600;white-space:nowrap}
 .generic-group{margin-top:1.4rem;max-width:52rem}.generic-group h3{font-size:.88rem;margin-bottom:.35rem}.kv{display:grid;grid-template-columns:minmax(8rem,15rem) 1fr;gap:.4rem 1rem;padding:.35rem 0;border-bottom:1px dashed var(--rule);font-size:.85rem}.kv dt{color:var(--muted)}.kv dd{overflow-wrap:anywhere}
 footer{margin-top:3.5rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.78rem;color:var(--muted)}footer code{font:.75rem ui-monospace,monospace}
-@media(max-width:900px){section{margin-top:2.3rem}.objgrid,.actions,.split{grid-template-columns:1fr;gap:1.8rem}.obj .goalline{min-height:0}.f-row{grid-template-columns:8.5rem 1fr}.t-row{grid-template-columns:1fr;gap:.3rem}.t-row .route{justify-self:start}}
+@media(max-width:900px){section{margin-top:2.3rem}.objgrid,.actions,.split{grid-template-columns:1fr;gap:1.8rem}.obj .goalline{min-height:0}.f-row{grid-template-columns:8.5rem 1fr}.t-row,.loop-row{grid-template-columns:1fr;gap:.3rem}.t-row .route{justify-self:start}.disabled-tag{justify-self:start}}
 """
 
 
@@ -383,6 +386,57 @@ def _render_self_fix(daily: dict[str, dict[str, Any]]) -> str:
     return "".join(rendered) or '<p class="quiet">no self-fix activity reporting</p>'
 
 
+def _render_loops(records: Sequence[dict[str, Any]]) -> str:
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in sorted(records, key=_record_key):
+        unit = str(record["data"].get("unit", UNKNOWN))
+        latest[(record["department"], unit)] = record
+    if not latest:
+        return '<p class="quiet">no loop telemetry — run timersense</p>'
+
+    groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for (department, _), record in sorted(latest.items()):
+        groups[department].append(record)
+
+    rendered: list[str] = []
+    for department, rows in sorted(groups.items()):
+        row_html: list[str] = []
+        for record in sorted(rows, key=lambda row: str(row["data"].get("unit", ""))):
+            data = record["data"]
+            unit = str(data.get("unit", UNKNOWN))
+            display_unit = unit.removesuffix(".timer")
+            result = data.get("last_result")
+            if result == "success":
+                dot_class = "success"
+                result_text = ""
+            elif result == "failure":
+                dot_class = "failure"
+                result_text = ""
+            else:
+                dot_class = "muted"
+                result = UNKNOWN
+                result_text = ' <span class="unknown">unknown</span>'
+            disabled = (
+                '<span class="disabled-tag">disabled</span>'
+                if data.get("enabled") is False
+                else ""
+            )
+            row_html.append(
+                f'<div class="loop-row" data-department="{_esc(department)}">'
+                f'<span class="loop-ident"><span class="loop-dot {dot_class}" role="img" '
+                f'aria-label="{_esc(result)}" title="{_esc(result)}"></span>'
+                f'<b>{_esc(display_unit)}</b>{result_text}</span>'
+                f'<span class="loop-time">last run {_value(data.get("last_run"))}</span>'
+                f'<span class="loop-time">next run {_value(data.get("next_run"))}</span>'
+                f'{disabled}</div>'
+            )
+        rendered.append(
+            f'<div class="loop-group"><h4 class="dept-h">{_esc(department)}</h4>'
+            f'{"".join(row_html)}</div>'
+        )
+    return "".join(rendered)
+
+
 def _render_funnels(records: Sequence[dict[str, Any]]) -> str:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for record in records:
@@ -439,6 +493,7 @@ def render_html(records: Sequence[dict[str, Any]], *, malformed_count: int = 0, 
     andons = sorted((row for row in selected if row["kind"] == "andon"), key=_record_key)
     approvals = sorted((row for row in selected if row["kind"] == "approval"), key=lambda row: (str(row["data"].get("queued_at", row["ts"])), _record_key(row)))
     runs = [row for row in selected if row["kind"] == "active_run"]
+    loops = [row for row in selected if row["kind"] == "loop_status"]
     telemetry = [row for row in selected if _is_telemetry(row)]
     funnels = [row for row in selected if _is_funnel(row)]
     fallback = [row for row in selected if row["kind"] == "metrics" and not (_is_objective(row) or _is_daily(row) or _is_telemetry(row) or _is_funnel(row))]
@@ -462,6 +517,7 @@ def render_html(records: Sequence[dict[str, Any]], *, malformed_count: int = 0, 
     token_totals = [(_number(row["data"].get("tokens_in")) or 0) + (_number(row["data"].get("tokens_out")) or 0) for row in telemetry]
     maximum_tokens = max(token_totals, default=0.0)
     telemetry_html = "".join(_render_telemetry(row, maximum_tokens) for row in sorted(telemetry, key=lambda row: (row["department"], str(row["data"].get("lane", "")), _record_key(row)))) or '<p class="quiet">no telemetry reporting</p>'
+    loop_html = _render_loops(loops)
     loop_specific = _render_funnels(funnels) + _render_fallback(fallback)
     if not loop_specific:
         loop_specific = '<p class="quiet">no loop-specific metrics reporting</p>'
@@ -486,6 +542,7 @@ def render_html(records: Sequence[dict[str, Any]], *, malformed_count: int = 0, 
 <section aria-label="Activity"><div class="zone-h"><h2>3 · Activity</h2><span class="note">outcomes, active runs, and model routes</span></div><hr class="zone-rule">
   <div class="split"><div><h3 class="subhead">Daily outcomes</h3>{outcome_html}</div><div><h3 class="subhead">Active runs</h3>{run_html}<h3 class="subhead">Self-fix activity</h3>{_render_self_fix(daily)}</div></div>
   <h3 class="subhead">Telemetry</h3>{telemetry_html}
+  <h3 class="subhead">All loops</h3>{loop_html}
 </section>
 <section aria-label="Loop-specific"><div class="zone-h"><h2>4 · Loop-specific</h2><span class="note">feed-defined panels, never renderer branches</span></div><hr class="zone-rule">{loop_specific}</section>
 <footer>Rendered from <code>board-feed.ndjson</code> only · {_esc(malformed_count)} malformed feed line{'s' if malformed_count != 1 else ''} · no external assets</footer>

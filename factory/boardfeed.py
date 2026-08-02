@@ -23,6 +23,8 @@ LOGGER = logging.getLogger(__name__)
 UNKNOWN = "unknown"
 ALLOWED_AUTH_CLASSES = frozenset({"oauth_cli", "service_oauth", "local_model"})
 OPEN_APPROVAL_STATUSES = frozenset({"pending_approval", "pending", "open", "queued"})
+TIMER_SNAPSHOT_SCHEMA = "timers-snapshot/v1"
+TIMER_RESULTS = frozenset({"success", "failure", UNKNOWN})
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -493,6 +495,115 @@ def _load_charter(path: Path, department: str) -> tuple[dict[str, Any] | None, i
         return None, 1
 
 
+def _timer_lines(
+    path: Path, restrict: str | None
+) -> tuple[list[dict[str, Any]], int, int]:
+    snapshot, malformed = _read_json(path)
+    if snapshot is None:
+        return [], malformed, 0
+
+    captured_dt = _parse_ts(snapshot.get("captured_at"))
+    timers = snapshot.get("timers")
+    if (
+        snapshot.get("schema") != TIMER_SNAPSHOT_SCHEMA
+        or captured_dt is None
+        or not isinstance(timers, list)
+    ):
+        LOGGER.warning("invalid timer snapshot schema: %s", path)
+        return [], malformed + 1, 0
+
+    captured_at = _iso(captured_dt)
+    output: list[dict[str, Any]] = []
+    loops = 0
+    required = {
+        "unit",
+        "service",
+        "enabled",
+        "next_run",
+        "last_run",
+        "last_result",
+        "exit_status",
+        "group",
+    }
+    for timer in timers:
+        if not isinstance(timer, dict) or not required.issubset(timer):
+            malformed += 1
+            LOGGER.warning("invalid timer row in snapshot: %s", path)
+            continue
+
+        unit = timer["unit"]
+        service = timer["service"]
+        group = timer["group"]
+        enabled = timer["enabled"]
+        next_run = timer["next_run"]
+        last_run = timer["last_run"]
+        last_result = timer["last_result"]
+        exit_status = timer["exit_status"]
+        valid = (
+            isinstance(unit, str)
+            and bool(unit)
+            and isinstance(service, str)
+            and bool(service)
+            and isinstance(group, str)
+            and bool(group)
+            and isinstance(enabled, bool)
+            and (next_run is None or isinstance(next_run, str))
+            and (last_run is None or isinstance(last_run, str))
+            and isinstance(last_result, str)
+            and last_result in TIMER_RESULTS
+            and (
+                exit_status is None
+                or isinstance(exit_status, (str, int))
+                and not isinstance(exit_status, bool)
+            )
+        )
+        if not valid:
+            malformed += 1
+            LOGGER.warning("invalid timer row in snapshot: %s", path)
+            continue
+        if restrict is not None and group != restrict:
+            continue
+
+        output.append(
+            _line(
+                kind="loop_status",
+                ts=captured_at,
+                department=group,
+                subject=unit,
+                event=False,
+                data={
+                    "unit": unit,
+                    "service": service,
+                    "enabled": enabled,
+                    "next_run": next_run,
+                    "last_run": last_run,
+                    "last_result": last_result,
+                    "exit_status": exit_status,
+                },
+            )
+        )
+        loops += 1
+        if last_result == "failure":
+            status = UNKNOWN if exit_status is None else str(exit_status)
+            output.append(
+                _line(
+                    kind="andon",
+                    ts=captured_at,
+                    department=group,
+                    subject=f"LOOP_FAILED-{unit}",
+                    event=True,
+                    data={
+                        "code": "LOOP_FAILED",
+                        "severity": "breach",
+                        "detail": f"{unit} last run failed (exit {status})",
+                        "observed": "failure",
+                        "setpoint": "success",
+                    },
+                )
+            )
+    return output, malformed, loops
+
+
 def _departments(repo_root: Path, restrict: str | None) -> list[Path]:
     root = repo_root / "departments"
     if not root.exists():
@@ -531,6 +642,7 @@ def build_feed(
     out: str | Path | None = None,
     department: str | None = None,
     now: str | datetime | None = None,
+    timers_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate department records, atomically write the feed, and return its receipt."""
     repo_root = Path(repo_root)
@@ -566,6 +678,15 @@ def build_feed(
         feed.extend(_daily_metrics(name, records, now_dt, runs_exist))
         feed.extend(_objective_metrics(name, charter, now_dt))
 
+    timer_source = (
+        Path(timers_path)
+        if timers_path is not None
+        else repo_root / "estate" / "state" / "timers.json"
+    )
+    timer_feed, count, loops = _timer_lines(timer_source, department)
+    malformed += count
+    feed.extend(timer_feed)
+
     feed.sort(key=lambda row: (row["department"], row["kind"], row["id"]))
     health_ts = _iso(now_dt)
     feed.append(
@@ -582,7 +703,12 @@ def build_feed(
         json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in feed
     )
     _atomic_write(output_path, content)
-    return {"departments": len(department_dirs), "lines": len(feed), "malformed": malformed}
+    return {
+        "departments": len(department_dirs),
+        "lines": len(feed),
+        "loops": loops,
+        "malformed": malformed,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -591,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None)
     parser.add_argument("--department", default=None)
     parser.add_argument("--now", default=None)
+    parser.add_argument("--timers-path", default=None)
     args = parser.parse_args(argv)
     try:
         receipt = build_feed(
@@ -598,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
             out=args.out,
             department=args.department,
             now=args.now,
+            timers_path=args.timers_path,
         )
     except ValueError as exc:
         parser.error(str(exc))
