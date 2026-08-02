@@ -56,7 +56,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--draft", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id", default="unknown")
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--team-key", default="ANK")
@@ -81,6 +81,7 @@ def main() -> int:
     card_body += f"---\n\n{body_text}\n\n"
     if episode_url:
         card_body += f"Listen: {episode_url}\n"
+    card_body += f"run: {args.run_id}\n"
 
     key = _get_key()
 
@@ -124,6 +125,7 @@ def main() -> int:
     ledger_row = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "row_hash": row_hash,
+        "run_id": args.run_id,
         "department": "social",
         "kind": "human_review",
         "card_identifier": issue["identifier"],
@@ -137,6 +139,7 @@ def main() -> int:
         "identifier": issue["identifier"],
         "url": issue["url"],
         "row_hash": row_hash,
+        "run_id": args.run_id,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     args.out.write_text(json.dumps(receipt, indent=2) + "\n")

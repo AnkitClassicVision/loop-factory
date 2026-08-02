@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import pytest
 
-from factory.runrecord import append_record, build_record, new_run_id, validate_record
+from factory.runrecord import (
+    append_record,
+    build_record,
+    emit_record,
+    new_run_id,
+    read_release,
+    timed_emit,
+    validate_record,
+)
 
 
 def _fields(**overrides):
@@ -141,3 +151,87 @@ def test_missing_required_field_names_field():
 def test_bad_nested_cost_lane_names_field():
     with pytest.raises(ValueError, match=r"cost\.lane"):
         build_record(**_fields(cost={"lane": "api", "model_calls": 1}))
+
+
+def test_read_release_returns_pinned_identity(tmp_path):
+    release_dir = tmp_path / "releases" / "release-1"
+    release_dir.mkdir(parents=True)
+    (tmp_path / "releases" / "current").write_text(
+        "release-1\n", encoding="utf-8"
+    )
+    (release_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "hash": "abc123",
+                "source_ref": "gitsha123",
+                "artifacts": [{"path": "runtime/node.py"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_release(tmp_path) == {
+        "hash": "abc123",
+        "source_ref": "gitsha123",
+    }
+
+
+def test_read_release_returns_none_for_missing_or_unreadable_files(tmp_path):
+    assert read_release(tmp_path) is None
+
+    releases = tmp_path / "releases"
+    releases.mkdir()
+    (releases / "current").write_text("missing\n", encoding="utf-8")
+    assert read_release(tmp_path) is None
+
+    release_dir = releases / "broken"
+    release_dir.mkdir()
+    (releases / "current").write_text("broken\n", encoding="utf-8")
+    (release_dir / "manifest.json").write_text("{", encoding="utf-8")
+    assert read_release(tmp_path) is None
+
+
+def test_emit_record_supplies_defaults_and_appends_valid_record(tmp_path):
+    path = emit_record(
+        tmp_path,
+        department="example",
+        node="script_node",
+        status="ok",
+        artifacts=("observation.jsonl",),
+    )
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert validate_record(record) == record
+    assert record["schema"] == "run-record/v2"
+    assert record["rev"] == 2
+    assert record["epoch"] == 0
+    assert record["attempt"] == 1
+    assert record["round"] is None
+    assert record["artifacts"] == ["observation.jsonl"]
+    assert datetime.fromisoformat(record["ts"]).tzinfo is not None
+
+
+def test_timed_emit_records_ok_and_elapsed_duration(tmp_path):
+    with timed_emit(tmp_path, "example", "timed_node"):
+        time.sleep(0.002)
+
+    record = json.loads((tmp_path / "runs-v2.jsonl").read_text(encoding="utf-8"))
+    assert record["status"] == "ok"
+    assert record["errors"] == []
+    assert record["duration_ms"] >= 1
+
+
+def test_timed_emit_records_exception_class_then_reraises(tmp_path):
+    with pytest.raises(LookupError, match="fixture failure"):
+        with timed_emit(
+            tmp_path,
+            "example",
+            "timed_node",
+            errors=("existing_code",),
+        ):
+            raise LookupError("fixture failure")
+
+    record = json.loads((tmp_path / "runs-v2.jsonl").read_text(encoding="utf-8"))
+    assert record["status"] == "error"
+    assert record["errors"] == ["existing_code", "LookupError"]
+    assert validate_record(record) == record

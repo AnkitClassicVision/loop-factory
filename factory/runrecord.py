@@ -10,9 +10,11 @@ import copy
 import fcntl
 import json
 import os
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 SCHEMA = "run-record/v2"
@@ -225,3 +227,118 @@ def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     return path
+
+
+def read_release(department_dir: Path) -> dict[str, str] | None:
+    """Return the pinned release identity, or ``None`` when it is unavailable."""
+    try:
+        department_dir = Path(department_dir)
+        release_name = (
+            (department_dir / "releases" / "current")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        if not release_name or Path(release_name).name != release_name:
+            return None
+        manifest_path = (
+            department_dir / "releases" / release_name / "manifest.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        release_hash = manifest["hash"]
+        source_ref = manifest["source_ref"]
+        if not isinstance(release_hash, str) or not isinstance(source_ref, str):
+            return None
+        return {"hash": release_hash, "source_ref": source_ref}
+    except Exception:
+        return None
+
+
+def emit_record(
+    state_dir: Path,
+    *,
+    department: str,
+    node: str,
+    status: str,
+    epoch: int = 0,
+    attempt: int = 1,
+    round: int | None = None,
+    release: dict[str, Any] | None = None,
+    trigger: dict[str, Any] | None = None,
+    engine: str | None = None,
+    model: str | None = None,
+    auth_class: str | None = None,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+    duration_ms: int | None = None,
+    errors: Any = (),
+    artifacts: Any = (),
+    receipts: Any = (),
+    evaluator: dict[str, Any] | None = None,
+    approval: dict[str, Any] | None = None,
+    external_actions_taken: int = 0,
+) -> Path:
+    """Build and append one v2 record with generated identity and timestamp."""
+    record = build_record(
+        schema=SCHEMA,
+        rev=2,
+        run_id=new_run_id(),
+        department=department,
+        node=node,
+        epoch=epoch,
+        ts=datetime.now(timezone.utc).isoformat(),
+        attempt=attempt,
+        round=round,
+        release=release,
+        trigger=trigger,
+        engine=engine,
+        model=model,
+        auth_class=auth_class,
+        usage=usage,
+        cost=cost,
+        duration_ms=duration_ms,
+        status=status,
+        errors=list(errors),
+        artifacts=list(artifacts),
+        receipts=list(receipts),
+        evaluator=evaluator,
+        approval=approval,
+        external_actions_taken=external_actions_taken,
+    )
+    return append_record(state_dir, record)
+
+
+@contextmanager
+def timed_emit(
+    state_dir: Path,
+    department: str,
+    node: str,
+    **kwargs: Any,
+) -> Iterator[None]:
+    """Time a block and emit exactly one success or exception record."""
+    started = time.perf_counter()
+    try:
+        yield
+    except Exception as exc:
+        fields = dict(kwargs)
+        errors = list(fields.pop("errors", ()))
+        errors.append(type(exc).__name__)
+        fields["status"] = "error"
+        fields["errors"] = errors
+        fields["duration_ms"] = int((time.perf_counter() - started) * 1000)
+        emit_record(
+            state_dir,
+            department=department,
+            node=node,
+            **fields,
+        )
+        raise
+    else:
+        fields = dict(kwargs)
+        fields.setdefault("status", "ok")
+        fields["duration_ms"] = int((time.perf_counter() - started) * 1000)
+        emit_record(
+            state_dir,
+            department=department,
+            node=node,
+            **fields,
+        )

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -15,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from factory import runrecord
 from departments.podcast.runtime import record as record_node
 
 
@@ -22,6 +25,7 @@ DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
 DEFAULT_ESTATE_PATH = Path(__file__).with_name("estate.json")
 ERROR_PATTERN = re.compile(r"\b(error|failed|failure|fatal|traceback|exception)\b", re.I)
 Provider = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any] | None]
+LOGGER = logging.getLogger(__name__)
 
 
 class CoverageError(RuntimeError):
@@ -460,7 +464,39 @@ def append_observations(path: str | Path, observations: list[dict[str, Any]]) ->
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def run_sense(
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+    artifacts: list[Path],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="sense_estate",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-sense_estate"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("sense_estate failed to append its runs-v2 record")
+        raise
+
+
+def _run_sense(
     state_dir: str | Path,
     *,
     estate_path: str | Path = DEFAULT_ESTATE_PATH,
@@ -491,6 +527,53 @@ def run_sense(
             "unknown": sum(row["status"] == "unknown" for row in observations),
         },
         shadow=shadow,
+    )
+    return observations
+
+
+def run_sense(
+    state_dir: str | Path,
+    *,
+    estate_path: str | Path = DEFAULT_ESTATE_PATH,
+    provider: Provider | None = None,
+    now: datetime | str | None = None,
+    shadow: bool = True,
+    probe_vps: bool = False,
+    systemctl_runner: Callable[[str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    artifacts = [state_path / "observations.jsonl", state_path / "runs.jsonl"]
+    try:
+        observations = _run_sense(
+            state_path,
+            estate_path=estate_path,
+            provider=provider,
+            now=now,
+            shadow=shadow,
+            probe_vps=probe_vps,
+            systemctl_runner=systemctl_runner,
+        )
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+            artifacts=artifacts,
+        )
+        raise
+    errors = [
+        f"{row['sensor']}:{row['subject']}:{row['status']}"
+        for row in observations
+        if row["status"] != "ok"
+    ]
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+        artifacts=artifacts,
     )
     return observations
 

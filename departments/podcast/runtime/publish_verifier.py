@@ -3,10 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from factory import runrecord
+
+
+LOGGER = logging.getLogger(__name__)
 
 def _append(state_dir: Path, obs: dict) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -49,7 +55,7 @@ def _expected_artifacts(row: dict) -> tuple[str, str, str, list[str], list[str]]
     return episode_id, rss_url, youtube_url, expected_receipts, missing_expectations
 
 
-def run(state_dir: Path, sources: Path, today: date | None = None) -> list[dict]:
+def _run(state_dir: Path, sources: Path, today: date | None = None) -> list[dict]:
     today = today or datetime.now(timezone.utc).date()
     schedule_path = sources / "publish_schedule.json"
     if not schedule_path.is_file():
@@ -166,6 +172,66 @@ def run(state_dir: Path, sources: Path, today: date | None = None) -> list[dict]
                                  metrics))
     for obs in observations:
         _append(state_dir, obs)
+    return observations
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="publish_verifier",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-publish_verifier"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(state_dir / "observations.jsonl")]
+            if (state_dir / "observations.jsonl").exists()
+            else [],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("publish_verifier failed to append its runs-v2 record")
+        raise
+
+
+def run(state_dir: Path, sources: Path, today: date | None = None) -> list[dict]:
+    state_dir = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        observations = _run(state_dir, Path(sources), today)
+    except Exception as exc:
+        _emit_run_record(
+            state_dir,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = [
+        f"publishday:{row['subject']}:{row['status']}"
+        for row in observations
+        if row["status"] != "ok"
+    ]
+    _emit_run_record(
+        state_dir,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+    )
     return observations
 
 
