@@ -34,6 +34,9 @@ IDENTITY = dict(
     run_id="SG-RUN-0001",
     node_id="N1",
     attempt=1,
+    edge="0",
+    to="N2",
+    kind="normal",
 )
 OUTPUT = {"status": "ok", "delivered_count": 0}
 
@@ -186,11 +189,23 @@ def test_reverify_limitation_documented_verbatim():
     assert required in " ".join(SR.reverify_transition.__doc__.split())
 
 
+def test_routing_is_bound_into_the_token():
+    # R6-S1: edge identity, destination, and kind are inside the HMAC
+    # binding — a retagged row label can never borrow a valid token.
+    token = _issue()
+    for retag in ({"edge": "1"}, {"to": "N3"}, {"kind": "refusal"}):
+        result = _verify(token, **retag)
+        assert result.ok is False
+        assert "binding" in result.reason
+
+
 def test_reverify_transition_from_persisted_row_and_record():
     # R2: reverification needs ONLY (key service + run record + row).
     token = _issue()
     row = {"from": IDENTITY["node_id"], "attempt": IDENTITY["attempt"],
-           "step_receipt": token, "output_sha256": SR.output_hash(OUTPUT)}
+           "step_receipt": token, "output_sha256": SR.output_hash(OUTPUT),
+           "edge": IDENTITY["edge"], "to": IDENTITY["to"],
+           "kind": IDENTITY["kind"]}
     record = {"department": IDENTITY["department"],
               "loop_id": IDENTITY["graph_id"],
               "graph_hash": IDENTITY["graph_hash"],

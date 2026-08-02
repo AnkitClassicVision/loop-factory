@@ -744,6 +744,7 @@ def test_redirected_decision_target_refuses_resume(tmp_path):
     first = _run(dept, tmp_path, fingerprint="redirect-1")
     assert first["state"] == "done"
     rows_before = len(_transitions(dept, first))
+    ledger_before = _ledger_lines(dept, first["run_id"])
 
     def redirect(state):
         state["state"] = "running"
@@ -754,7 +755,54 @@ def test_redirected_decision_target_refuses_resume(tmp_path):
     with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
         _run(dept, tmp_path, fingerprint="redirect-1")
     assert len(_transitions(dept, first)) == rows_before
+    assert _ledger_lines(dept, first["run_id"]) == ledger_before  # no mint
     assert _markers(dept) == ["n1", "n2", "n3"]  # nothing re-executed
+
+
+def test_retagged_row_refuses_resume(tmp_path):
+    # R6-S1: a valid fired-edge row retagged to a PENDING edge would let one
+    # token feed two successors. Routing is inside the binding, so the retag
+    # fails row reverification before anything executes or mints.
+    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
+                                 "n2.py": _mark_node("n2"),
+                                 "n3.py": _mark_node("n3")},
+                      _fanout_manifest())
+    with pytest.raises(RuntimeError, match="post_mark_fired"):
+        RUN.run_graph(dept, trigger_fingerprint="retag-1", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("post_mark_fired"))
+    assert _markers(dept) == ["n1"]
+    run_id = _run_id_for("retag-1")
+    ledger_before = _ledger_lines(dept, run_id)
+
+    def retag(state):
+        row = state["transitions"][0]  # fired edge 0 (N1 -> N2)
+        row["edge"] = "1"
+        row["to"] = "N3"  # masquerade as the still-pending edge 1
+    _rewrite_state(dept, run_id, retag)
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        RUN.run_graph(dept, trigger_fingerprint="retag-1", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None)
+    assert _markers(dept) == ["n1"]  # neither successor executed
+    assert _ledger_lines(dept, run_id) == ledger_before  # nothing minted
+
+
+def test_deleted_checkpoint_with_row_refuses_resume(tmp_path):
+    # R6-S2: node execution precedes transition issuance, so receipts alone
+    # cannot prevent duplicated node effects — a row whose source node lacks
+    # a signed checkpoint is not a legitimate crash shape. Refuse.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="orphan-1")
+    assert first["state"] == "done"
+
+    def delete_checkpoint(state):
+        state["state"] = "running"
+        del state["nodes"]["N1"]  # its transition rows remain
+    _rewrite_state(dept, first["run_id"], delete_checkpoint)
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="orphan-1")
+    assert _markers(dept) == ["sense"]  # N1 did NOT re-execute
 
 
 def _fanout_manifest():

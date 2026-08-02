@@ -2,10 +2,10 @@
 
 Before this class existed, a runner step was 'proven' by plain JSON on disk —
 forgeable by anything that can write a file (the audit's step-receipt gap).
-A step receipt binds one completed node execution:
+A step receipt binds one completed node execution AND its routing:
 
     (department, graph_id, graph_hash, release_hash, run_id, node_id,
-     attempt, output_hash)
+     attempt, edge, to, kind, output_hash)
 
 and is signed/verified through the SAME hardened primitives as effect
 receipts (kernel/receipts.py issue_receipt/verify_receipt) — this module
@@ -105,9 +105,22 @@ def _resolve_output_hash(output, output_hash_value):
     return output_hash(output)
 
 
+BINDING_SCHEMA = "step-receipt-v2"
+
+
 def step_binding(*, department, graph_id, graph_hash, release_hash, run_id,
-                 node_id, attempt, output=None, output_hash=None) -> dict:
+                 node_id, attempt, edge, to, kind,
+                 output=None, output_hash=None) -> dict:
+    """R6-S1: routing is INSIDE the binding — edge identity, destination,
+    and kind are HMAC-covered, so a persisted row's routing labels are
+    authenticated by its token; retagging a row to another edge fails
+    binding verification instead of borrowing the token."""
+    if not (isinstance(edge, str) and edge):
+        raise ValueError("edge identity must be a non-empty string")
+    if not (isinstance(kind, str) and kind):
+        raise ValueError("transition kind must be a non-empty string")
     return {
+        "schema": BINDING_SCHEMA,
         "department": department,
         "graph_id": graph_id,
         "graph_hash": graph_hash,
@@ -115,27 +128,33 @@ def step_binding(*, department, graph_id, graph_hash, release_hash, run_id,
         "run_id": run_id,
         "node_id": node_id,
         "attempt": int(attempt),
+        "edge": edge,
+        "to": to,
+        "kind": kind,
         "output_hash": _resolve_output_hash(output, output_hash),
     }
 
 
 def issue_step_receipt(*, signer, now, department, graph_id, graph_hash,
-                       release_hash, run_id, node_id, attempt, output=None,
-                       output_hash=None, ttl_s=DEFAULT_TTL_S) -> str:
+                       release_hash, run_id, node_id, attempt, edge, to, kind,
+                       output=None, output_hash=None,
+                       ttl_s=DEFAULT_TTL_S) -> str:
     receipts = _receipts()
     binding = step_binding(
         department=department, graph_id=graph_id, graph_hash=graph_hash,
         release_hash=release_hash, run_id=run_id, node_id=node_id,
-        attempt=attempt, output=output, output_hash=output_hash)
+        attempt=attempt, edge=edge, to=to, kind=kind,
+        output=output, output_hash=output_hash)
     return receipts.issue_receipt(
         ACTION_CLASS, binding, ttl_s, signer, now, secrets.token_hex(16))
 
 
 def verify_step_receipt(token, *, signer, now, consumed, department, graph_id,
                         graph_hash, release_hash, run_id, node_id, attempt,
-                        output=None, output_hash=None):
-    """Verify a transition token against the exact step identity + output
-    (by body, or by its persisted canonical hash — same attestation).
+                        edge, to, kind, output=None, output_hash=None):
+    """Verify a transition token against the exact step identity, ROUTING
+    (edge/to/kind — R6-S1), and output (by body, or by its persisted
+    canonical hash — same attestation).
 
     `consumed` is the durable consumption store (DurableNonceStore, or any
     object with __contains__/add). A successful verify CONSUMES the token:
@@ -146,7 +165,8 @@ def verify_step_receipt(token, *, signer, now, consumed, department, graph_id,
     binding = step_binding(
         department=department, graph_id=graph_id, graph_hash=graph_hash,
         release_hash=release_hash, run_id=run_id, node_id=node_id,
-        attempt=attempt, output=output, output_hash=output_hash)
+        attempt=attempt, edge=edge, to=to, kind=kind,
+        output=output, output_hash=output_hash)
     return receipts.verify_receipt(
         token, ACTION_CLASS, binding, signer=signer, now=now,
         seen_nonces=consumed)
@@ -223,4 +243,5 @@ def reverify_transition(row, *, record, signer, now):
         output_hash=row["output_sha256"], consumed=set(),
         department=record["department"], graph_id=record["loop_id"],
         graph_hash=record["graph_hash"], release_hash=record["release_hash"],
-        run_id=record["run_id"], node_id=row["from"], attempt=row["attempt"])
+        run_id=record["run_id"], node_id=row["from"], attempt=row["attempt"],
+        edge=row["edge"], to=row.get("to"), kind=row["kind"])

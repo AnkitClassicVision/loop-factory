@@ -84,7 +84,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER_VERSION = "2.3.0"
+RUNNER_VERSION = "2.4.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
@@ -563,7 +563,30 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             # C3d — every persisted receipt is REVERIFIED before the frontier
             # is trusted; 'expired' means authentic-but-stale and is accepted,
             # anything else is tampering and refuses resume.
+            seen_edge_keys: set = set()
             for prior_row in prior_rows:
+                # R6-S1: one-to-one — a second row for the same authenticated
+                # edge would mean a double-mint. R6-S2: a row whose source
+                # node lacks a signed checkpoint is not a legitimate crash
+                # shape (node effects precede transition issuance), refuse.
+                edge_key = (prior_row.get("from"), prior_row.get("edge"))
+                if edge_key in seen_edge_keys:
+                    message = (f"resume_integrity: duplicate transition rows "
+                               f"for edge {edge_key} in run {run_id} — "
+                               f"resume refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message)
+                seen_edge_keys.add(edge_key)
+                source_rec = (existing.get("nodes") or {}).get(
+                    prior_row.get("from"))
+                if (not isinstance(source_rec, dict)
+                        or source_rec.get("decisions") is None):
+                    message = (f"resume_integrity: orphaned transition — "
+                               f"source node {prior_row.get('from')!r} in "
+                               f"run {run_id} has no signed checkpoint — "
+                               f"resume refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message)
                 try:
                     verdict = step_receipts.reverify_transition(
                         prior_row, record=existing, signer=signer,
@@ -711,10 +734,12 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         try:
             token = step_receipts.issue_step_receipt(
                 signer=signer, now=now_fn(), output_hash=output_hash,
-                node_id=src, attempt=attempt, ttl_s=receipt_ttl_s, **identity)
+                node_id=src, attempt=attempt, edge=edge_id, to=dst, kind=kind,
+                ttl_s=receipt_ttl_s, **identity)
             check = step_receipts.verify_step_receipt(
                 token, signer=signer, now=now_fn(), output_hash=output_hash,
-                consumed=consumed, node_id=src, attempt=attempt, **identity)
+                consumed=consumed, node_id=src, attempt=attempt, edge=edge_id,
+                to=dst, kind=kind, **identity)
         except Exception as exc:
             run.log("gate_failure", node_id=src, why=f"signing_plane:{kind}",
                     reason=f"{type(exc).__name__}: {exc}")
@@ -887,8 +912,11 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
     # Row/fired reconciliation (R5-C2): a crash between the transition row
     # landing and the decision flipping to fired must not mint a SECOND token
     # on resume. Rows were already reverified before the checkpoint was
-    # trusted, so an existing row for a pending decision means the decision
-    # IS fired — adopt it, re-seal, mint nothing. Exactly-once per edge.
+    # trusted — and routing (edge/to/kind) is INSIDE each token's binding
+    # (R6-S1), so the row's edge label used for matching here is
+    # token-authenticated, never a bare row label. An existing row for a
+    # pending decision means the decision IS fired — adopt it, re-seal, mint
+    # nothing. Exactly-once per edge.
     try:
         for adopt_nid, adopt_rec in run.record["nodes"].items():
             adopted = False
