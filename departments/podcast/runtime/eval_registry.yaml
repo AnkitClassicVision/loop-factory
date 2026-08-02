@@ -1,0 +1,26 @@
+# Charter C14: script sensor lanes never receive model judgment.
+pipeline_sensor:
+  tier1:
+    - source_files_present_and_json_lists
+    - charter_pipeline_setpoint_present
+    - contact_identity_unambiguous
+    - calendar_contact_email_join
+    - qualifying_status_allowlist
+    - joined_guest_deduplication
+    - pipeline_setpoint_met
+
+manifest_sensor:
+  tier1:
+    - source_file_present_and_json_shape
+    - guest_email_unique
+    - required_manifest_fields_present
+    - publish_window_completeness
+
+publish_verifier:
+  tier1:
+    - schedule_source_present_and_json_shape
+    - publish_expectations_complete
+    - provider_artifacts_present_and_readable
+    - rss_url_present
+    - youtube_public
+    - social_receipts_complete

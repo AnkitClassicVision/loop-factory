@@ -1,0 +1,51 @@
+"""Starter v2 runtime node for the {DEPARTMENT} department.
+
+F2 must rename this file/node, implement ``execute``, and trace it to the
+procedural graph before release pinning.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+from factory import runrecord
+
+
+DEPARTMENT = "{DEPARTMENT}"
+NODE = "runtime_node"
+
+
+# DATA RULES:
+# - Never put PHI, secrets, credentials, or raw message bodies in this node.
+# - Records contain pointers to sanitized artifacts, never the content itself.
+def execute() -> None:
+    """Implement the declared node path here; the F0 starter has no effects."""
+
+
+def main() -> int:
+    department_dir = Path(__file__).resolve().parents[1]
+    state_dir = department_dir / "state"
+    utc_date = datetime.now(timezone.utc).date().isoformat()
+    trigger = {
+        "kind": "time",
+        "id": NODE,
+        "dedupe_key": f"{utc_date}-{NODE}",  # <UTC date>-<node>
+    }
+
+    # timed_emit calls runrecord.emit_record after the main path. Do not catch
+    # record-append errors: a missing record fails closed and blocks the chain.
+    with runrecord.timed_emit(
+        state_dir,
+        DEPARTMENT,
+        NODE,
+        release=runrecord.read_release(department_dir),
+        trigger=trigger,
+        cost={"lane": "flat_subscription", "model_calls": 0},
+        external_actions_taken=0,
+    ):
+        execute()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

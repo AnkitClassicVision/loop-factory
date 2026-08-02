@@ -19,90 +19,7 @@ from pathlib import Path
 # quotes, spaces, and shell metacharacters by construction (Codex review #18).
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 
-
-_CHARTER_TEMPLATE = """# {name} department charter — TEMPLATE (F0 scaffold)
-#
-# F1 INTENT LOCK REQUIRED (human step, owner): the fields below are placeholders.
-# Standing this department means running the intent interview
-# (interview/INTERVIEW.md) and replacing every TODO with the department's real
-# intent. Nothing here is fabricated for you — the factory captures the owner's
-# judgment, it does not guess it.
-#
-# This charter is a GOVERNANCE FILE: human-owned, READ-ONLY to the department at
-# every autonomy level. Heals and managers may never edit it.
-department: {name}
-version: v0.1
-status: F0_scaffold_awaiting_intent_lock
-owner: {owner}
-mission: TODO_F1
-
-autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
-
-setpoints:
-  operational: {{metric: TODO_define_in_F1, target: 0}}
-  outcome: {{metric: TODO_define_in_F1, target: TBD_MEASURE_IN_SHADOW}}
-
-# Deterministic manager thresholds. The manager loads THESE (charter is the
-# source of truth); factory defaults apply only when a key is absent.
-thresholds:
-  weekly_touch_ceiling: 300
-  pace_ceiling_near_frac: 0.9
-  faux_work_touch_floor: 50
-  backlog_aging_min: 1
-  budget_near_frac: 0.8
-
-budget:
-  engine_policy: subscription_oauth_only   # owner decision 2026-07-23: OAuth/subscription
-  api_spend_rule: forbidden_escalate_instead  # plan lanes only; API spend escalates
-  weekly_ceilings:
-    model_calls: 900
-    dollars: 0
-    worker_minutes: 1200
-
-execution:  # owner decision (Ankit, 2026-07-23) — factory-wide defaults
-  headless: true                 # steps never depend on an interactive session
-  step_receipts: required        # every step proves completion with an executed
-                                 # artifact/output/receipt BEFORE the next step;
-                                 # missing receipt => manager + heal ladder fix,
-                                 # never advancement
-
-# Safety floors inherited from the factory standard; MUST NOT be weakened by a
-# heal. Fill department-specific funnels/subgraphs during F2 after intent lock.
-immutable_safety_invariants:
-  heal_may_not_modify:
-    - delivery_floor
-    - send_authorization
-    - eligibility_allowlist
-    - frequency_policy
-    - privacy_floor
-    - kill_controller
-    - circuit_breaker
-    - promotion_contract
-    - budget_ceilings
-    - identity_resolution
-    - metric_definitions
-    - gateway_mode
-    - autonomy_state
-
-escalation:
-  default: fully_automated_with_escalation   # run without a human until a gate or breach
-  human_gates:      # action classes that ALWAYS require a human decision
-    - external_send
-    - crm_write
-    - publish
-    - spend_over_ceiling
-    - charter_change
-    - promotion
-
-kill_if: []          # TODO F1: kill (not pause) conditions in the owner's words
-
-funnels:
-  entries: []        # TODO F1/F2: governed subgraphs (see templates/subgraphs.json.tmpl)
-
-memory:
-  local: departments/{name}/state
-  backends: []       # optional durable backends (s3, open_brain); local is always on
-"""
+_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
 
 _RUNTIME_README = """# {name} runtime
 
@@ -119,6 +36,32 @@ intent, then author the charter setpoints + funnel subgraphs. F2-F4 then govern
 and hand-author the runtime nodes from the procedural graph, shadow, and pin a
 release. Department-SPECIFIC node code lives here; factory machinery does not.
 """
+
+
+def _template(name: str) -> str:
+    return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
+
+
+def _replace(text: str, **values: str) -> str:
+    """Replace only declared template tokens; YAML braces remain literal."""
+    for key, value in values.items():
+        doubled = "{{" + key + "}}"
+        if doubled in text:
+            text = text.replace(doubled, value)
+        else:
+            text = text.replace("{" + key + "}", value)
+    return text
+
+
+def _shell_double_quoted(value: Path) -> str:
+    """Escape a path for insertion inside a shell double-quoted string."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
 
 
 def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
@@ -144,12 +87,37 @@ def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
     (dept / "runtime").mkdir(parents=True, exist_ok=True)
     (dept / "interview").mkdir(parents=True, exist_ok=True)
     (dept / "knowledge").mkdir(parents=True, exist_ok=True)
-    (dept / "charter.yaml").write_text(
-        _CHARTER_TEMPLATE.format(name=name, owner=owner), encoding="utf-8"
+    charter_path = dept / "charter.yaml"
+    eval_registry_path = dept / "runtime" / "eval_registry.yaml"
+    runtime_node_path = dept / "runtime" / "runtime_node.py"
+    engines_path = dept / "runtime" / "engines.example.yaml"
+    daily_path = dept / "runtime" / f"{name}_daily.sh"
+
+    charter_path.write_text(
+        _replace(_template("charter.yaml.template"), name=name, owner=owner),
+        encoding="utf-8",
     )
     (dept / "runtime" / "README.md").write_text(
         _RUNTIME_README.format(name=name), encoding="utf-8"
     )
+    eval_registry_path.write_text(
+        _replace(_template("eval-registry.yaml.template"), DEPARTMENT=name),
+        encoding="utf-8",
+    )
+    runtime_node_path.write_text(
+        _replace(_template("runtime-node.py.template"), DEPARTMENT=name),
+        encoding="utf-8",
+    )
+    engines_path.write_text(_template("engines.yaml.template"), encoding="utf-8")
+    daily_path.write_text(
+        _replace(
+            _template("department_daily.sh.template"),
+            DEPARTMENT=name,
+            REPO=_shell_double_quoted(root.resolve()),
+        ),
+        encoding="utf-8",
+    )
+    daily_path.chmod(0o755)
 
     registry_entry = {
         "id": name,
@@ -177,7 +145,15 @@ def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
 
     return {
         "department": name,
-        "created": [str(dept / "charter.yaml"), str(dept / "state"), str(dept / "runtime")],
+        "created": [
+            str(charter_path),
+            str(dept / "state"),
+            str(dept / "runtime"),
+            str(eval_registry_path),
+            str(runtime_node_path),
+            str(engines_path),
+            str(daily_path),
+        ],
         "registry_entry": registry_entry,
         "registry_file": registry_file,
         "next_human_step": (

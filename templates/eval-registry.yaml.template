@@ -1,0 +1,26 @@
+# {DEPARTMENT} evaluator registry — F0/F2 template
+# Tier 1 is deterministic and always runs before any model evaluator.
+version: eval-registry/v1
+node_classes:
+  default:
+    tier1:
+      required_checks:
+        - schema_valid
+        - required_fields_present
+        - duplicate_free
+        - dates_valid
+        - permissions_valid
+        - external_actions_taken_valid
+
+    # Tier 2 is optional and must use an independent engine lane. Uncomment and
+    # fill this block only for content quality or ambiguity that needs judgment.
+    # tier2:
+    #   evaluator: TODO_F2
+    #   engine: TODO_F2_INDEPENDENT_ENGINE
+    #   golden_set: TODO_F2_PATH_TO_5_TO_10_CASES
+    #   holdout: TODO_F2_PATH_TO_HOLDOUT_CASES
+    #   max_edit_rounds: TODO_F2
+
+# GOLDEN-SET ADVISORY RULE: until a Tier-2 evaluator has a golden set and scores
+# clean on it, its verdicts are advisory-only (recorded, never gating). A model
+# swap must beat the incumbent on the holdout before its verdicts count.
