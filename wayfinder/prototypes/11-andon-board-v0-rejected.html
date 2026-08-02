@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Factory — Estate Andon Board (prototype v0, synthetic data)</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b23; --panel2:#1c232e; --line:#28303d;
+    --ink:#e8edf4; --dim:#8b96a5; --faint:#5c6675;
+    --ok:#3fb970; --warn:#e5a83b; --crit:#e0564a; --info:#4a90d9;
+    --accent:#6ea8fe; --degraded:#b07de0;
+    font-size:15px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:400 1rem/1.45 "Inter","Segoe UI",system-ui,sans-serif;padding:1.2rem 1.4rem 3rem}
+  h1{font-size:1.15rem;font-weight:650;letter-spacing:.01em}
+  h2{font-size:.78rem;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin-bottom:.55rem}
+  .hdr{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
+  .hdr .tag{font-size:.72rem;color:var(--faint);border:1px solid var(--line);border-radius:99px;padding:.15rem .6rem}
+  .hdr .ts{margin-left:auto;font-size:.78rem;color:var(--dim);font-variant-numeric:tabular-nums}
+  .grid{display:grid;grid-template-columns:2.1fr 1fr;gap:1rem}
+  @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem}
+  /* ANDON STRIP */
+  .andon{display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem}
+  .light{flex:1;min-width:220px;border-radius:10px;padding:.7rem .9rem;border:1px solid var(--line);background:var(--panel)}
+  .light .lbl{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  .light .val{font-size:1.05rem;font-weight:650;margin-top:.15rem}
+  .light.ok{border-color:#2b5c40}.light.ok .val{color:var(--ok)}
+  .light.warn{border-color:#7a5a1e}.light.warn .val{color:var(--warn)}
+  .light.crit{border-color:#7c3029;background:#20161a;animation:pulse 1.6s ease-in-out infinite}
+  .light.crit .val{color:var(--crit)}
+  @keyframes pulse{50%{box-shadow:0 0 0 4px rgba(224,86,74,.12)}}
+  .light .sub{font-size:.76rem;color:var(--dim);margin-top:.2rem}
+  code{font:.78rem/1.4 "JetBrains Mono","Fira Mono",monospace;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:.05rem .35rem;color:#c9d5e3}
+  /* DEPARTMENT LANES */
+  .lane{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:.9rem;overflow:hidden}
+  .lane-h{display:flex;align-items:center;gap:.7rem;padding:.65rem .9rem;background:var(--panel2);border-bottom:1px solid var(--line)}
+  .dot{width:.62rem;height:.62rem;border-radius:50%}
+  .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.crit{background:var(--crit)}.dot.deg{background:var(--degraded)}
+  .lane-h .name{font-weight:650}
+  .lane-h .auto{font-size:.7rem;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:.1rem .5rem}
+  .lane-h .meta{margin-left:auto;font-size:.75rem;color:var(--dim);font-variant-numeric:tabular-nums}
+  .lane-b{padding:.7rem .9rem;display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:.9rem}
+  @media(max-width:900px){.lane-b{grid-template-columns:1fr}}
+  .runrow{display:flex;align-items:center;gap:.55rem;font-size:.82rem;padding:.3rem 0;border-bottom:1px dashed var(--line)}
+  .runrow:last-child{border-bottom:0}
+  .runrow .node{font-weight:600;min-width:9.5rem}
+  .runrow .st{font-size:.68rem;letter-spacing:.05em;text-transform:uppercase;border-radius:4px;padding:.08rem .4rem}
+  .st.ok{background:#17331f;color:var(--ok)}.st.run{background:#14283d;color:var(--accent)}
+  .st.blocked{background:#3d1f14;color:var(--warn)}.st.heal{background:#2a1f3d;color:var(--degraded)}
+  .runrow .who{color:var(--faint);font-size:.72rem;margin-left:auto;font-variant-numeric:tabular-nums}
+  .kv{font-size:.8rem;color:var(--dim)}
+  .kv b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+  .meter{height:.45rem;background:var(--panel2);border:1px solid var(--line);border-radius:99px;overflow:hidden;margin:.25rem 0 .55rem}
+  .meter>i{display:block;height:100%;background:var(--accent)}
+  .meter.warn>i{background:var(--warn)}
+  /* HEIJUNKA */
+  table{width:100%;border-collapse:collapse;font-size:.8rem}
+  th{color:var(--faint);font-weight:600;text-align:left;padding:.3rem .45rem;border-bottom:1px solid var(--line);font-size:.72rem;letter-spacing:.05em;text-transform:uppercase}
+  td{padding:.34rem .45rem;border-bottom:1px solid var(--panel2);font-variant-numeric:tabular-nums}
+  .cell{display:inline-block;min-width:2.2rem;text-align:center;border-radius:4px;padding:.06rem .3rem;font-size:.74rem}
+  .cell.done{background:#17331f;color:var(--ok)}.cell.due{background:#14283d;color:var(--accent)}
+  .cell.skip{background:var(--panel2);color:var(--faint)}.cell.miss{background:#3d1f14;color:var(--warn)}
+  /* APPROVALS */
+  .appr{display:flex;gap:.6rem;align-items:flex-start;padding:.5rem 0;border-bottom:1px dashed var(--line);font-size:.82rem}
+  .appr:last-child{border-bottom:0}
+  .appr .age{font-size:.7rem;color:var(--warn);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .appr a{color:var(--accent);text-decoration:none}
+  .btn{display:inline-block;font-size:.72rem;border:1px solid var(--line);border-radius:6px;padding:.18rem .55rem;color:var(--dim);margin-top:.2rem}
+  /* HEAL LADDER FEED */
+  .heal{font-size:.8rem;padding:.42rem 0;border-bottom:1px dashed var(--line)}
+  .heal:last-child{border-bottom:0}
+  .rung{display:inline-block;font-size:.66rem;font-weight:700;border-radius:4px;padding:.06rem .35rem;margin-right:.4rem;background:#2a1f3d;color:var(--degraded)}
+  .rung.l1{background:#14283d;color:var(--accent)}
+  .heal .t{color:var(--faint);font-size:.7rem;float:right;font-variant-numeric:tabular-nums}
+  footer{margin-top:1.2rem;font-size:.72rem;color:var(--faint)}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <h1>Loop Factory — Estate Board</h1>
+    <span class="tag">PROTOTYPE v0 · synthetic board-feed.ndjson</span>
+    <span class="tag">shadow mode · external_actions_taken = 0</span>
+    <span class="ts">feed regenerated 2026-08-02 15:42:07 ET · estate epoch 412</span>
+  </div>
+
+  <!-- ANDON STRIP: the walk-past view. One glance = is anything on fire. -->
+  <div class="andon">
+    <div class="light ok"><div class="lbl">Estate</div><div class="val">2 departments · 1 healthy · 1 degraded</div><div class="sub">watchdog last cycle 15:40 · drift clean</div></div>
+    <div class="light crit"><div class="lbl">Andon — needs a human</div><div class="val">AUTH_EXPIRED · codex_oauth lane</div><div class="sub">social blocked 42 min · fix: <code>codex login</code> · 3 steps queued</div></div>
+    <div class="light warn"><div class="lbl">Approvals waiting</div><div class="val">2 items · oldest 3.1 h</div><div class="sub">both social · review cards linked below</div></div>
+    <div class="light ok"><div class="lbl">Self-heal (24 h)</div><div class="val">2 auto-patches applied · 0 failed</div><div class="sub">budget 2/10 this week · 0 nodes demoted</div></div>
+  </div>
+
+  <div class="grid">
+  <div>
+    <!-- DEPARTMENT LANES -->
+    <h2>Department lanes</h2>
+
+    <div class="lane">
+      <div class="lane-h"><span class="dot ok"></span><span class="name">podcast</span><span class="auto">shadow · full-auto w/ escalation</span>
+        <span class="meta">epoch 1493 · last cycle 15:40 · release 7f3a91c2</span></div>
+      <div class="lane-b">
+        <div>
+          <h2>Active / recent runs</h2>
+          <div class="runrow"><span class="node">dag_supervisor</span><span class="st ok">ok</span><span class="kv">receipt verified · 0 incidents</span><span class="who">15:40 · run 01J4V…8QK</span></div>
+          <div class="runrow"><span class="node">pipeline_sensor</span><span class="st ok">ok</span><span class="kv">3 episodes tracked</span><span class="who">15:40</span></div>
+          <div class="runrow"><span class="node">publish_verifier</span><span class="st run">running</span><span class="kv">step 2/3 · attempt 1</span><span class="who">15:41</span></div>
+          <div class="runrow"><span class="node">escalate_outbox</span><span class="st ok">ok</span><span class="kv">0 new escalations</span><span class="who">15:40</span></div>
+        </div>
+        <div>
+          <h2>Today</h2>
+          <div class="kv">runs <b>47</b> · ok <b>46</b> · errors <b>1</b></div>
+          <div class="kv">evaluator pass <b>100%</b> <span style="color:var(--faint)">(Tier-1 only)</span></div>
+          <div class="kv" style="margin-top:.4rem">tokens <b>0</b> <span style="color:var(--faint)">(no model-calling nodes in-repo)</span></div>
+          <div class="kv">model_calls <b>0</b></div>
+        </div>
+        <div>
+          <h2>Signals</h2>
+          <div class="kv" style="color:var(--ok)">no open findings</div>
+          <div class="kv" style="margin-top:.35rem;color:var(--faint)">last escalation: 2026-07-31 (test, resolved)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-h"><span class="dot deg"></span><span class="name">social</span><span class="auto">shadow · degraded — 1 node quarantined</span>
+        <span class="meta">epoch 2181 · last cycle 15:39 · release ac07729f</span></div>
+      <div class="lane-b">
+        <div>
+          <h2>Active / recent runs</h2>
+          <div class="runrow"><span class="node">N4 draft_post</span><span class="st blocked">auth-blocked</span><span class="kv">codex_oauth expired · queued</span><span class="who">15:00 · run 01J4V…2MA</span></div>
+          <div class="runrow"><span class="node">N5 qa_post</span><span class="st heal">heal L2</span><span class="kv">self-patch in QA · attempt 1</span><span class="who">15:37 · run 01J4V…9TC</span></div>
+          <div class="runrow"><span class="node">N2 rank_candidates</span><span class="st ok">ok</span><span class="kv">12 items ranked</span><span class="who">15:30</span></div>
+          <div class="runrow"><span class="node">S6 kill_switch</span><span class="st ok">ok</span><span class="kv">not tripped</span><span class="who">15:39</span></div>
+        </div>
+        <div>
+          <h2>Today</h2>
+          <div class="kv">runs <b>31</b> · ok <b>27</b> · blocked <b>3</b> · errors <b>1</b></div>
+          <div class="kv">evaluator pass <b>83%</b> · revise loops <b>2</b></div>
+          <div class="kv" style="margin-top:.4rem">tokens in <b>184k</b> / out <b>22k</b></div>
+          <div class="kv">model_calls <b>9</b> · lanes: claude_subscription <b>6</b>, codex_oauth <b>3</b></div>
+          <h2 style="margin-top:.5rem">weekly model-call budget</h2>
+          <div class="meter warn"><i style="width:64%"></i></div>
+          <div class="kv"><b>64%</b> used · resets Mon</div>
+        </div>
+        <div>
+          <h2>Signals</h2>
+          <div class="kv" style="color:var(--crit)">AUTH_EXPIRED · codex_oauth · 42 min</div>
+          <div class="kv" style="color:var(--degraded);margin-top:.3rem">N5 quarantined → last-good rollback, heal L2 running</div>
+          <div class="kv" style="color:var(--warn);margin-top:.3rem">observations.jsonl growth: 7.1 MB (rotation pending — known gap #5)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HEIJUNKA -->
+    <h2>Heijunka — leveled schedule (today)</h2>
+    <div class="panel">
+      <table>
+        <tr><th>department / node class</th><th>06:00</th><th>09:00</th><th>12:00</th><th>15:00</th><th>18:00</th><th>21:00</th></tr>
+        <tr><td>podcast · daily cycle</td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell due">now</span></td><td><span class="cell skip">—</span></td><td><span class="cell skip">—</span></td></tr>
+        <tr><td>social · draft+QA</td><td><span class="cell skip">—</span></td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell miss">blk</span></td><td><span class="cell due">retry</span></td><td><span class="cell skip">—</span></td></tr>
+        <tr><td>estate · watchdog + board feed</td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell done">✓</span></td><td><span class="cell due">due</span></td><td><span class="cell due">due</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <!-- APPROVAL INBOX -->
+    <h2>Approval inbox — needs you</h2>
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="appr"><div><b>social</b> · post draft r2 ready for review<br>
+        <span class="kv">run 01J4V…2MA · evaluator: allow (0 major) · </span><a href="#">ANK-347 ↗</a><br>
+        <span class="btn">approve</span> <span class="btn">reject</span></div><div class="age">3.1 h</div></div>
+      <div class="appr"><div><b>social</b> · re-auth codex_oauth lane<br>
+        <span class="kv">unblocks 3 queued steps · </span><code>codex login</code><br>
+        <span class="btn">done — re-probe</span></div><div class="age">42 m</div></div>
+    </div>
+
+    <!-- SELF-HEAL FEED -->
+    <h2>Self-heal ladder — last 24 h</h2>
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="heal"><span class="rung">L2</span><b>social/N5</b> self-patch in QA <span class="kv">— stale-lock fix, re-shadow pending</span><span class="t">15:37</span></div>
+      <div class="heal"><span class="rung l1">L1</span><b>podcast/manifest_sensor</b> known-fix: stale artifact rebuilt · ok<span class="t">11:02</span></div>
+      <div class="heal"><span class="rung">L2</span><b>social/N1</b> auto-patch applied · QA ✓ · re-pinned ac07729f<span class="t">08:15</span></div>
+      <div class="heal"><span class="rung l1">L0</span><b>social/N2</b> transient fetch fail · retry ok<span class="t">07:44</span></div>
+    </div>
+
+    <!-- ESTATE METRICS -->
+    <h2>Estate — 7 days</h2>
+    <div class="panel">
+      <div class="kv">runs <b>512</b> · first-try ok <b>91%</b></div>
+      <div class="kv">auto-heals <b>11</b> (L0-L2) · human escalations <b>2</b></div>
+      <div class="kv">babysitting events <b>2</b> <span style="color:var(--ok)">▼ from 9</span></div>
+      <div class="kv" style="margin-top:.45rem">tokens <b>1.9M</b> · all lanes subscription · metered <b style="color:var(--ok)">0</b></div>
+      <div class="kv">evaluator drift alarms <b>0</b> · golden-set re-runs <b>4/4 ✓</b></div>
+    </div>
+  </div>
+  </div>
+
+  <footer>
+    Prototype v0 for wayfinder ticket 11 — rendered from embedded synthetic board-feed events matching the locked ticket-10 contract
+    (dept_status · active_run · andon · approval · metrics). Live version (ticket 17) regenerates this page from
+    <code>estate/state/board-feed.ndjson</code> alone. No PHI, no message bodies, pointers only.
+  </footer>
+</body>
+</html>

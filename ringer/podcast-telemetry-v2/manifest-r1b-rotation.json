@@ -1,0 +1,19 @@
+{
+  "run_name": "podcast-telemetry-v2",
+  "workdir": "/home/ankit114/ringer-work/podcast-telemetry-v2-r1b",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "observations-rotation",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "spec": "Your current working directory IS a git worktree of the loop-factory repo. Edit files here directly. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills.\n\nOWNED FILES (only these; both are new):\n  departments/podcast/runtime/rotate_observations.py\n  tests/test_rotate_observations.py\n\nTHE AUDITED DEFECT: departments/podcast/state/observations.jsonl grows unbounded (live: 11,166 lines, ~7 MB) and contains hundreds of exact-duplicate rows per (sensor, subject) pair from replayed sensor runs. Nothing rotates or compacts it. The reader (compare_charter.py — read it as source material, do not modify it) tolerates duplicates, so compaction must be safe and conservative.\n\nBUILD: a standalone CLI tool rotate_observations.py (argparse; --state-dir required; --max-lines default 5000; --dry-run flag) that: (1) removes exact-duplicate rows — identical (sensor, subject, status, detail) where only ts differs — keeping the NEWEST of each duplicate group; (2) if still over --max-lines, archives the oldest overflow lines to observations-archive-<UTCdate>.jsonl in the same dir (append, never overwrite an existing archive); (3) rewrites observations.jsonl atomically (temp + fsync + os.replace); (4) prints a one-line JSON receipt to stdout: {kept, deduped, archived, dry_run}; (5) --dry-run changes nothing on disk but prints the same receipt shape; (6) malformed JSON lines are preserved verbatim at their position (never dropped silently) and counted in the receipt as 'malformed'. Use the logging module for diagnostics, never print except the receipt line. Exit 0 on success, 1 with a clear error message on unreadable input.\n\ntests/test_rotate_observations.py — at least 6 tests: dedup keeps newest and removes exact copies; under-limit file with no dupes is untouched (byte-identical); overflow archives oldest lines and archive is append-only across two runs; --dry-run leaves file byte-identical while reporting counts; malformed lines survive and are counted; receipt JSON parses with all keys. Use tmp_path.\n\nYou fail for: touching files outside the owned list, fewer than 6 new 'def test_' functions, or the verify command failing.",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_rotate_observations.py -q -p no:cacheprovider' --patch /home/ankit114/ringer-work/podcast-telemetry-v2-r1b/rotate.patch --owned-files 'departments/podcast/runtime/rotate_observations.py,tests/test_rotate_observations.py' --min-new-tests 6",
+      "expect_files": [],
+      "verified": "observations.jsonl gets conservative dedup + rotation with a receipt, dry-run honesty, and no silent data loss"
+    }
+  ]
+}
