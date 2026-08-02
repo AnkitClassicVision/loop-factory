@@ -139,3 +139,57 @@ def test_non_finite_output_has_no_canonical_hash():
     import pytest
     with pytest.raises(ValueError):
         SR.output_hash({"n": float("inf")})
+
+
+def test_verify_by_output_hash_alone_matches_verify_by_output():
+    # R2: an auditor holding only the persisted output HASH (not the body)
+    # must be able to reverify a token — the binding already carries only the
+    # hash, so rebinding by hash is the same attestation.
+    token = _issue()
+    by_hash = SR.verify_step_receipt(
+        token, signer=_signer(), now=1010.0, output_hash=SR.output_hash(OUTPUT),
+        consumed=set(), **IDENTITY)
+    assert by_hash.ok is True
+    tampered = SR.verify_step_receipt(
+        token, signer=_signer(), now=1010.0,
+        output_hash=SR.output_hash({"status": "tampered"}),
+        consumed=set(), **IDENTITY)
+    assert tampered.ok is False
+    assert "binding" in tampered.reason
+
+
+def test_issue_by_output_hash_round_trips():
+    identity = dict(IDENTITY)
+    token = SR.issue_step_receipt(
+        signer=_signer(), now=1000.0, output_hash=SR.output_hash(OUTPUT),
+        ttl_s=600, **identity)
+    assert _verify(token).ok is True
+
+
+def test_exactly_one_of_output_and_hash_required():
+    import pytest
+    with pytest.raises(ValueError):
+        SR.issue_step_receipt(signer=_signer(), now=1000.0, ttl_s=600,
+                              **IDENTITY)
+    with pytest.raises(ValueError):
+        SR.verify_step_receipt(_issue(), signer=_signer(), now=1010.0,
+                               output=OUTPUT, output_hash="a" * 64,
+                               consumed=set(), **IDENTITY)
+
+
+def test_reverify_transition_from_persisted_row_and_record():
+    # R2: reverification needs ONLY (key service + run record + row).
+    token = _issue()
+    row = {"from": IDENTITY["node_id"], "attempt": IDENTITY["attempt"],
+           "step_receipt": token, "output_sha256": SR.output_hash(OUTPUT)}
+    record = {"department": IDENTITY["department"],
+              "loop_id": IDENTITY["graph_id"],
+              "graph_hash": IDENTITY["graph_hash"],
+              "release_hash": IDENTITY["release_hash"],
+              "run_id": IDENTITY["run_id"]}
+    result = SR.reverify_transition(row, record=record, signer=_signer(),
+                                    now=1010.0)
+    assert result.ok is True
+    forged = dict(row, step_receipt='{"forged": true}')
+    assert SR.reverify_transition(forged, record=record, signer=_signer(),
+                                  now=1010.0).ok is False

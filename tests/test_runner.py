@@ -28,9 +28,41 @@ def _load(name, rel):
 R = _load("runner_kernel_receipts", "kernel/receipts.py")
 REL = _load("runner_release", "factory/release.py")
 PJ = _load("runner_projection", "factory/projection.py")
+SR = _load("runner_step_receipts", "kernel/step_receipts.py")
 RUN = _load("runner", "factory/runner.py")
 
 SIGNER = R.LocalSigner(key="test-key")
+
+
+class _FlakyVerifySigner:
+    """Signs correctly; the first `fail_first` verifies report False. Models a
+    transient verification failure so the escalation path itself must gate."""
+
+    def __init__(self, inner, fail_first=1):
+        self._inner = inner
+        self._fails_left = fail_first
+
+    def sign(self, payload):
+        return self._inner.sign(payload)
+
+    def verify(self, payload, sig):
+        if self._fails_left > 0:
+            self._fails_left -= 1
+            return False
+        return self._inner.verify(payload, sig)
+
+
+class _DeadVerifySigner:
+    """Signs correctly; every verify fails — a broken signing plane."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def sign(self, payload):
+        return self._inner.sign(payload)
+
+    def verify(self, payload, sig):
+        return False
 
 
 SENSE_OK = """\
@@ -402,6 +434,213 @@ def test_non_finite_node_output_blocks(tmp_path):
                       _two_node_manifest())
     result = _run(dept, tmp_path)
     assert result["state"] == "escalated"  # unparseable under canonical policy
+
+
+# --------------------------------------------------------------------------- #
+# R1: a FAILED token verification must not reach a terminal state bare —
+# the escalation itself is receipt-gated; only a broken signing plane may
+# fall through, and that is a safety kill, not a bare escalation.
+# --------------------------------------------------------------------------- #
+
+def _state_json(dept, result):
+    return json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+
+
+def test_failed_verification_escalation_is_itself_receipt_gated(tmp_path):
+    import time as time_mod
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    flaky = _FlakyVerifySigner(R.LocalSigner(key="test-key"), fail_first=1)
+    result = RUN.run_graph(dept, trigger_fingerprint="flaky-1", signer=flaky,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    state = _state_json(dept, result)
+    gated = [t for t in state["transitions"]
+             if t["kind"] == "escalation" and t["to"] is None
+             and str(t.get("note", "")).startswith("verification_failed")]
+    assert gated, state["transitions"]
+    # the escalation receipt itself must reverify with the real key
+    check = SR.reverify_transition(gated[0], record=state,
+                                   signer=R.LocalSigner(key="test-key"),
+                                   now=time_mod.time())
+    assert check.ok, check.reason
+    assert str(state["termination_reason"]).startswith("verification_failed")
+
+
+def test_dead_signing_plane_falls_to_safety_kill(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    dead = _DeadVerifySigner(R.LocalSigner(key="test-key"))
+    result = RUN.run_graph(dept, trigger_fingerprint="dead-1", signer=dead,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "killed"
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "gate_failure" for row in rows)
+    state = _state_json(dept, result)
+    assert str(state["termination_reason"]).startswith("gate_failure")
+
+
+def test_on_fail_escalate_gate_failure_also_safety_kills(tmp_path):
+    # Failure path variant: the node fails AND the escalation gate cannot
+    # validate — a bare escalated terminal would be an unreceipted exit.
+    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    dead = _DeadVerifySigner(R.LocalSigner(key="test-key"))
+    result = RUN.run_graph(dept, trigger_fingerprint="dead-2", signer=dead,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "killed"
+
+
+# --------------------------------------------------------------------------- #
+# R2: every persisted transition row is independently reverifiable from
+# (key service + run records) alone — no runner, no output bodies.
+# --------------------------------------------------------------------------- #
+
+def test_transitions_reverifiable_from_persisted_records_only(tmp_path):
+    import time as time_mod
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    state = _state_json(dept, result)
+    assert state["department"] == "demo"  # identity is self-contained
+    assert state["transitions"]
+    for row in state["transitions"]:
+        assert len(row["output_sha256"]) == 64
+        check = SR.reverify_transition(row, record=state, signer=SIGNER,
+                                       now=time_mod.time())
+        assert check.ok, (row["from"], check.reason)
+
+
+def test_shadow_kill_records_signed_termination_reason(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": VIOLATOR, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    assert result["state"] == "killed"
+    assert _state_json(dept, result)["termination_reason"] == "shadow_violation"
+    proj = json.loads((dept / "state" / "receipts" / "execution-projection.json")
+                      .read_text(encoding="utf-8"))
+    assert PJ.verify_projection(proj, SIGNER) == []  # reason is under the sig
+    assert proj["runs"][0]["termination_reason"] == "shadow_violation"
+
+
+# --------------------------------------------------------------------------- #
+# R3: resume CONTINUES from the persisted frontier — completed nodes are not
+# re-executed, and their tokens survive into the auditor-visible projection.
+# --------------------------------------------------------------------------- #
+
+def _mark_node(marker):
+    return (f'import json, pathlib\n'
+            f'state = pathlib.Path(__file__).resolve().parents[1] / "state"\n'
+            f'state.mkdir(parents=True, exist_ok=True)\n'
+            f'with (state / "markers.txt").open("a", encoding="utf-8") as fh:\n'
+            f'    fh.write("{marker}\\n")\n'
+            f'print(json.dumps({{"status": "ok"}}))\n')
+
+
+FLAKY_N3 = """\
+import json, pathlib, sys
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+m = state / "markers.txt"
+with m.open("a", encoding="utf-8") as fh:
+    fh.write("n3\\n")
+if m.read_text(encoding="utf-8").splitlines().count("n3") == 1:
+    sys.exit(9)
+print(json.dumps({"status": "ok"}))
+"""
+
+
+def _three_node_manifest():
+    n3 = _node("N3", "runtime/n3.py", max_retries=1)
+    n3["failure_policy"]["backoff_s"] = 1  # forces a sleep_fn call on retry
+    return {
+        "schema_version": 2,
+        "subgraphs": [{
+            "id": "SG-RUN",
+            "concept_refs": ["C1"],
+            "entry": "N1",
+            "nodes": [_node("N1", "runtime/n1.py"),
+                      _node("N2", "runtime/n2.py"), n3],
+            "edges": [
+                {"from": "N1", "to": "N2", "kind": "normal",
+                 "when": "receipt.status == 'ok'"},
+                {"from": "N2", "to": "N3", "kind": "normal",
+                 "when": "receipt.status == 'ok'"},
+                {"from": "N3", "kind": "terminal",
+                 "when": "receipt.status == 'ok'"},
+            ],
+        }],
+    }
+
+
+def test_resume_continues_from_frontier_not_entry(tmp_path):
+    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
+                                 "n2.py": _mark_node("n2"),
+                                 "n3.py": FLAKY_N3},
+                      _three_node_manifest())
+
+    def crash_sleep(seconds):
+        raise RuntimeError("simulated crash during N3 retry backoff")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        RUN.run_graph(dept, trigger_fingerprint="cont-1", signer=SIGNER,
+                      root=tmp_path, sleep_fn=crash_sleep)
+    assert _markers(dept) == ["n1", "n2", "n3"]
+    run_id = _run_id_for("cont-1")
+    pre = json.loads((dept / "state" / "graph_runs" / run_id / "run_state.json")
+                     .read_text(encoding="utf-8"))
+    assert pre["state"] not in ("done", "failed", "escalated", "killed")
+    pre_tokens = [t["step_receipt"] for t in pre["transitions"]]
+    assert len(pre_tokens) == 2  # N1->N2, N2->N3 survived the crash
+
+    second = RUN.run_graph(dept, trigger_fingerprint="cont-1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert second["resumed"] is True
+    assert second["state"] == "done"
+    # N1/N2 executed exactly once across both processes; only N3 re-ran
+    assert _markers(dept) == ["n1", "n2", "n3", "n3"]
+    state = _state_json(dept, second)
+    tokens = [t["step_receipt"] for t in state["transitions"]]
+    assert tokens[:2] == pre_tokens  # prior token material preserved
+    assert [(t["from"], t["to"]) for t in state["transitions"]] == [
+        ("N1", "N2"), ("N2", "N3"), ("N3", None)]
+    proj = json.loads((dept / "state" / "receipts" / "execution-projection.json")
+                      .read_text(encoding="utf-8"))
+    proj_run = [r for r in proj["runs"] if r["run_id"] == run_id][0]
+    assert [t["step_receipt"] for t in proj_run["transitions"]][:2] == pre_tokens
+
+
+# --------------------------------------------------------------------------- #
+# R4: a HELD .run.lock (live concurrent runner) no-ops cleanly.
+# --------------------------------------------------------------------------- #
+
+def test_held_run_lock_noops_cleanly(tmp_path):
+    import subprocess as subprocess_mod
+    import sys as sys_mod
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    run_dir = dept / "state" / "graph_runs" / _run_id_for("held-1")
+    run_dir.mkdir(parents=True)
+    locker_src = ("import fcntl, sys, time\n"
+                  "handle = open(sys.argv[1], 'a+')\n"
+                  "fcntl.flock(handle.fileno(), fcntl.LOCK_EX)\n"
+                  "print('locked', flush=True)\n"
+                  "time.sleep(30)\n")
+    locker = subprocess_mod.Popen(
+        [sys_mod.executable, "-c", locker_src, str(run_dir / ".run.lock")],
+        stdout=subprocess_mod.PIPE, text=True)
+    try:
+        assert locker.stdout.readline().strip() == "locked"
+        result = _run(dept, tmp_path, fingerprint="held-1")
+        assert result["duplicate"] is True
+        assert result["state"] == "in_flight"
+        assert _markers(dept) == []
+    finally:
+        locker.terminate()
+        locker.wait()
 
 
 # --------------------------------------------------------------------------- #

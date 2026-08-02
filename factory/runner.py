@@ -33,8 +33,12 @@ Full signed tokens are persisted in the run records — reverifiable after a
 runner swap. A failed node still earns a transition token: the runner issues
 a receipt over its own failure record, so refusal/escalation routing and the
 failure/escalation exits are receipt-gated exactly like the success path.
-The ONLY unreceipted exit is `killed` (kill switch / shadow violation): a
-safety abort grants nothing, so it needs no token.
+Even the escalated/failed EXITS carry their own validated transition row —
+a failed token verification escalates through a runner-signed escalation
+receipt recording why. The ONLY unreceipted exit is `killed` (kill switch,
+shadow violation, or a signing plane so broken that even the escalation
+gate cannot validate): a safety abort grants nothing, so it needs no token.
+Each run records a termination_reason, carried into the SIGNED projection.
 
 Run state machine:  pending -> running <-> awaiting_receipt
                     -> done | failed | escalated | killed   (terminal)
@@ -324,7 +328,8 @@ class _Run:
 
     def __init__(self, *, dept_dir: Path, state_dir: Path, run_id: str,
                  loop_id: str, fingerprint_hash: str, graph_hash: str,
-                 release_hash: str, now_fn, resumed_from: str | None = None):
+                 release_hash: str, now_fn, resumed_from: str | None = None,
+                 prior_record: dict | None = None):
         self.dept_dir = dept_dir
         self.state_dir = state_dir
         self.run_dir = state_dir / "graph_runs" / run_id
@@ -336,6 +341,7 @@ class _Run:
             "schema": RUN_STATE_SCHEMA,
             "run_id": run_id,
             "loop_id": loop_id,
+            "department": dept_dir.name,
             "trigger_fingerprint_sha256": fingerprint_hash,
             "graph_hash": graph_hash,
             "release_hash": release_hash,
@@ -346,6 +352,15 @@ class _Run:
             "nodes": {},
             "transitions": [],
         }
+        if prior_record:
+            # Append-preserving resume: prior node records and transition rows
+            # (including their full signed tokens) are NEVER discarded.
+            self.record["created_at"] = prior_record.get(
+                "created_at", self.record["created_at"])
+            self.record["nodes"] = dict(prior_record.get("nodes", {}))
+            self.record["transitions"] = list(
+                prior_record.get("transitions", []))
+            self.record["resumes"] = int(prior_record.get("resumes", 0)) + 1
         if resumed_from is not None:
             self.record["resumed_from"] = resumed_from
 
@@ -510,7 +525,8 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
                    loop_id=loop_id, fingerprint_hash=fingerprint_hash,
                    graph_hash=loaded["graph_hash"],
                    release_hash=loaded["release_hash"], now_fn=now_fn,
-                   resumed_from=resumed_from)
+                   resumed_from=resumed_from,
+                   prior_record=existing if resumed_from is not None else None)
         run.persist()
         if resumed_from is None:
             run.log("run_created", graph_hash=loaded["graph_hash"],
@@ -548,23 +564,27 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         run.run_dir / "consumed_nonces.jsonl")
 
     def _gated_transition(*, src: str, dst, kind: str, attempt: int,
-                          output: dict, note: str | None = None) -> bool:
+                          output: dict, note: str | None = None) -> str | None:
         """Mint one fresh token for THIS transition, verify it (single-use,
-        durable consumption), and record it with the full signed token. No
-        state moves without this returning True."""
+        durable consumption), and record it with the full signed token AND
+        the canonical output hash it binds (auditor reverification needs only
+        the row + the run record). Returns None on success, else the failed
+        check's reason — and no state moves on a reason."""
+        out_hash = step_receipts.output_hash(output)
         token = step_receipts.issue_step_receipt(
-            signer=signer, now=now_fn(), output=output, node_id=src,
+            signer=signer, now=now_fn(), output_hash=out_hash, node_id=src,
             attempt=attempt, ttl_s=receipt_ttl_s, **identity)
         check = step_receipts.verify_step_receipt(
-            token, signer=signer, now=now_fn(), output=output,
+            token, signer=signer, now=now_fn(), output_hash=out_hash,
             consumed=consumed, node_id=src, attempt=attempt, **identity)
         if not check.ok:
             run.log("transition_blocked", node_id=src, to=dst, kind=kind,
                     reason=check.reason)
-            return False
+            return check.reason
         row = {"from": src, "to": dst, "kind": kind, "attempt": attempt,
                "step_receipt": token,
                "step_receipt_sha256": _sha256_text(token),
+               "output_sha256": out_hash,
                "ts": _now_iso(now_fn)}
         if note is not None:
             row["note"] = note
@@ -572,12 +592,55 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         run.persist()
         run.log("transition", **{k: v for k, v in row.items()
                                  if k != "step_receipt"})
-        return True
+        return None
+
+    final_reason: str | None = None
+
+    def _terminalize(src: str, attempt: int, output: dict, why: str) -> str:
+        """Receipt-gate an escalation exit. Every escalated terminal carries
+        its own validated transition row; if even THIS gate cannot validate,
+        the signing plane is broken and the run takes the accepted unreceipted
+        safety abort: killed."""
+        nonlocal final_reason
+        reason = _gated_transition(src=src, dst=None, kind="escalation",
+                                   attempt=attempt, output=output, note=why)
+        if reason is None:
+            final_reason = why
+            return "escalated"
+        run.log("gate_failure", node_id=src, why=why, reason=reason)
+        final_reason = f"gate_failure:{why}"
+        return "killed"
+
+    def _verification_escalation(src: str, attempt: int, kind: str,
+                                 reason: str) -> str:
+        why = f"verification_failed:{kind}"
+        return _terminalize(src, attempt,
+                            {"status": "runner_escalation", "node_id": src,
+                             "why": why, "failed_check": reason}, why)
 
     run.advance("running", "run_started")
-    frontier: deque = deque([subgraph["entry"]])
-    queued = {subgraph["entry"]}
-    terminal_reached = False
+    # Frontier reconstruction (identical for fresh and resumed runs): a node
+    # counts COMPLETED only if it is done AND at least one transition row from
+    # it exists — a done node whose transitions never recorded (crash in the
+    # transition window) is re-executed, because predicates need its output
+    # body, which is deliberately not persisted (hash-only records).
+    prior_transitions = run.record["transitions"]
+    completed = {nid for nid, rec in run.record["nodes"].items()
+                 if rec.get("state") == "done"
+                 and any(t.get("from") == nid for t in prior_transitions)}
+    terminal_reached = any(
+        t.get("kind") == "terminal" for t in prior_transitions)
+    frontier: deque = deque()
+    queued: set = set()
+    if subgraph["entry"] not in completed:
+        frontier.append(subgraph["entry"])
+        queued.add(subgraph["entry"])
+    for row in prior_transitions:
+        fed = row.get("to")
+        if fed and fed not in completed and fed not in queued:
+            frontier.append(fed)
+            queued.add(fed)
+    queued |= completed
     final_state: str | None = None
 
     while frontier and final_state is None:
@@ -585,7 +648,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         node = nodes[node_id]
         if (state_dir / "KILL").exists():
             run.log("kill_switch", node_id=node_id, phase="pre_node")
-            final_state = "killed"
+            final_state, final_reason = "killed", "kill_switch"
             break
         node_record = run.record["nodes"].setdefault(
             node_id, {"state": "pending", "attempts": 0})
@@ -603,7 +666,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         # raised while the node ran stops the graph walk cold.
         if (state_dir / "KILL").exists():
             run.log("kill_switch", node_id=node_id, phase="post_node")
-            final_state = "killed"
+            final_state, final_reason = "killed", "kill_switch"
             break
 
         if output is not None:
@@ -616,7 +679,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 node_record["reason"] = "external_actions_taken != 0 in shadow"
                 run.log("shadow_violation", node_id=node_id,
                         external_actions_taken=external)
-                final_state = "killed"
+                final_state, final_reason = "killed", "shadow_violation"
                 break
             attempt = node_record["attempts"] = attempts_used
             node_record["state"] = "done"
@@ -639,24 +702,32 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 satisfied_any = True
                 kind = edge["kind"]
                 if kind == "terminal":
-                    if _gated_transition(src=node_id, dst=None,
-                                         kind="terminal", attempt=attempt,
-                                         output=output):
+                    reason = _gated_transition(src=node_id, dst=None,
+                                               kind="terminal",
+                                               attempt=attempt, output=output)
+                    if reason is None:
                         terminal_reached = True
                     else:
-                        final_state = "escalated"
+                        final_state = _verification_escalation(
+                            node_id, attempt, "terminal", reason)
                     continue
                 dst = edge.get("to")
                 if kind == "escalation" and dst is None:
-                    if _gated_transition(src=node_id, dst=None,
-                                         kind="escalation", attempt=attempt,
-                                         output=output):
+                    reason = _gated_transition(src=node_id, dst=None,
+                                               kind="escalation",
+                                               attempt=attempt, output=output)
+                    if reason is None:
                         run.log("escalation_edge", node_id=node_id)
-                    final_state = "escalated"
+                        final_state, final_reason = "escalated", "escalation_edge"
+                    else:
+                        final_state = _verification_escalation(
+                            node_id, attempt, "escalation", reason)
                     continue
-                if not _gated_transition(src=node_id, dst=dst, kind=kind,
-                                         attempt=attempt, output=output):
-                    final_state = "escalated"
+                reason = _gated_transition(src=node_id, dst=dst, kind=kind,
+                                           attempt=attempt, output=output)
+                if reason is not None:
+                    final_state = _verification_escalation(
+                        node_id, attempt, kind, reason)
                     continue
                 done_state = run.record["nodes"].get(dst, {}).get("state")
                 if dst not in queued and done_state != "done":
@@ -666,10 +737,8 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 # A node whose edges all block is a stuck path — escalate,
                 # and even that exit consumes a validated token.
                 run.log("no_edge_satisfied", node_id=node_id)
-                _gated_transition(src=node_id, dst=None, kind="escalation",
-                                  attempt=attempt, output=output,
-                                  note="no_edge_satisfied")
-                final_state = "escalated"
+                final_state = _terminalize(node_id, attempt, output,
+                                           "no_edge_satisfied")
             if final_state is None:
                 run.advance("running")
             continue
@@ -688,15 +757,17 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                           "attempts": attempt}
         on_fail = node["failure_policy"]["on_fail"]
         if on_fail == "fail":
-            gated = _gated_transition(src=node_id, dst=None, kind="failure",
-                                      attempt=attempt, output=failure_output,
-                                      note="on_fail")
-            final_state = "failed" if gated else "escalated"
+            reason = _gated_transition(src=node_id, dst=None, kind="failure",
+                                       attempt=attempt, output=failure_output,
+                                       note="on_fail")
+            if reason is None:
+                final_state, final_reason = "failed", "on_fail_fail"
+            else:
+                final_state = _verification_escalation(
+                    node_id, attempt, "failure", reason)
         elif on_fail == "escalate":
-            _gated_transition(src=node_id, dst=None, kind="escalation",
-                              attempt=attempt, output=failure_output,
-                              note="on_fail")
-            final_state = "escalated"
+            final_state = _terminalize(node_id, attempt, failure_output,
+                                       "on_fail_escalate")
         else:
             routed = False
             for edge in edges:
@@ -712,7 +783,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                     continue
                 if satisfied and _gated_transition(
                         src=node_id, dst=on_fail, kind=edge["kind"],
-                        attempt=attempt, output=failure_output):
+                        attempt=attempt, output=failure_output) is None:
                     if on_fail not in queued:
                         queued.add(on_fail)
                         frontier.append(on_fail)
@@ -720,26 +791,23 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 break
             if not routed:
                 run.log("failure_route_blocked", node_id=node_id, to=on_fail)
-                _gated_transition(src=node_id, dst=None, kind="escalation",
-                                  attempt=attempt, output=failure_output,
-                                  note="failure_route_blocked")
-                final_state = "escalated"
+                final_state = _terminalize(node_id, attempt, failure_output,
+                                           "failure_route_blocked")
         if final_state is None:
             run.advance("running")
 
     if final_state is None:
         if terminal_reached:
-            final_state = "done"
+            final_state, final_reason = "done", "terminal_edge"
         else:
             # The walk ended without a terminal edge firing: a stall. Even
             # this exit is receipt-gated, bound to the run itself.
             run.log("no_terminal_reached")
-            _gated_transition(src="__run__", dst=None, kind="escalation",
-                              attempt=0,
-                              output={"status": "run_stalled",
-                                      "run_id": run.run_id},
-                              note="no_terminal_reached")
-            final_state = "escalated"
+            final_state = _terminalize(
+                "__run__", 0,
+                {"status": "run_stalled", "run_id": run.run_id},
+                "no_terminal_reached")
+    run.record["termination_reason"] = final_reason
     run.advance(final_state, f"run_{final_state}")
     return final_state
 
@@ -764,6 +832,7 @@ def _export_projection(dept_dir: Path, state_dir: Path, subgraph: dict,
                 continue
             runs.append({"run_id": record.get("run_id"),
                          "state": record.get("state"),
+                         "termination_reason": record.get("termination_reason"),
                          "transitions": record.get("transitions", [])})
     factory_version = loaded["manifest"].get("factory_version") or {
         "graph_schema_version": rungraph.GRAPH_SCHEMA_VERSION,

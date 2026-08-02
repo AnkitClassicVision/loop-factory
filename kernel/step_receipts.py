@@ -94,8 +94,19 @@ class DurableNonceStore:
             os.fsync(fh.fileno())
 
 
+def _resolve_output_hash(output, output_hash_value):
+    """Exactly one of (output, output_hash) — the binding carries only the
+    hash either way, so hash-only callers (auditors reverifying from persisted
+    rows) get the same attestation as body-holding callers (the runner)."""
+    if (output is None) == (output_hash_value is None):
+        raise ValueError("pass exactly one of output= or output_hash=")
+    if output_hash_value is not None:
+        return output_hash_value
+    return output_hash(output)
+
+
 def step_binding(*, department, graph_id, graph_hash, release_hash, run_id,
-                 node_id, attempt, output) -> dict:
+                 node_id, attempt, output=None, output_hash=None) -> dict:
     return {
         "department": department,
         "graph_id": graph_id,
@@ -104,26 +115,27 @@ def step_binding(*, department, graph_id, graph_hash, release_hash, run_id,
         "run_id": run_id,
         "node_id": node_id,
         "attempt": int(attempt),
-        "output_hash": output_hash(output),
+        "output_hash": _resolve_output_hash(output, output_hash),
     }
 
 
-def issue_step_receipt(*, signer, now, output, department, graph_id, graph_hash,
-                       release_hash, run_id, node_id, attempt,
-                       ttl_s=DEFAULT_TTL_S) -> str:
+def issue_step_receipt(*, signer, now, department, graph_id, graph_hash,
+                       release_hash, run_id, node_id, attempt, output=None,
+                       output_hash=None, ttl_s=DEFAULT_TTL_S) -> str:
     receipts = _receipts()
     binding = step_binding(
         department=department, graph_id=graph_id, graph_hash=graph_hash,
         release_hash=release_hash, run_id=run_id, node_id=node_id,
-        attempt=attempt, output=output)
+        attempt=attempt, output=output, output_hash=output_hash)
     return receipts.issue_receipt(
         ACTION_CLASS, binding, ttl_s, signer, now, secrets.token_hex(16))
 
 
-def verify_step_receipt(token, *, signer, now, output, consumed,
-                        department, graph_id, graph_hash, release_hash,
-                        run_id, node_id, attempt):
-    """Verify a transition token against the exact step identity + output.
+def verify_step_receipt(token, *, signer, now, consumed, department, graph_id,
+                        graph_hash, release_hash, run_id, node_id, attempt,
+                        output=None, output_hash=None):
+    """Verify a transition token against the exact step identity + output
+    (by body, or by its persisted canonical hash — same attestation).
 
     `consumed` is the durable consumption store (DurableNonceStore, or any
     object with __contains__/add). A successful verify CONSUMES the token:
@@ -134,7 +146,27 @@ def verify_step_receipt(token, *, signer, now, output, consumed,
     binding = step_binding(
         department=department, graph_id=graph_id, graph_hash=graph_hash,
         release_hash=release_hash, run_id=run_id, node_id=node_id,
-        attempt=attempt, output=output)
+        attempt=attempt, output=output, output_hash=output_hash)
     return receipts.verify_receipt(
         token, ACTION_CLASS, binding, signer=signer, now=now,
         seen_nonces=consumed)
+
+
+def reverify_transition(row, *, record, signer, now):
+    """Auditor-plane reverification from PERSISTED materials only: a run
+    record (run_state.json — carries department/loop_id/graph_hash/
+    release_hash/run_id) plus one transition row (carries the full signed
+    token, the source node, the attempt, and the canonical output hash).
+
+    Consumption is deliberately NOT touched: auditors verify, they never
+    transition, so a throwaway nonce set is used. Verdict semantics: verify
+    checks the signature and binding BEFORE expiry, so reason 'expired' on a
+    historical token means authentic-but-stale (expected on late audits),
+    while 'signature'/'binding' mean forgery or tampering.
+    """
+    return verify_step_receipt(
+        row["step_receipt"], signer=signer, now=now,
+        output_hash=row["output_sha256"], consumed=set(),
+        department=record["department"], graph_id=record["loop_id"],
+        graph_hash=record["graph_hash"], release_hash=record["release_hash"],
+        run_id=record["run_id"], node_id=row["from"], attempt=row["attempt"])
