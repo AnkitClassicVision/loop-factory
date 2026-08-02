@@ -162,6 +162,34 @@ def test_run_completes_and_records(tmp_path):
     assert any(row.get("event") == "run_done" for row in runs_rows)
 
 
+def test_full_signed_tokens_persisted_and_durably_consumed(tmp_path):
+    # B2: run records carry the FULL signed token (reverifiable after a
+    # runner swap), each transition has its own token, and consumption is a
+    # durable per-run ledger, not process memory.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    run_dir = dept / "state" / "graph_runs" / result["run_id"]
+    state = json.loads((run_dir / "run_state.json").read_text(encoding="utf-8"))
+    tokens = [t["step_receipt"] for t in state["transitions"]]
+    assert all(isinstance(tok, str) and "." in tok for tok in tokens)
+    assert len(set(tokens)) == len(tokens)  # one fresh token per transition
+    ledger = run_dir / "consumed_nonces.jsonl"
+    assert ledger.exists()
+    consumed = [json.loads(line)["nonce"] for line in
+                ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(consumed) == len(tokens)
+
+
+def test_run_lock_identity_uses_full_fingerprint_hash(tmp_path):
+    import hashlib
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path, fingerprint="trigger-1")
+    full = hashlib.sha256(b"trigger-1").hexdigest()
+    assert result["run_id"] == f"SG-RUN-{full}"
+
+
 def test_projection_exported_and_auditor_verifies(tmp_path):
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
@@ -238,6 +266,30 @@ def test_invalid_v2_graph_refuses_before_any_execution(tmp_path):
     assert _markers(dept) == []
 
 
+def test_impl_edited_after_pin_refuses_release_integrity(tmp_path):
+    # B1: the pin covers runtime artifacts, so a live impl whose bytes differ
+    # from the pinned hash must never execute under that release_hash.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    (dept / "runtime" / "sense.py").write_text(
+        SENSE_OK + "\n# edited after pin\n", encoding="utf-8")
+    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
+        _run(dept, tmp_path)
+    assert _markers(dept) == []
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "run_refused"
+               and "release_integrity" in row.get("reason", "") for row in rows)
+
+
+def test_impl_missing_from_live_tree_refuses_release_integrity(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    (dept / "runtime" / "record.py").unlink()
+    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
+        _run(dept, tmp_path)
+
+
 # --------------------------------------------------------------------------- #
 # Failure policy + refusal routing
 # --------------------------------------------------------------------------- #
@@ -294,6 +346,64 @@ def test_output_contract_violation_blocks(tmp_path):
     assert result["state"] == "escalated"
 
 
+def _transitions(dept, result):
+    state = json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+    return state["transitions"]
+
+
+def test_escalation_terminal_is_receipt_gated(tmp_path):
+    # B3: on_fail=escalate must not reach a terminal run state without a
+    # validated token — the runner's failure record earns a signed receipt
+    # and the escalation is recorded as a receipt-bearing transition.
+    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    assert result["state"] == "escalated"
+    rows = _transitions(dept, result)
+    gated = [t for t in rows if t["from"] == "N1" and t["to"] is None
+             and t["kind"] == "escalation"]
+    assert gated and "." in gated[0]["step_receipt"]
+    assert len(gated[0]["step_receipt_sha256"]) == 64
+
+
+def test_fail_terminal_is_receipt_gated(tmp_path):
+    manifest = _two_node_manifest()
+    manifest["subgraphs"][0]["nodes"][0]["failure_policy"]["on_fail"] = "fail"
+    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
+                      manifest)
+    result = _run(dept, tmp_path)
+    assert result["state"] == "failed"
+    rows = _transitions(dept, result)
+    gated = [t for t in rows if t["from"] == "N1" and t["to"] is None
+             and t["kind"] == "failure"]
+    assert gated and "." in gated[0]["step_receipt"]
+
+
+def test_no_edge_satisfied_escalation_is_receipt_gated(tmp_path):
+    manifest = _two_node_manifest()
+    # both N1 out-edges require a status N1 never emits
+    manifest["subgraphs"][0]["edges"][0]["when"] = "receipt.status == 'never'"
+    manifest["subgraphs"][0]["edges"][1]["when"] = "receipt.status == 'never2'"
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      manifest)
+    result = _run(dept, tmp_path)
+    assert result["state"] == "escalated"
+    rows = _transitions(dept, result)
+    assert any(t["kind"] == "escalation" and t["to"] is None
+               and "." in t["step_receipt"] for t in rows)
+
+
+def test_non_finite_node_output_blocks(tmp_path):
+    nonfinite = ('import json\n'
+                 'print(\'{"status": "ok", "n": Infinity}\')\n')
+    dept = _make_dept(tmp_path, {"sense.py": nonfinite, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    assert result["state"] == "escalated"  # unparseable under canonical policy
+
+
 # --------------------------------------------------------------------------- #
 # Shadow enforcement + kill
 # --------------------------------------------------------------------------- #
@@ -316,6 +426,89 @@ def test_kill_file_kills_run(tmp_path):
     result = _run(dept, tmp_path)
     assert result["state"] == "killed"
     assert _markers(dept) == []
+
+
+KILL_DURING_NODE = """\
+import json, pathlib
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+with (state / "markers.txt").open("a", encoding="utf-8") as fh:
+    fh.write("sense\\n")
+(state / "KILL").write_text("stop\\n", encoding="utf-8")
+print(json.dumps({"status": "ok", "delivered_count": 0}))
+"""
+
+
+def test_kill_raised_during_node_prevents_any_transition(tmp_path):
+    # The kill switch is polled again AFTER node completion, BEFORE any
+    # transition: a kill raised mid-node stops the graph walk cold.
+    dept = _make_dept(tmp_path, {"sense.py": KILL_DURING_NODE,
+                                 "record.py": RECORD_OK},
+                      _two_node_manifest())
+    result = _run(dept, tmp_path)
+    assert result["state"] == "killed"
+    assert _markers(dept) == ["sense"]  # N1 ran, N2 never did
+    assert _transitions(dept, result) == []
+
+
+# --------------------------------------------------------------------------- #
+# Wedged-run recovery (B5) — the idempotency lock must not entomb a crash
+# --------------------------------------------------------------------------- #
+
+def _run_id_for(fingerprint):
+    import hashlib
+    return "SG-RUN-" + hashlib.sha256(fingerprint.encode()).hexdigest()
+
+
+def test_wedged_nonterminal_run_is_resumed_not_noop(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-1")
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_state.json").write_text(
+        json.dumps({"schema": "graph-run-v1", "state": "awaiting_receipt"}),
+        encoding="utf-8")  # a crash left the run mid-flight
+    result = _run(dept, tmp_path, fingerprint="wedge-1")
+    assert result["resumed"] is True
+    assert result["duplicate"] is False
+    assert result["state"] == "done"
+    assert _markers(dept) == ["sense"]  # it actually re-executed
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "run_resumed" for row in rows)
+
+
+def test_crash_before_first_state_persist_recovers(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
+    run_dir.mkdir(parents=True)  # crash between mkdir and first persist
+    result = _run(dept, tmp_path, fingerprint="wedge-2")
+    assert result["resumed"] is True
+    assert result["state"] == "done"
+
+
+def test_terminal_run_still_noops_on_duplicate(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="t-done")
+    assert first["state"] == "done"
+    second = _run(dept, tmp_path, fingerprint="t-done")
+    assert second["duplicate"] is True
+    assert _markers(dept) == ["sense"]
+
+
+def test_pathological_predicate_graph_refused_cleanly_no_wedge(tmp_path):
+    manifest = _two_node_manifest()
+    depth = 64
+    manifest["subgraphs"][0]["edges"][0]["when"] = (
+        "(" * depth + "true" + ")" * depth)
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      manifest)
+    with pytest.raises(RUN.RunnerRefused, match="depth"):
+        _run(dept, tmp_path, fingerprint="patho")
+    assert _markers(dept) == []
+    assert not (dept / "state" / "graph_runs").exists()  # nothing wedged
 
 
 # --------------------------------------------------------------------------- #
