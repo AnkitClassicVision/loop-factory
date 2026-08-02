@@ -13,7 +13,7 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from factory.charter_loader import CharterError, load_charter
 from factory.runrecord import validate_record
@@ -636,6 +636,39 @@ def _atomic_write(path: Path, content: str) -> None:
             temp_path.unlink(missing_ok=True)
 
 
+def _history_snapshot(feed: Sequence[dict[str, Any]], date: str) -> dict[str, Any]:
+    departments: dict[str, dict[str, Any]] = {}
+    loop_totals: defaultdict[str, dict[str, int]] = defaultdict(
+        lambda: {"total": 0, "failed": 0}
+    )
+    metric_keys = (
+        "runs",
+        "ok",
+        "error",
+        "blocked",
+        "tokens_in",
+        "tokens_out",
+        "model_calls",
+    )
+    for row in feed:
+        data = row["data"]
+        if row["kind"] == "metrics" and data.get("metric_type") == "daily_rollup":
+            departments[row["department"]] = {
+                key: data.get(key, UNKNOWN) for key in metric_keys
+            }
+        elif row["kind"] == "loop_status":
+            group = loop_totals[row["department"]]
+            group["total"] += 1
+            if data.get("last_result") == "failure":
+                group["failed"] += 1
+    return {
+        "schema": "board-history/v1",
+        "date": date,
+        "departments": dict(sorted(departments.items())),
+        "loops": dict(sorted(loop_totals.items())),
+    }
+
+
 def build_feed(
     repo_root: str | Path,
     *,
@@ -643,6 +676,7 @@ def build_feed(
     department: str | None = None,
     now: str | datetime | None = None,
     timers_path: str | Path | None = None,
+    history_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate department records, atomically write the feed, and return its receipt."""
     repo_root = Path(repo_root)
@@ -703,11 +737,23 @@ def build_feed(
         json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in feed
     )
     _atomic_write(output_path, content)
+    history_root = (
+        Path(history_dir)
+        if history_dir is not None
+        else repo_root / "estate" / "state" / "history"
+    )
+    history_path = history_root / f"{now_dt.date().isoformat()}.json"
+    history = _history_snapshot(feed, now_dt.date().isoformat())
+    _atomic_write(
+        history_path,
+        json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
+    )
     return {
         "departments": len(department_dirs),
         "lines": len(feed),
         "loops": loops,
         "malformed": malformed,
+        "history": str(history_path),
     }
 
 
@@ -718,6 +764,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--department", default=None)
     parser.add_argument("--now", default=None)
     parser.add_argument("--timers-path", default=None)
+    parser.add_argument("--history-dir", default=None)
     args = parser.parse_args(argv)
     try:
         receipt = build_feed(
@@ -726,6 +773,7 @@ def main(argv: list[str] | None = None) -> int:
             department=args.department,
             now=args.now,
             timers_path=args.timers_path,
+            history_dir=args.history_dir,
         )
     except ValueError as exc:
         parser.error(str(exc))

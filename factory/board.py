@@ -17,6 +17,8 @@ from typing import Any, Iterable, Sequence
 
 ALLOWED_AUTH_CLASSES = {"oauth_cli", "service_oauth", "local_model"}
 UNKNOWN = "unknown"
+HISTORY_SCHEMA = "board-history/v1"
+HISTORY_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 
 
 CSS = r"""
@@ -54,6 +56,8 @@ section{margin-top:3.1rem}.zone-h{display:flex;align-items:baseline;gap:1rem;mar
 .bullet-lbls{position:relative;height:1.2rem;margin-top:.35rem;font-size:.72rem}.bullet-lbls span{position:absolute;transform:translateX(-50%);white-space:nowrap}
 .bullet-lbls .min{color:var(--red);font-weight:600}.bullet-lbls .target{font-weight:600}.bullet-lbls .scale{right:0;left:auto;transform:none;color:var(--muted)}
 .statline{display:flex;flex-wrap:wrap;gap:1.2rem 2.2rem;margin-top:1.2rem}.stat .v{font-size:1.45rem;font-weight:650;white-space:nowrap}.stat .l{color:var(--muted);font-size:.8rem;margin-top:.1rem}
+.trend-wrap{max-width:480px}.trend-stats{font-size:.8rem;color:var(--muted);margin-top:.65rem}
+svg.lc{display:block;width:100%;max-width:480px;height:auto;overflow:visible}.lc .axis-line{stroke:var(--rule);stroke-width:1}.lc .series{fill:none;stroke:var(--green);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.lc .mark{fill:var(--bg);stroke:var(--green);stroke-width:2}.lc text{font-size:.7rem;fill:var(--muted)}.lc .point-value{fill:var(--green);font-weight:650}
 .actions{display:grid;grid-template-columns:1.35fr 1fr;gap:2.5rem}.andon-stack{display:flex;flex-direction:column;gap:.85rem}
 .andon{background:var(--red);color:#fff;border-radius:6px;padding:1.1rem 1.25rem;animation:glow 2s ease-in-out infinite}
 @keyframes glow{50%{box-shadow:0 0 0 7px oklch(0.50 0.194 0 / .16)}}@media(prefers-reduced-motion:reduce){.andon{animation:none}}
@@ -175,6 +179,223 @@ def read_feed(path: str | Path) -> tuple[list[dict[str, Any]], int]:
                 continue
             records.append(record)
     return records, malformed
+
+
+def _valid_history(value: Any, filename: str | None = None) -> bool:
+    if not (
+        isinstance(value, dict)
+        and value.get("schema") == HISTORY_SCHEMA
+        and isinstance(value.get("date"), str)
+        and isinstance(value.get("departments"), dict)
+        and isinstance(value.get("loops"), dict)
+    ):
+        return False
+    return filename is None or filename == f'{value["date"]}.json'
+
+
+def _load_history(path: str | Path) -> list[dict[str, Any]]:
+    root = Path(path)
+    if not root.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for entry in sorted(root.iterdir(), key=lambda item: item.name):
+        if not entry.is_file() or not HISTORY_FILE.fullmatch(entry.name):
+            continue
+        try:
+            value = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            continue
+        if _valid_history(value, entry.name):
+            rows.append(value)
+    return rows[-7:]
+
+
+def _history_rows(
+    history: str | Path | Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if isinstance(history, (str, Path)):
+        return _load_history(history)
+    rows = [row for row in history if _valid_history(row)]
+    rows.sort(key=lambda row: row["date"])
+    return rows[-7:]
+
+
+def _history_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _history_total(rows: Sequence[dict[str, Any]], key: str) -> int | float | str:
+    values = [_history_number(row.get(key)) for row in rows]
+    measured = [value for value in values if value is not None]
+    if not measured:
+        return UNKNOWN
+    total = sum(measured)
+    return int(total) if total.is_integer() else total
+
+
+def _collecting_history(days: int) -> str:
+    noun = "day" if days == 1 else "days"
+    return f'<p class="quiet">collecting history — {days} {noun} so far</p>'
+
+
+def _line_chart(
+    history: Sequence[dict[str, Any]],
+    points: Sequence[tuple[int, float]],
+    *,
+    label: str,
+    suffix: str = "",
+    maximum: float | None = None,
+) -> str:
+    width = 480.0
+    left = 32.0
+    right = 448.0
+    top = 22.0
+    bottom = 120.0
+    span = max(1, len(history) - 1)
+    peak = maximum if maximum is not None else max((value for _, value in points), default=0.0)
+    peak = max(peak, 1.0)
+
+    coordinates: dict[int, tuple[float, float, float]] = {}
+    for index, value in points:
+        x = left + (right - left) * index / span
+        bounded = max(0.0, min(peak, value))
+        y = bottom - (bottom - top) * bounded / peak
+        coordinates[index] = (x, y, value)
+
+    segments: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    previous: int | None = None
+    for index in sorted(coordinates):
+        x, y, _ = coordinates[index]
+        if previous is None or index == previous + 1:
+            current.append((x, y))
+        else:
+            segments.append(current)
+            current = [(x, y)]
+        previous = index
+    if current:
+        segments.append(current)
+
+    polylines = "".join(
+        '<polyline class="series" points="'
+        + " ".join(f"{x:.1f},{y:.1f}" for x, y in segment)
+        + '"></polyline>'
+        for segment in segments
+    )
+    marks: list[str] = []
+    for index in sorted(coordinates):
+        x, y, value = coordinates[index]
+        shown = _display_number(value)
+        date = history[index]["date"]
+        label_y = max(11.0, y - 7.0)
+        marks.append(
+            f'<circle class="mark" cx="{x:.1f}" cy="{y:.1f}" r="3.5" '
+            f'data-date="{_esc(date)}" data-value="{_esc(shown)}"></circle>'
+            f'<text class="point-value num" x="{x:.1f}" y="{label_y:.1f}" '
+            f'text-anchor="middle">{_esc(shown)}{_esc(suffix)}</text>'
+        )
+    dates = "".join(
+        f'<text class="axis-date num" x="{left + (right - left) * index / span:.1f}" '
+        f'y="148" text-anchor="middle" data-date="{_esc(row["date"])}">'
+        f'{_esc(row["date"][5:])}</text>'
+        for index, row in enumerate(history)
+    )
+    return (
+        f'<div class="trend-wrap"><svg class="lc" viewBox="0 0 {int(width)} 160" '
+        f'role="img" aria-label="{_esc(label)}">'
+        f'<line class="axis-line" x1="{left:.1f}" y1="{bottom:.1f}" '
+        f'x2="{right:.1f}" y2="{bottom:.1f}"></line>'
+        f'{polylines}{"".join(marks)}{dates}</svg></div>'
+    )
+
+
+def _department_history(
+    history: Sequence[dict[str, Any]], department: str | None
+) -> tuple[list[tuple[int, float]], list[dict[str, Any]]]:
+    points: list[tuple[int, float]] = []
+    totals: list[dict[str, Any]] = []
+    for index, day in enumerate(history):
+        departments = day["departments"]
+        if department is None:
+            records = [value for _, value in sorted(departments.items()) if isinstance(value, dict)]
+            paired = [
+                record
+                for record in records
+                if _history_number(record.get("runs")) is not None
+                and _history_number(record.get("ok")) is not None
+            ]
+            runs = sum(_history_number(record["runs"]) or 0.0 for record in paired)
+            ok = sum(_history_number(record["ok"]) or 0.0 for record in paired)
+            totals.extend(records)
+        else:
+            record = departments.get(department)
+            if not isinstance(record, dict):
+                continue
+            runs = _history_number(record.get("runs"))
+            ok = _history_number(record.get("ok"))
+            totals.append(record)
+            if runs is None or ok is None:
+                continue
+        if runs > 0:
+            points.append((index, ok / runs * 100.0))
+    return points, totals
+
+
+def _render_history(
+    history: Sequence[dict[str, Any]],
+    *,
+    department: str | None,
+    loop_group: bool,
+) -> str:
+    if loop_group and department is not None:
+        points: list[tuple[int, float]] = []
+        for index, day in enumerate(history):
+            group = day["loops"].get(department)
+            if not isinstance(group, dict):
+                continue
+            failed = _history_number(group.get("failed"))
+            if failed is not None:
+                points.append((index, failed))
+        body = (
+            _collecting_history(len(points))
+            if len(points) < 2
+            else _line_chart(
+                history,
+                points,
+                label=f"{department} failed loops over seven days",
+            )
+        )
+    else:
+        points, totals = _department_history(history, department)
+        if len(points) < 2:
+            body = _collecting_history(len(points))
+        else:
+            chart_label = (
+                "Estate ok rate over seven days"
+                if department is None
+                else f"{department} ok rate over seven days"
+            )
+            body = _line_chart(
+                history,
+                points,
+                label=chart_label,
+                suffix="%",
+                maximum=100.0,
+            )
+            runs = _history_total(totals, "runs")
+            errors = _history_total(totals, "error")
+            body += (
+                '<p class="trend-stats num">'
+                f'{_display_number(runs)} runs · {_display_number(errors)} errors over window'
+                "</p>"
+            )
+    return (
+        '<section aria-label="Seven days"><div class="zone-h"><h2>Seven days</h2>'
+        '<span class="note">daily trend</span></div><hr class="zone-rule">'
+        f"{body}</section>"
+    )
 
 
 def _latest_by_department(records: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -523,6 +744,7 @@ def render_html(
     title: str | None = None,
     tabs: Sequence[tuple[str, str]] | None = None,
     current_tab: str | None = None,
+    history: str | Path | Sequence[dict[str, Any]] | None = None,
 ) -> str:
     """Render already-validated records into a deterministic HTML document."""
     selected = [row for row in records if department is None or row["department"] == department]
@@ -571,6 +793,19 @@ def render_html(
     loop_specific = _render_funnels(funnels) + _render_fallback(fallback)
     if not loop_specific:
         loop_specific = '<p class="quiet">no loop-specific metrics reporting</p>'
+    history_rows = _history_rows(history) if history is not None else None
+    trend_html = ""
+    if history_rows is not None:
+        trend_html = _render_history(
+            history_rows,
+            department=department,
+            loop_group=department is not None and bool(loops) and not daily,
+        )
+    footer_source = (
+        "board-feed.ndjson and board-history/v1"
+        if history_rows is not None
+        else "board-feed.ndjson only"
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -587,6 +822,7 @@ def render_html(
 <section aria-label="Metrics"><div class="zone-h"><h2>1 · Metrics</h2><span class="note">objectives and daily measures</span></div><hr class="zone-rule">
   <div class="objgrid">{objective_html}</div>{_render_metric_stats(daily)}
 </section>
+{trend_html}
 <section aria-label="Main actions"><div class="zone-h"><h2>2 · Main actions</h2><span class="note">needs a human, oldest first</span></div><hr class="zone-rule">
   <div class="actions"><div class="andon-stack">{andon_html}</div><div class="approval-inbox"><h3 class="subhead">Approval inbox</h3>{approval_html}</div></div>
 </section>
@@ -596,7 +832,7 @@ def render_html(
   <h3 class="subhead">All loops</h3>{loop_html}
 </section>
 <section aria-label="Loop-specific"><div class="zone-h"><h2>4 · Loop-specific</h2><span class="note">feed-defined panels, never renderer branches</span></div><hr class="zone-rule">{loop_specific}</section>
-<footer>Rendered from <code>board-feed.ndjson</code> only · {_esc(malformed_count)} malformed feed line{'s' if malformed_count != 1 else ''} · no external assets</footer>
+<footer>Rendered from <code>{_esc(footer_source)}</code> · {_esc(malformed_count)} malformed feed line{'s' if malformed_count != 1 else ''} · no external assets</footer>
 </div></body></html>
 """
 
@@ -611,10 +847,19 @@ def render_board(feed_path: str | Path, out_path: str | Path, *, department: str
     return rendered
 
 
-def render_site(feed_path: str | Path, out_dir: str | Path, *, title: str | None = None) -> dict[str, str]:
+def render_site(
+    feed_path: str | Path,
+    out_dir: str | Path,
+    *,
+    title: str | None = None,
+    history_dir: str | Path | None = None,
+) -> dict[str, str]:
     """Render an estate index and one portable, linked page per feed tab."""
     records, malformed = read_feed(feed_path)
     tabs = _tab_manifest(records)
+    history = _load_history(
+        history_dir if history_dir is not None else Path(feed_path).parent / "history"
+    )
     output_dir = Path(out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -624,6 +869,7 @@ def render_site(feed_path: str | Path, out_dir: str | Path, *, title: str | None
         malformed_count=malformed,
         title=title,
         tabs=tabs,
+        history=history,
     )
     for name, filename in tabs:
         rendered[filename] = render_html(
@@ -633,6 +879,7 @@ def render_site(feed_path: str | Path, out_dir: str | Path, *, title: str | None
             title=f"{name} — Loop Board",
             tabs=tabs,
             current_tab=name,
+            history=history,
         )
     for filename, page in rendered.items():
         (output_dir / filename).write_text(page, encoding="utf-8")
@@ -647,12 +894,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     destination.add_argument("--site", type=Path)
     parser.add_argument("--department")
     parser.add_argument("--title")
+    parser.add_argument("--history", type=Path)
     args = parser.parse_args(argv)
     if args.site is not None and args.department is not None:
         parser.error("--department requires --out")
+    if args.site is None and args.history is not None:
+        parser.error("--history requires --site")
     try:
         if args.site is not None:
-            render_site(args.feed, args.site, title=args.title)
+            render_site(args.feed, args.site, title=args.title, history_dir=args.history)
         else:
             render_board(args.feed, args.out, department=args.department, title=args.title)
     except OSError as exc:
