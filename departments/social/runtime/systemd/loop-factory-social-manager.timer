@@ -1,0 +1,15 @@
+# social department manager tick timer. Every 30 minutes, staggered to :15/:45
+# so it never collides with the podcast loop's :00/:30 cadence. Independent of
+# social-loop.timer BY DESIGN: the watch loop must keep ticking when the worker
+# loop is dead — that is the failure it exists to catch.
+# NEVER auto-enabled by the factory; the owner enables deliberately.
+[Unit]
+Description=Run the social department manager tick on schedule
+
+[Timer]
+OnCalendar=*:15/30
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
