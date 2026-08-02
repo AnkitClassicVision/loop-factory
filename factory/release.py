@@ -63,6 +63,44 @@ def _tree_hash(artifacts: list[tuple[str, str]]) -> str:
     return h.hexdigest()[:16]
 
 
+def template_set_hash(templates_dir=None) -> str:
+    """Deterministic hash over the factory's template set (relative path +
+    bytes of every file under templates/)."""
+    if templates_dir is None:
+        templates_dir = Path(__file__).resolve().parents[1] / "templates"
+    templates_dir = Path(templates_dir)
+    found: list[tuple[str, str]] = []
+    if templates_dir.is_dir():
+        for path in sorted(templates_dir.rglob("*")):
+            if path.is_file():
+                found.append((str(path.relative_to(templates_dir)),
+                              _sha256_file(path)))
+    return _tree_hash(sorted(found))
+
+
+def factory_version(templates_dir=None) -> dict:
+    """Ticket 009 hook: the factory's own version stamp for a release manifest
+    — recorded at pin time so comparison tooling can come later. Constants are
+    read from their owning modules (rungraph/runner/projection) at call time."""
+    import importlib.util
+
+    def _const(rel: str, name: str):
+        path = Path(__file__).resolve().parent.parent / rel
+        spec = importlib.util.spec_from_file_location(f"fv_{path.stem}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, name)
+
+    return {
+        "graph_schema_version": _const("factory/rungraph.py",
+                                       "GRAPH_SCHEMA_VERSION"),
+        "runner_version": _const("factory/runner.py", "RUNNER_VERSION"),
+        "telemetry_schema_version": _const("factory/projection.py",
+                                           "TELEMETRY_SCHEMA_VERSION"),
+        "template_set_hash": template_set_hash(templates_dir),
+    }
+
+
 def pin_release(dept_dir, release_root, source_ref: str) -> str:
     """Pin the current artifact set as a content-addressed release; return its
     hash. Idempotent: the same bytes always produce the same release dir."""
@@ -75,6 +113,7 @@ def pin_release(dept_dir, release_root, source_ref: str) -> str:
     manifest = {
         "hash": release_hash,
         "source_ref": source_ref,
+        "factory_version": factory_version(),
         "artifacts": [{"path": rel, "sha256": digest} for rel, digest in artifacts],
     }
     _atomic_write(release_dir / "manifest.json", json.dumps(manifest, indent=2) + "\n")
