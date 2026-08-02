@@ -56,6 +56,19 @@ setpoints:
     - {metric: repeat_escalations_of_resolved_fingerprint, target: 0}   # C12 priority
     - {metric: founder_minutes_per_episode, target: TBD_MEASURE_IN_SHADOW}
     - {metric: manifest_completeness_pct, target: TBD_MEASURE_IN_SHADOW}
+  objectives:                               # owner-dictated (Ankit, 2026-08-02)
+    publish_reliability:
+      label: "Episodes online, on time"
+      setpoint: 100
+      minimum: 100
+      target: 100
+      unit: "%"
+    hopper_depth:
+      label: "Recordings in the hopper"
+      setpoint: 6
+      minimum: 2
+      target: 6
+      unit: " recordings"
 
 thresholds:
   weekly_touch_ceiling: 300
