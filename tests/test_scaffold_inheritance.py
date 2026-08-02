@@ -33,6 +33,23 @@ def test_scaffold_inherits_eval_registry(tmp_path):
     assert "advisory-only" in text
 
 
+def test_scaffolded_eval_registry_loads_through_the_real_loader(tmp_path):
+    """Seam regression: the template must satisfy evalregistry.load_registry."""
+    SC.scaffold_department("future", root=tmp_path)
+    from factory.evalregistry import load_registry
+
+    registry = load_registry(tmp_path / "departments/future/runtime/eval_registry.yaml")
+    assert registry["default"]["tier1"] == [
+        "schema_valid",
+        "required_fields_present",
+        "duplicate_free",
+        "dates_valid",
+        "permissions_valid",
+        "external_actions_taken_valid",
+    ]
+    assert "tier2" not in registry["default"]
+
+
 def test_scaffold_charter_carries_commented_objectives(tmp_path):
     SC.scaffold_department("future", root=tmp_path)
     charter = (tmp_path / "departments/future/charter.yaml").read_text(encoding="utf-8")

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -14,11 +16,14 @@ try:
 except ImportError:  # direct script execution
     from heal_select import DEFAULT_STATE_DIR, append_heal_receipt
 
+from factory import runrecord
+
 
 Probe = Callable[[dict[str, Any]], bool | tuple[bool, str]]
 _RECEIPT_AGE_LIMIT = re.compile(
     r"^receipt age <= (?P<minutes>\d+(?:\.\d+)?) minutes$"
 )
+LOGGER = logging.getLogger(__name__)
 
 
 def _last_commands(state_dir: Path, fingerprint: str, playbook_id: str) -> list[str]:
@@ -160,6 +165,75 @@ def verify_heal(
     )
 
 
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    artifacts = [state_dir / "heals.jsonl"]
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="heal_verify",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-heal_verify"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("heal_verify failed to append its runs-v2 record")
+        raise
+
+
+def run_verify(
+    state_dir: str | Path,
+    fingerprint: str,
+    playbook_id: str,
+    *,
+    prober: Probe | None = None,
+    shadow: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        row = verify_heal(
+            state_path,
+            fingerprint,
+            playbook_id,
+            prober=prober,
+            shadow=shadow,
+            now=now,
+        )
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="ok",
+        errors=[],
+    )
+    return row
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify an applied podcast heal")
     parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
@@ -170,7 +244,7 @@ def main() -> None:
     mode.add_argument("--live", dest="shadow", action="store_false")
     parser.set_defaults(shadow=True)
     args = parser.parse_args()
-    row = verify_heal(
+    row = run_verify(
         args.state_dir,
         args.fingerprint,
         args.playbook,

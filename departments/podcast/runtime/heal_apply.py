@@ -4,11 +4,13 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import logging
 import os
 import re
 import shlex
 import string
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -34,8 +36,11 @@ except ImportError:  # direct script execution
     )
     import kernel_bridge
 
+from factory import runrecord
+
 
 _SAFE_PARAMETER = re.compile(r"^[A-Za-z0-9_.@:/+-]+$")
+LOGGER = logging.getLogger(__name__)
 
 
 def _atomic_json(path: Path, value: Any) -> None:
@@ -312,6 +317,79 @@ def apply_heal(
     )
 
 
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    artifacts = [state_dir / "heals.jsonl", state_dir / "heal_attempts.json"]
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="heal_apply",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-heal_apply"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(path) for path in artifacts if path.exists()],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("heal_apply failed to append its runs-v2 record")
+        raise
+
+
+def run_apply(
+    state_dir: str | Path,
+    fingerprint: str,
+    playbook_id: str,
+    params: dict[str, str] | None = None,
+    *,
+    shadow: bool = True,
+    playbooks_path=DEFAULT_PLAYBOOKS_PATH,
+    executor: Callable[..., Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    state_path = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        row = apply_heal(
+            state_path,
+            fingerprint,
+            playbook_id,
+            params,
+            shadow=shadow,
+            playbooks_path=playbooks_path,
+            executor=executor,
+            now=now,
+        )
+    except Exception as exc:
+        _emit_run_record(
+            state_path,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    _emit_run_record(
+        state_path,
+        started=started,
+        status="ok",
+        errors=[],
+    )
+    return row
+
+
 def _params(values: list[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     for value in values:
@@ -340,7 +418,7 @@ def main() -> None:
         params = _params(args.param)
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
-    row = apply_heal(
+    row = run_apply(
         args.state_dir,
         args.fingerprint,
         args.playbook,
