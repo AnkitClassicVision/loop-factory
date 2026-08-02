@@ -92,7 +92,7 @@ def _quarantine(state_dir: Path, item_id: str, reasons: list[str]) -> None:
     )
 
 
-def _load_engines(path: Path) -> dict[str, list[str]]:
+def _load_engines(path: Path) -> dict[str, dict[str, Any]]:
     if yaml is None:
         raise SourceUnavailable("PyYAML is required for the engines file")
     if not path.is_file():
@@ -105,14 +105,84 @@ def _load_engines(path: Path) -> dict[str, list[str]]:
         loaded = loaded["engines"]
     if not isinstance(loaded, dict):
         raise GateBlocked("engines file must map engine names to argv lists")
-    engines: dict[str, list[str]] = {}
-    for name, argv in loaded.items():
-        if not isinstance(name, str) or not isinstance(argv, list) or not argv:
-            raise GateBlocked("each engine must have a non-empty argv list")
+    engines: dict[str, dict[str, Any]] = {}
+    for name, value in loaded.items():
+        config = {"command": value} if isinstance(value, list) else value
+        if not isinstance(name, str) or not isinstance(config, dict):
+            raise GateBlocked("each engine must be an argv list or config object")
+        argv = config.get("command")
+        if not isinstance(argv, list) or not argv:
+            raise GateBlocked("each engine must have a non-empty command argv list")
         if not all(isinstance(part, str) and part for part in argv):
             raise GateBlocked(f"engine {name!r} argv must contain non-empty strings")
-        engines[name] = list(argv)
+        auth_probe = config.get("auth_probe")
+        if auth_probe not in (None, []) and (
+            not isinstance(auth_probe, list)
+            or not all(isinstance(part, str) and part for part in auth_probe)
+        ):
+            raise GateBlocked(f"engine {name!r} auth_probe must be an argv list")
+        engines[name] = {
+            "command": list(argv),
+            "auth_class": config.get("auth_class"),
+            "auth_probe": list(auth_probe or []),
+            "telemetry_contract": isinstance(value, dict),
+        }
     return engines
+
+
+def parse_engine_envelope(stdout: str, engine_cfg: dict) -> dict:
+    """Parse the last complete JSON object without fabricating telemetry."""
+    decoder = json.JSONDecoder()
+    candidates: list[tuple[int, Any]] = []
+    for index, character in enumerate(stdout):
+        if character != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(stdout[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            candidates.append((index + end, value))
+    empty_usage = {
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read": None,
+        "cache_creation": None,
+    }
+    if not candidates:
+        return {
+            "model": None, "usage": empty_usage, "duration_ms": None,
+            "raw_ok": False, "reason": "stdout did not contain a complete JSON object",
+        }
+    envelope = max(candidates, key=lambda item: item[0])[1]
+    usage_raw = envelope.get("usage")
+    if not isinstance(usage_raw, dict):
+        usage_raw = {}
+    model = envelope.get("model")
+    model_usage = envelope.get("modelUsage") or envelope.get("model_usage")
+    if not isinstance(model, str) and isinstance(model_usage, dict) and model_usage:
+        model = next(iter(model_usage))
+    aliases = {
+        "input_tokens": ("input_tokens", "inputTokens"),
+        "output_tokens": ("output_tokens", "outputTokens"),
+        "cache_read": ("cache_read", "cache_read_input_tokens", "cacheReadInputTokens"),
+        "cache_creation": ("cache_creation", "cache_creation_input_tokens", "cacheCreationInputTokens"),
+    }
+    usage = {
+        target: next((usage_raw[key] for key in keys if key in usage_raw), None)
+        for target, keys in aliases.items()
+    }
+    duration = envelope.get("duration_ms", envelope.get("durationMs"))
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0:
+        duration = None
+    elif duration is not None:
+        duration = int(duration)
+    return {
+        "model": model if isinstance(model, str) else None,
+        "usage": usage,
+        "duration_ms": duration,
+        "raw_ok": True,
+    }
 
 
 def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
@@ -144,7 +214,7 @@ def _engine_argv(
     engines = _load_engines(engines_file)
     if engine not in engines:
         raise GateBlocked(f"allowlisted engine {engine!r} is absent from engines file")
-    template = engines[engine]
+    template = engines[engine]["command"]
     if not any(
         "{prompt}" in part or "{prompt_file}" in part
         for part in template
@@ -180,6 +250,40 @@ def _run_argv(argv: list[str], timeout: int) -> str:
     if not completed.stdout.strip():
         raise SourceUnavailable("engine returned an empty response")
     return completed.stdout.strip()
+
+
+def _auth_probe(engine_cfg: dict, timeout: int) -> bool:
+    argv = engine_cfg.get("auth_probe") or []
+    if not argv:
+        return True
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _record_run(state_dir: Path, node: str, payload: dict) -> None:
+    record_path = Path(__file__).with_name("record.py")
+    spec = importlib.util.spec_from_file_location(f"social_record_for_{node}", record_path)
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("record writer could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Run records carry telemetry only — draft bodies/sources stay in the
+    # receipt files, never in runs.jsonl.
+    summary_keys = (
+        "status", "error", "engine", "model", "usage",
+        "duration_ms", "auth_class", "round", "surface", "pass",
+    )
+    summary = {key: payload[key] for key in summary_keys if key in payload}
+    if isinstance(payload.get("defects"), list):
+        summary["defect_codes"] = [
+            d.get("code") for d in payload["defects"] if isinstance(d, dict)
+        ]
+    module.write_record(state_dir, node, summary, shadow=True)
 
 
 def _load_kernel_bridge(path: Path):
@@ -549,8 +653,20 @@ def main(argv: list[str] | None = None) -> int:
             prior_draft=prior,
             defects=defects,
         )
-        response = _extract_json(
-            _call_engine(
+        engine_cfg = _load_engines(args.engines_file).get(args.engine)
+        if engine_cfg is None:
+            raise GateBlocked(f"allowlisted engine {args.engine!r} is absent from engines file")
+        if not _auth_probe(engine_cfg, args.engine_timeout):
+            blocked = {
+                "status": "blocked", "error": {"code": "AUTH_EXPIRED"},
+                "engine": args.engine, "model": None,
+                "usage": {"input_tokens": None, "output_tokens": None, "cache_read": None, "cache_creation": None},
+                "duration_ms": None, "auth_class": "blocked",
+            }
+            _write_json(args.out, blocked)
+            _record_run(args.state_dir, "draft_post", blocked)
+            return 2
+        stdout = _call_engine(
                 prompt,
                 engine=args.engine,
                 engines_file=args.engines_file,
@@ -559,7 +675,10 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.engine_timeout,
                 allowed_engines=allowed_engines,
             )
-        )
+        telemetry = parse_engine_envelope(stdout, engine_cfg)
+        envelope = _extract_json(stdout)
+        result = envelope.get("result") if isinstance(envelope, dict) else None
+        response = _extract_json(result) if isinstance(result, str) else envelope
         draft = _normalize_draft(
             response,
             surface=args.surface,
@@ -567,7 +686,14 @@ def main(argv: list[str] | None = None) -> int:
             round_number=round_number,
             bundle=bundle,
         )
+        if engine_cfg.get("telemetry_contract"):
+            draft.update({
+                "model": telemetry["model"], "usage": telemetry["usage"],
+                "duration_ms": telemetry["duration_ms"],
+                "auth_class": engine_cfg.get("auth_class"),
+            })
         _write_json(args.out, draft)
+        _record_run(args.state_dir, "draft_post", draft)
         return 0
     except GateBlocked as exc:
         reasons = exc.reasons or [str(exc)]

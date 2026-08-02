@@ -28,11 +28,25 @@ filled in — they are factory defaults, not any department's numbers.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+try:
+    from factory.lockutil import records_lock
+except ModuleNotFoundError:
+    # Tests and loopfactory.py load factory modules directly by file path.
+    _lockutil_spec = importlib.util.spec_from_file_location(
+        "factory_lockutil", Path(__file__).with_name("lockutil.py")
+    )
+    _lockutil = importlib.util.module_from_spec(_lockutil_spec)
+    _lockutil_spec.loader.exec_module(_lockutil)
+    records_lock = _lockutil.records_lock
 
 
 # --- factory defaults (charter.yaml is the per-department source of truth) --- #
@@ -344,6 +358,7 @@ def decide(findings: list[dict], autonomy_state: str = "shadow",
                 "act": "escalate",
                 "reason": f["code"],
                 "finding_code": f["code"],
+                "subject": f.get("subject") or f["code"],
                 "detail": f.get("detail", ""),
             })
     proposed.append({"act": "daily_brief", "reason": "cadence"})
@@ -357,9 +372,69 @@ def decide(findings: list[dict], autonomy_state: str = "shadow",
 
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _escalation_subject(action: dict[str, Any]) -> str:
+    """Return the stable identity within a finding, excluding changing detail."""
+    return str(
+        action.get("subject")
+        or action.get("target")
+        or action.get("finding_code")
+        or action.get("reason")
+        or "manager"
+    )
+
+
+def _escalation_fingerprint(
+    department: str, finding_code: str, subject: str
+) -> str:
+    material = f"{department}|{finding_code}|{subject}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:12]
+
+
+def _active_escalation_fingerprints(path: Path) -> set[str]:
+    """Replay append-only delivery/resolution markers into the active set."""
+    active: set[str] = set()
+    for row in _load_jsonl(path):
+        fingerprint = row.get("fingerprint")
+        if not isinstance(fingerprint, str) or not fingerprint:
+            continue
+        marker = row.get("marker") or row.get("status")
+        if marker == "resolved" or row.get("resolved") is True:
+            active.discard(fingerprint)
+        elif marker == "delivered" or row.get("delivered") is True:
+            active.add(fingerprint)
+    return active
+
+
+def _records_state_dir(state_path, heartbeat_path, run_db_path) -> Path | None:
+    for candidate in (state_path, heartbeat_path, run_db_path):
+        if candidate is not None:
+            return Path(candidate).parent
+    return None
 
 
 def _render_brief(sensed, findings, actions, now_iso, epoch, department, thresholds) -> str:
@@ -413,72 +488,164 @@ def act(
     findings = findings or []
     now_iso = _now(now).isoformat()
 
-    # epoch from prior STATE (single-writer fencing)
-    epoch = 0
-    if state_path and Path(state_path).exists():
-        try:
-            epoch = int(json.loads(Path(state_path).read_text(encoding="utf-8")).get("epoch", -1)) + 1
-        except (ValueError, OSError):
-            epoch = 0
+    records_dir = _records_state_dir(state_path, heartbeat_path, run_db_path)
 
-    escalations = [a for a in actions if a["act"] == "escalate"]
-    # Codex review #13: escalations with no transport are UNDELIVERED, and that
-    # must be visible in STATE/heartbeat rather than silently counted as sent.
-    escalations_undelivered = len(escalations) if escalate_fn is None else 0
-    for a in escalations:
-        if escalate_fn is not None:
-            issue = f"[{department}] {a.get('finding_code') or a.get('reason')}: {a.get('detail', '')}".strip()
-            escalate_fn(issue, context={"epoch": epoch, "finding": a.get("finding_code")})
+    def _act_and_record() -> tuple[int, int, int, list[str]]:
+        # Epoch read and all shared record writes are one fenced transaction.
+        epoch = 0
+        if state_path and Path(state_path).exists():
+            try:
+                epoch = int(
+                    json.loads(Path(state_path).read_text(encoding="utf-8")).get(
+                        "epoch", -1
+                    )
+                ) + 1
+            except (ValueError, OSError):
+                epoch = 0
 
-    # RECORD 1: runs manager tick card (append-only)
-    if run_db_path is not None:
-        run_db_path = Path(run_db_path)
-        run_db_path.parent.mkdir(parents=True, exist_ok=True)
-        with run_db_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "node": "manager_tick",
-                "epoch": epoch,
-                "timestamp": now_iso,
-                "findings": [f["code"] for f in findings],
-                "escalations": len(escalations),
-            }) + "\n")
+        candidates = [a for a in actions if a["act"] == "escalate"]
+        delivered = 0
+        undelivered = 0
+        suppressed: list[str] = []
+        fingerprint_path = (
+            records_dir / "escalation_fingerprints.jsonl"
+            if records_dir is not None
+            else None
+        )
+        active_fingerprints = (
+            _active_escalation_fingerprints(fingerprint_path)
+            if fingerprint_path is not None
+            else set()
+        )
 
-    # RECORD 2: brief (human surface)
-    if brief_path is not None:
-        _atomic_write(Path(brief_path), _render_brief(
-            sensed, findings, actions, now_iso, epoch, department, thresholds))
+        for action in candidates:
+            finding_code = str(
+                action.get("finding_code") or action.get("reason") or "unknown"
+            )
+            subject = _escalation_subject(action)
+            fingerprint = _escalation_fingerprint(
+                department, finding_code, subject
+            )
+            if fingerprint in active_fingerprints:
+                suppressed.append(fingerprint)
+                continue
+            if escalate_fn is None:
+                undelivered += 1
+                continue
 
-    # RECORD 3: STATE.json (atomic, monotonic epoch)
-    if state_path is not None:
-        _atomic_write(Path(state_path), json.dumps({
-            "department": department,
-            "epoch": epoch,
-            "last_cycle_at": now_iso,
-            "autonomy_state": autonomy_state,
-            "sensed": sensed,
-            "open_findings": findings,
-            "escalations": len(escalations),
-            "escalations_undelivered": escalations_undelivered,
-        }, indent=2) + "\n")
+            issue = (
+                f"[{department}] {finding_code}: {action.get('detail', '')}"
+            ).strip()
+            escalate_fn(
+                issue,
+                context={
+                    "epoch": epoch,
+                    "finding": action.get("finding_code"),
+                    "fingerprint": fingerprint,
+                    "subject": subject,
+                },
+            )
+            delivered += 1
+            active_fingerprints.add(fingerprint)
+            if fingerprint_path is not None:
+                _append_jsonl(
+                    fingerprint_path,
+                    {
+                        "department": department,
+                        "finding_code": finding_code,
+                        "fingerprint": fingerprint,
+                        "marker": "delivered",
+                        "subject": subject,
+                        "timestamp": now_iso,
+                    },
+                )
 
-    # RECORD 4: heartbeat (append)
-    if heartbeat_path is not None:
-        heartbeat_path = Path(heartbeat_path)
-        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
-        with heartbeat_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "ts": now_iso,
-                "epoch": epoch,
-                "ok": escalations_undelivered == 0,
-                "findings": len(findings),
-                "escalations": len(escalations),
-                "escalations_undelivered": escalations_undelivered,
-            }) + "\n")
+        notes = [
+            {
+                "code": "escalation_suppressed_duplicate",
+                "fingerprint": fingerprint,
+            }
+            for fingerprint in suppressed
+        ]
+
+        # RECORD 1: runs manager tick card (append-only)
+        if run_db_path is not None:
+            _append_jsonl(
+                Path(run_db_path),
+                {
+                    "node": "manager_tick",
+                    "epoch": epoch,
+                    "timestamp": now_iso,
+                    "findings": [f["code"] for f in findings],
+                    "escalations": delivered,
+                    "escalations_undelivered": undelivered,
+                    "notes": notes,
+                },
+            )
+
+        # RECORD 2: brief (human surface)
+        if brief_path is not None:
+            _atomic_write(
+                Path(brief_path),
+                _render_brief(
+                    sensed,
+                    findings,
+                    actions,
+                    now_iso,
+                    epoch,
+                    department,
+                    thresholds,
+                ),
+            )
+
+        # RECORD 3: STATE.json (atomic, monotonic epoch)
+        if state_path is not None:
+            _atomic_write(
+                Path(state_path),
+                json.dumps(
+                    {
+                        "department": department,
+                        "epoch": epoch,
+                        "last_cycle_at": now_iso,
+                        "autonomy_state": autonomy_state,
+                        "sensed": sensed,
+                        "open_findings": findings,
+                        "escalations": delivered,
+                        "escalations_undelivered": undelivered,
+                        "escalations_suppressed": len(suppressed),
+                    },
+                    indent=2,
+                )
+                + "\n",
+            )
+
+        # RECORD 4: heartbeat (append)
+        if heartbeat_path is not None:
+            _append_jsonl(
+                Path(heartbeat_path),
+                {
+                    "ts": now_iso,
+                    "epoch": epoch,
+                    "ok": undelivered == 0,
+                    "findings": len(findings),
+                    "escalations": delivered,
+                    "escalations_undelivered": undelivered,
+                    "escalations_suppressed": len(suppressed),
+                },
+            )
+        return epoch, delivered, undelivered, suppressed
+
+    if records_dir is None:
+        epoch, escalations, escalations_undelivered, suppressed = _act_and_record()
+    else:
+        with records_lock(records_dir):
+            epoch, escalations, escalations_undelivered, suppressed = _act_and_record()
 
     return {
         "epoch": epoch,
-        "escalations": len(escalations),
+        "escalations": escalations,
         "escalations_undelivered": escalations_undelivered,
+        "escalations_suppressed": len(suppressed),
         "brief_path": str(brief_path) if brief_path else None,
         "ok": True,
     }

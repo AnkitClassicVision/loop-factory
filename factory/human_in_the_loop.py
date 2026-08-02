@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,10 +24,37 @@ def _load(path: Path) -> list[dict]:
     ]
 
 
-def _save(path: Path, rows: list[dict]) -> None:
+def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def _save(path: Path, rows: list[dict]) -> None:
     content = "\n".join(json.dumps(row) for row in rows)
-    path.write_text(content + ("\n" if rows else ""), encoding="utf-8")
+    _atomic_write(path, content + ("\n" if rows else ""))
+
+
+def _append(path: Path, rows: list[dict]) -> None:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    content = existing + "".join(json.dumps(row) + "\n" for row in rows)
+    _atomic_write(path, content)
 
 
 def push(queue_path, department: str, outbox_path) -> dict:
@@ -55,10 +84,7 @@ def push(queue_path, department: str, outbox_path) -> dict:
         row["decision_id"] = decision_id
 
     if packets:
-        outbox.parent.mkdir(parents=True, exist_ok=True)
-        with outbox.open("a", encoding="utf-8") as handle:
-            for packet in packets:
-                handle.write(json.dumps(packet) + "\n")
+        _append(outbox, packets)
     _save(queue, rows)
     return {"pushed": len(packets), "outbox": str(outbox)}
 
@@ -130,7 +156,6 @@ def escalate(department: str, issue: str, outbox_path, context: dict | None = No
     unhealable error reaches Ankit on his phone. Distinct kind='escalation' so
     the bot presents it as a heads-up, not an approve/reject. Never sends."""
     outbox = Path(outbox_path)
-    outbox.parent.mkdir(parents=True, exist_ok=True)
     packet = {
         "kind": "escalation",
         "department": department,
@@ -139,8 +164,7 @@ def escalate(department: str, issue: str, outbox_path, context: dict | None = No
         "ts": datetime.now(timezone.utc).isoformat(),
         "eli5": f"[{department}] needs you: {issue}",
     }
-    with outbox.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(packet) + "\n")
+    _append(outbox, [packet])
     return {"escalated": True, "issue": issue}
 
 

@@ -112,7 +112,7 @@ def _quarantine(state_dir: Path, item_id: str, reasons: list[str]) -> None:
     )
 
 
-def _load_engines(path: Path) -> dict[str, list[str]]:
+def _load_engines(path: Path) -> dict[str, dict[str, Any]]:
     if yaml is None:
         raise EngineUnavailable("PyYAML is required for the engines file")
     if not path.is_file():
@@ -125,16 +125,41 @@ def _load_engines(path: Path) -> dict[str, list[str]]:
         loaded = loaded["engines"]
     if not isinstance(loaded, dict):
         raise EngineUnavailable("engines file must map engine names to argv lists")
-    engines: dict[str, list[str]] = {}
-    for name, argv in loaded.items():
-        if not isinstance(name, str) or not isinstance(argv, list) or not argv:
-            raise EngineUnavailable("each engine must have a non-empty argv list")
+    engines: dict[str, dict[str, Any]] = {}
+    for name, value in loaded.items():
+        config = {"command": value} if isinstance(value, list) else value
+        if not isinstance(name, str) or not isinstance(config, dict):
+            raise EngineUnavailable("each engine must be an argv list or config object")
+        argv = config.get("command")
+        if not isinstance(argv, list) or not argv:
+            raise EngineUnavailable("each engine must have a non-empty command argv list")
         if not all(isinstance(part, str) and part for part in argv):
             raise EngineUnavailable(
                 f"engine {name!r} argv must contain non-empty strings"
             )
-        engines[name] = list(argv)
+        auth_probe = config.get("auth_probe")
+        if auth_probe not in (None, []) and (
+            not isinstance(auth_probe, list)
+            or not all(isinstance(part, str) and part for part in auth_probe)
+        ):
+            raise EngineUnavailable(f"engine {name!r} auth_probe must be an argv list")
+        engines[name] = {
+            "command": list(argv), "auth_class": config.get("auth_class"),
+            "auth_probe": list(auth_probe or []),
+            "telemetry_contract": isinstance(value, dict),
+        }
     return engines
+
+
+def parse_engine_envelope(stdout: str, engine_cfg: dict) -> dict:
+    """Use the shared N4 envelope contract without importing or logging content."""
+    draft_path = Path(__file__).with_name("draft_post.py")
+    spec = importlib.util.spec_from_file_location("social_draft_envelope_parser", draft_path)
+    if spec is None or spec.loader is None:
+        raise EngineUnavailable("engine envelope parser could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.parse_engine_envelope(stdout, engine_cfg)
 
 
 def _load_charter_policy(path: Path) -> tuple[frozenset[str], int]:
@@ -160,7 +185,7 @@ def _engine_argv(
     engines = _load_engines(engines_file)
     if engine not in engines:
         raise EngineUnavailable(f"allowlisted engine {engine!r} is absent from engines file")
-    template = engines[engine]
+    template = engines[engine]["command"]
     if not any(
         "{prompt}" in part or "{prompt_file}" in part
         for part in template
@@ -198,6 +223,38 @@ def _run_argv(argv: list[str], timeout: int) -> str:
     if not completed.stdout.strip():
         raise EngineUnavailable("engine returned an empty response")
     return completed.stdout.strip()
+
+
+def _auth_probe(engine_cfg: dict, timeout: int) -> bool:
+    argv = engine_cfg.get("auth_probe") or []
+    if not argv:
+        return True
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _record_run(state_dir: Path, node: str, payload: dict) -> None:
+    record_path = Path(__file__).with_name("record.py")
+    spec = importlib.util.spec_from_file_location(f"social_record_for_{node}", record_path)
+    if spec is None or spec.loader is None:
+        raise SourceUnavailable("record writer could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Run records carry telemetry only — defect details and draft content
+    # stay in the receipt files, never in runs.jsonl.
+    summary_keys = (
+        "status", "error", "engine", "model", "usage",
+        "duration_ms", "auth_class", "round", "surface", "pass",
+    )
+    summary = {key: payload[key] for key in summary_keys if key in payload}
+    if isinstance(payload.get("defects"), list):
+        summary["defect_codes"] = [
+            d.get("code") for d in payload["defects"] if isinstance(d, dict)
+        ]
+    module.write_record(state_dir, node, summary, shadow=True)
 
 
 def _load_kernel_bridge(path: Path):
@@ -496,11 +553,23 @@ def main(argv: list[str] | None = None) -> int:
 
         defects = deterministic_defects(draft, bundle)
         sanitized = isinstance(bundle, dict) and bundle.get("sanitized") is True
+        engine_cfg = _load_engines(args.engines_file).get(args.engine)
+        if engine_cfg is None:
+            raise EngineUnavailable(f"allowlisted engine {args.engine!r} is absent from engines file")
+        if sanitized and not _auth_probe(engine_cfg, args.engine_timeout):
+            blocked = {
+                "status": "blocked", "error": {"code": "AUTH_EXPIRED"},
+                "engine": args.engine, "model": None,
+                "usage": {"input_tokens": None, "output_tokens": None, "cache_read": None, "cache_creation": None},
+                "duration_ms": None, "auth_class": "blocked",
+            }
+            _write_json(args.out, blocked)
+            _record_run(args.state_dir, "qa_post", blocked)
+            return 2
+        telemetry = parse_engine_envelope("", engine_cfg)
         if sanitized:
             try:
-                defects.extend(
-                    _model_defects(
-                        _call_engine(
+                stdout = _call_engine(
                             _model_prompt(draft, bundle),
                             engine=args.engine,
                             engines_file=args.engines_file,
@@ -508,14 +577,23 @@ def main(argv: list[str] | None = None) -> int:
                             no_kernel=args.no_kernel,
                             timeout=args.engine_timeout,
                         )
-                    )
-                )
+                telemetry = parse_engine_envelope(stdout, engine_cfg)
+                envelope = _extract_json(stdout)
+                result = envelope.get("result") if isinstance(envelope, dict) else None
+                defects.extend(_model_defects(result if isinstance(result, str) else stdout))
             except EngineUnavailable as exc:
                 defects.append(
                     {"code": "qa_engine_unavailable", "detail": str(exc)}
                 )
         report = {"pass": not defects, "defects": defects, "engine": args.engine}
+        if engine_cfg.get("telemetry_contract"):
+            report.update({
+                "model": telemetry["model"], "usage": telemetry["usage"],
+                "duration_ms": telemetry["duration_ms"],
+                "auth_class": engine_cfg.get("auth_class"),
+            })
         _write_json(args.out, report)
+        _record_run(args.state_dir, "qa_post", report)
         return 0
     except GateBlocked as exc:
         reasons = exc.reasons or [str(exc)]
