@@ -216,6 +216,139 @@ def test_state_epoch_is_monotonic_across_cycles(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Drift sensor (hard rule 4: process change = map change + QA — on cadence)
+# --------------------------------------------------------------------------- #
+
+def _load_release():
+    spec = importlib.util.spec_from_file_location("release", RUNTIME_DIR / "release.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+REL = _load_release()
+
+
+def _pinned_dept(tmp_path):
+    """A minimal department with one runtime artifact, pinned and flipped."""
+    dept = tmp_path / "dept"
+    (dept / "runtime").mkdir(parents=True)
+    (dept / "state").mkdir()
+    (dept / "runtime" / "node.py").write_text("def node(): return 1\n", encoding="utf-8")
+    releases = dept / "releases"
+    h = REL.pin_release(dept, releases, source_ref="testsha")
+    REL.flip_current(releases, h)
+    return dept
+
+
+def test_cycle_with_clean_release_has_no_drift_finding(tmp_path):
+    dept = _pinned_dept(tmp_path)
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    codes = {f["code"] for f in report["findings"]}
+    assert report["sensed"]["drift_checked"] is True
+    assert report["sensed"]["drift_ok"] is True
+    assert not codes & {"release_drift", "release_unpinned", "drift_check_failed"}
+
+
+def test_drifted_release_is_breach_and_escalates(tmp_path):
+    dept = _pinned_dept(tmp_path)
+    # edit the process WITHOUT re-pinning: exactly the hard-rule-4 violation
+    (dept / "runtime" / "node.py").write_text("def node(): return 2\n", encoding="utf-8")
+    escalations = []
+    report = M.run_manager_cycle(
+        state_dir=dept / "state", dept_dir=dept, now=NOW,
+        escalate_fn=lambda issue, context=None: escalations.append(issue),
+    )
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["release_drift"]["severity"] == "breach"
+    assert codes["release_drift"]["observed"] == 1
+    assert any("release_drift" in e for e in escalations)
+    # the alarm lands in the durable records: STATE + heartbeat
+    state = json.loads((dept / "state" / "STATE.json").read_text(encoding="utf-8"))
+    assert "release_drift" in [f["code"] for f in state["open_findings"]]
+    assert (dept / "state" / "heartbeats.jsonl").exists()
+
+
+def test_drift_breach_names_mismatched_artifact_and_runbook(tmp_path):
+    dept = _pinned_dept(tmp_path)
+    (dept / "runtime" / "node.py").write_text("def node(): return 3\n", encoding="utf-8")
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    detail = next(f for f in report["findings"] if f["code"] == "release_drift")["detail"]
+    assert "runtime/node.py" in detail
+    assert "process-change-qa" in detail
+
+
+def test_releases_dir_without_pin_is_breach(tmp_path):
+    dept = tmp_path / "dept"
+    (dept / "runtime").mkdir(parents=True)
+    (dept / "state").mkdir()
+    (dept / "releases").mkdir()
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["release_unpinned"]["severity"] == "breach"
+
+
+def test_no_releases_dir_is_visible_warn_not_breach(tmp_path):
+    # pre-F4 department: drift is unverifiable — surface it, don't alarm
+    dept = tmp_path / "dept"
+    (dept / "runtime").mkdir(parents=True)
+    (dept / "state").mkdir()
+    escalations = []
+    report = M.run_manager_cycle(
+        state_dir=dept / "state", dept_dir=dept, now=NOW,
+        escalate_fn=lambda issue, context=None: escalations.append(issue),
+    )
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["drift_unverifiable"]["severity"] == "warn"
+    assert escalations == []
+
+
+def test_corrupt_manifest_fails_closed_as_breach(tmp_path):
+    # deny-by-default: a drift check that cannot run must alarm, never pass
+    dept = _pinned_dept(tmp_path)
+    current = (dept / "releases" / "current").read_text(encoding="utf-8").strip()
+    (dept / "releases" / current / "manifest.json").write_text("not json", encoding="utf-8")
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    codes = {f["code"]: f for f in report["findings"]}
+    assert codes["drift_check_failed"]["severity"] == "breach"
+
+
+def test_drift_alarm_never_remediates(tmp_path):
+    # report-and-alarm only: no re-pin, no revert, no file writes in the dept
+    dept = _pinned_dept(tmp_path)
+    drifted = "def node(): return 2\n"
+    (dept / "runtime" / "node.py").write_text(drifted, encoding="utf-8")
+    current_before = (dept / "releases" / "current").read_text(encoding="utf-8")
+    release_dirs_before = sorted(p.name for p in (dept / "releases").iterdir())
+    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
+    assert (dept / "runtime" / "node.py").read_text(encoding="utf-8") == drifted
+    assert (dept / "releases" / "current").read_text(encoding="utf-8") == current_before
+    assert sorted(p.name for p in (dept / "releases").iterdir()) == release_dirs_before
+    assert all(a["act"] in M.SHADOW_ACTS for a in report["actions"])
+
+
+def test_cycle_without_dept_dir_is_unchanged(tmp_path):
+    # legacy callers that pass no dept_dir get no drift keys and no drift findings
+    report = M.run_manager_cycle(state_dir=tmp_path, now=NOW)
+    assert "drift_checked" not in report["sensed"]
+    codes = {f["code"] for f in report["findings"]}
+    assert not codes & {"release_drift", "release_unpinned", "drift_check_failed",
+                        "drift_unverifiable"}
+
+
+def test_compare_flags_release_drift_from_sensed_keys():
+    findings = M.compare(
+        {"week_touches": 0, "drift_checked": True, "drift_ok": False,
+         "drift_release": "abc123", "drift_mismatch_count": 2,
+         "drift_mismatches": ["runtime/a.py", "charter.yaml"]},
+        M.DEFAULT_THRESHOLDS,
+    )
+    codes = {f["code"]: f for f in findings}
+    assert codes["release_drift"]["severity"] == "breach"
+    assert codes["release_drift"]["observed"] == 2
+
+
+# --------------------------------------------------------------------------- #
 # End to end
 # --------------------------------------------------------------------------- #
 
