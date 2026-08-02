@@ -1,0 +1,17 @@
+[Unit]
+Description=Loop Factory estate manager deadman check
+Documentation=https://github.com/AnkitClassicVision/loop-factory
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/d_drive/repos/loop-factory
+ExecStart=/usr/bin/env python3 /mnt/d_drive/repos/loop-factory/factory/estate_deadman.py --registry-dir /mnt/d_drive/repos/loop-factory/estate/registry.d --estate-state-dir /mnt/d_drive/repos/loop-factory/estate/state --outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl --max-age-seconds 97200
+TimeoutStartSec=60
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/d_drive/repos/loop-factory/state
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Loop Factory estate manager daily
+
+[Timer]
+OnCalendar=*-*-* 14:15:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=loop-factory-estate.service
+
+[Install]
+WantedBy=timers.target

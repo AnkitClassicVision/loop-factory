@@ -1,0 +1,18 @@
+[Unit]
+Description=Loop Factory estate manager cycle
+Documentation=https://github.com/AnkitClassicVision/loop-factory
+ConditionPathIsDirectory=/mnt/d_drive/repos/loop-factory/estate/registry.d
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/d_drive/repos/loop-factory
+ExecStart=/usr/bin/env python3 /mnt/d_drive/repos/loop-factory/loopfactory.py estate --root /mnt/d_drive/repos/loop-factory --outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl
+TimeoutStartSec=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/d_drive/repos/loop-factory/estate/state /mnt/d_drive/repos/loop-factory/state
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
