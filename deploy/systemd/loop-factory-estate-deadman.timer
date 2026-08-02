@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the Loop Factory estate manager deadman hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+Unit=loop-factory-estate-deadman.service
+
+[Install]
+WantedBy=timers.target
