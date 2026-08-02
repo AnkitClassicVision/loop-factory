@@ -158,6 +158,11 @@ def reverify_transition(row, *, record, signer, now):
     release_hash/run_id) plus one transition row (carries the full signed
     token, the source node, the attempt, and the canonical output hash).
 
+    Limitation of hash rebinding (accepted, round-4 C5 — verbatim): attests
+    receipt authenticity and binding integrity under the recorded identity;
+    does NOT prove output content, schema conformance, or predicate
+    correctness — no body exists to recompute.
+
     Consumption is deliberately NOT touched: auditors verify, they never
     transition, so a throwaway nonce set is used. Verdict semantics: verify
     checks the signature and binding BEFORE expiry, so reason 'expired' on a

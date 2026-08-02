@@ -65,6 +65,24 @@ class _DeadVerifySigner:
         return False
 
 
+class _RaisingSignSigner:
+    """sign() raises after the first `allow` calls — an HSM/key service that
+    dies mid-run. Exceptions must terminate as killed, never escape."""
+
+    def __init__(self, inner, allow=0):
+        self._inner = inner
+        self._allow = allow
+
+    def sign(self, payload):
+        if self._allow > 0:
+            self._allow -= 1
+            return self._inner.sign(payload)
+        raise RuntimeError("signing service unavailable")
+
+    def verify(self, payload, sig):
+        return self._inner.verify(payload, sig)
+
+
 SENSE_OK = """\
 import json, pathlib
 state = pathlib.Path(__file__).resolve().parents[1] / "state"
@@ -616,6 +634,228 @@ def test_resume_continues_from_frontier_not_entry(tmp_path):
 # --------------------------------------------------------------------------- #
 # R4: a HELD .run.lock (live concurrent runner) no-ops cleanly.
 # --------------------------------------------------------------------------- #
+
+def _rewrite_state(dept, run_id, mutate):
+    path = dept / "state" / "graph_runs" / run_id / "run_state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    mutate(state)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return state
+
+
+# --------------------------------------------------------------------------- #
+# C1: signing-plane exceptions terminate as killed + durable finding —
+# they never escape the runner.
+# --------------------------------------------------------------------------- #
+
+def test_signing_exception_terminates_killed_with_finding(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
+    result = RUN.run_graph(dept, trigger_fingerprint="raise-1", signer=raising,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "killed"
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "gate_failure" for row in rows)
+    state = _state_json(dept, result)
+    assert str(state["termination_reason"]).startswith("gate_failure")
+
+
+# --------------------------------------------------------------------------- #
+# C2: the receipt-bearing escalation row carries the CONCRETE failed check.
+# --------------------------------------------------------------------------- #
+
+def test_escalation_row_carries_the_failed_check(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    flaky = _FlakyVerifySigner(R.LocalSigner(key="test-key"), fail_first=1)
+    result = RUN.run_graph(dept, trigger_fingerprint="flaky-2", signer=flaky,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    gated = [t for t in _transitions(dept, result)
+             if str(t.get("note", "")).startswith("verification_failed")]
+    assert gated and gated[0]["failed_check"] == "signature"
+
+
+# --------------------------------------------------------------------------- #
+# C3: durable per-edge completion checkpoint — resume trusts explicit
+# decision state, reverified receipts, never row-shape inference.
+# --------------------------------------------------------------------------- #
+
+HANDLER_MARKING = """\
+import json, pathlib
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+with (state / "markers.txt").open("a", encoding="utf-8") as fh:
+    fh.write("handled\\n")
+print(json.dumps({"status": "handled"}))
+"""
+
+
+def _refusal_manifest():
+    return {
+        "schema_version": 2,
+        "subgraphs": [{
+            "id": "SG-RUN",
+            "concept_refs": ["C1"],
+            "entry": "N1",
+            "nodes": [_node("N1", "runtime/flaky.py", on_fail="H1"),
+                      _node("H1", "runtime/handler.py")],
+            "edges": [
+                {"from": "N1", "to": "H1", "kind": "refusal",
+                 "when": "receipt.status == 'node_failed'"},
+                {"from": "N1", "kind": "terminal",
+                 "when": "receipt.status == 'ok'"},
+                {"from": "H1", "kind": "terminal", "when": "true"},
+            ],
+        }],
+    }
+
+
+def test_resume_after_routed_failure_does_not_requeue_or_double_feed(tmp_path):
+    # (a) crash after the refusal transition fired but before the handler ran:
+    # the FAILED node must not re-execute; the handler is fed exactly once.
+    dept = _make_dept(tmp_path, {"flaky.py": FAIL_NODE,
+                                 "handler.py": HANDLER_MARKING},
+                      _refusal_manifest())
+    first = _run(dept, tmp_path, fingerprint="routed-1")
+    assert first["state"] == "done"
+    assert _markers(dept) == ["fail", "handled"]
+    run_id = first["run_id"]
+
+    def crash_before_handler(state):
+        state["state"] = "running"
+        del state["nodes"]["H1"]
+        state["transitions"] = [t for t in state["transitions"]
+                                if t["from"] != "H1"]
+    _rewrite_state(dept, run_id, crash_before_handler)
+    second = _run(dept, tmp_path, fingerprint="routed-1")
+    assert second["resumed"] is True
+    assert second["state"] == "done"
+    assert _markers(dept) == ["fail", "handled", "handled"]  # N1 NOT re-run
+    feeds = [t for t in _transitions(dept, second)
+             if t["from"] == "N1" and t["to"] == "H1"]
+    assert len(feeds) == 1  # no double-feed
+
+
+def _fanout_manifest():
+    return {
+        "schema_version": 2,
+        "subgraphs": [{
+            "id": "SG-RUN",
+            "concept_refs": ["C1"],
+            "entry": "N1",
+            "nodes": [_node("N1", "runtime/n1.py"),
+                      _node("N2", "runtime/n2.py"),
+                      _node("N3", "runtime/n3.py")],
+            "edges": [
+                {"from": "N1", "to": "N2", "kind": "normal", "when": "true"},
+                {"from": "N1", "to": "N3", "kind": "normal", "when": "true"},
+                {"from": "N2", "kind": "terminal", "when": "true"},
+                {"from": "N3", "kind": "terminal", "when": "true"},
+            ],
+        }],
+    }
+
+
+def test_resume_fires_remaining_fanout_edges(tmp_path):
+    # (b) crash after the FIRST outgoing transition of a fan-out: the second
+    # satisfied edge must still fire on resume — not silently drop.
+    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
+                                 "n2.py": _mark_node("n2"),
+                                 "n3.py": _mark_node("n3")},
+                      _fanout_manifest())
+    first = _run(dept, tmp_path, fingerprint="fan-1")
+    assert first["state"] == "done"
+    run_id = first["run_id"]
+
+    def crash_after_first_edge(state):
+        state["state"] = "running"
+        decisions = state["nodes"]["N1"]["decisions"]
+        n3_edge = [d for d in decisions if d.get("to") == "N3"][0]
+        n3_edge["state"] = "pending"
+        del state["nodes"]["N3"]
+        state["transitions"] = [t for t in state["transitions"]
+                                if "N3" not in (t["from"], t["to"])]
+    _rewrite_state(dept, run_id, crash_after_first_edge)
+    second = _run(dept, tmp_path, fingerprint="fan-1")
+    assert second["resumed"] is True
+    assert second["state"] == "done"
+    markers = _markers(dept)
+    assert markers.count("n1") == 1  # fan-out source not re-executed
+    assert markers.count("n2") == 1  # completed branch untouched
+    assert markers.count("n3") == 2  # dropped branch re-fed and executed
+    assert any(t["from"] == "N1" and t["to"] == "N3"
+               for t in _transitions(dept, second))
+
+
+def test_resume_concludes_persisted_failure_exit_without_new_rows(tmp_path):
+    # (c) a fired failure exit is TERMINAL: resume concludes failed — it never
+    # appends a second exit row nor mutates failed into escalated.
+    manifest = _two_node_manifest()
+    manifest["subgraphs"][0]["nodes"][0]["failure_policy"]["on_fail"] = "fail"
+    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
+                      manifest)
+    first = _run(dept, tmp_path, fingerprint="exit-1")
+    assert first["state"] == "failed"
+    rows_before = len(_transitions(dept, first))
+    _rewrite_state(dept, first["run_id"],
+                   lambda s: s.update(state="awaiting_receipt"))
+    second = _run(dept, tmp_path, fingerprint="exit-1")
+    assert second["resumed"] is True
+    assert second["state"] == "failed"  # not escalated
+    assert len(_transitions(dept, second)) == rows_before  # no new rows
+    assert _markers(dept) == ["fail"]  # no re-execution
+    assert _state_json(dept, second)["termination_reason"] == "on_fail_fail"
+
+
+def test_tampered_record_refuses_resume(tmp_path):
+    # (d) prior receipts are REVERIFIED before the frontier is trusted.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="tamper-1")
+    assert first["state"] == "done"
+
+    def tamper(state):
+        state["state"] = "running"
+        token = state["transitions"][0]["step_receipt"]
+        state["transitions"][0]["step_receipt"] = token[:-4] + "AAAA"
+    _rewrite_state(dept, first["run_id"], tamper)
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="tamper-1")
+    assert _markers(dept) == ["sense"]  # nothing executed
+
+
+# --------------------------------------------------------------------------- #
+# C4: a re-pin between crash and resume refuses — preserved tokens must not
+# be re-homed under a release they were never issued for.
+# --------------------------------------------------------------------------- #
+
+def test_repin_between_crash_and_resume_refuses(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="repin-1")
+    assert first["state"] == "done"
+    before = _state_json(dept, first)
+    _rewrite_state(dept, first["run_id"],
+                   lambda s: s.update(state="running"))
+    manifest = _two_node_manifest()
+    manifest["_note"] = "process change after the crash"
+    (dept / "subgraphs.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    h = REL.pin_release(dept, dept / "releases", source_ref="repin")
+    REL.flip_current(dept / "releases", h)
+    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
+        _run(dept, tmp_path, fingerprint="repin-1")
+    assert _markers(dept) == ["sense"]  # no execution
+    after = _state_json(dept, first)
+    assert after["transitions"] == before["transitions"]  # tokens untouched
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "run_refused"
+               and "release_integrity" in row.get("reason", "") for row in rows)
+
 
 def test_held_run_lock_noops_cleanly(tmp_path):
     import subprocess as subprocess_mod

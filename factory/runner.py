@@ -84,7 +84,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER_VERSION = "2.1.0"
+RUNNER_VERSION = "2.2.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
@@ -111,6 +111,12 @@ class StateError(RuntimeError):
 
 class RecordsLockTimeout(RuntimeError):
     """The department records fence could not be acquired."""
+
+
+class SigningPlaneBroken(RuntimeError):
+    """Receipt issuance/signing itself raised — the trusted plane is broken.
+    The run terminates as killed with a durable gate_failure finding; the
+    exception never escapes the runner."""
 
 
 # --------------------------------------------------------------------------- #
@@ -519,6 +525,42 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
                 return {"run_id": run_id, "state": prior_state,
                         "duplicate": True, "resumed": False}
             # Non-terminal with a free lock: the prior process died mid-run.
+            # Before the checkpoint is trusted, two fences (deny-by-default):
+            # C4 — the run must still belong to the CURRENTLY pinned graph and
+            # release; a re-pin between crash and resume refuses, leaving the
+            # run resumable under the old release or by owner decision.
+            prior_rows = existing.get("transitions", [])
+            if existing.get("graph_hash") is not None and (
+                    existing.get("graph_hash") != loaded["graph_hash"]
+                    or existing.get("release_hash") != loaded["release_hash"]):
+                message = (
+                    f"release_integrity: run {run_id} was recorded under "
+                    f"graph {str(existing.get('graph_hash'))[:12]}/release "
+                    f"{existing.get('release_hash')} but the current pin is "
+                    f"{loaded['graph_hash'][:12]}/{loaded['release_hash']} — "
+                    f"resume refused; prior receipts stay untouched")
+                _log_refusal(state_dir, message, now_fn)
+                raise RunnerRefused(message)
+            # C3d — every persisted receipt is REVERIFIED before the frontier
+            # is trusted; 'expired' means authentic-but-stale and is accepted,
+            # anything else is tampering and refuses resume.
+            for prior_row in prior_rows:
+                try:
+                    verdict = step_receipts.reverify_transition(
+                        prior_row, record=existing, signer=signer,
+                        now=now_fn())
+                    ok = verdict.ok or verdict.reason == "expired"
+                    detail = verdict.reason
+                except Exception as exc:
+                    ok, detail = False, f"unverifiable: {exc}"
+                if not ok:
+                    message = (
+                        f"resume_integrity: transition "
+                        f"{prior_row.get('from')}->{prior_row.get('to')} in "
+                        f"run {run_id} failed reverification ({detail}) — "
+                        f"resume refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message)
             resumed_from = prior_state
 
         run = _Run(dept_dir=dept_dir, state_dir=state_dir, run_id=run_id,
@@ -542,8 +584,19 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
             receipt_ttl_s=receipt_ttl_s)
 
-        _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
-                           now_fn=now_fn)
+        try:
+            _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
+                               now_fn=now_fn)
+        except Exception as exc:
+            # A projection that cannot be signed is simply ABSENT — the
+            # auditor plane treats a missing/stale projection as findings;
+            # the run outcome itself is already durably recorded.
+            with records_lock(state_dir):
+                _append_jsonl(state_dir / "runs.jsonl",
+                              {"ts": _now_iso(now_fn),
+                               "event": "projection_export_failed",
+                               "run_id": run_id,
+                               "reason": f"{type(exc).__name__}: {exc}"})
         return {"run_id": run_id, "state": final_state, "duplicate": False,
                 "resumed": resumed_from is not None}
     finally:
@@ -563,20 +616,33 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
     consumed = step_receipts.DurableNonceStore(
         run.run_dir / "consumed_nonces.jsonl")
 
+    final_reason: str | None = None
+    terminal_reached = False
+
     def _gated_transition(*, src: str, dst, kind: str, attempt: int,
-                          output: dict, note: str | None = None) -> str | None:
+                          output_hash: str, note: str | None = None,
+                          failed_check: str | None = None) -> str | None:
         """Mint one fresh token for THIS transition, verify it (single-use,
         durable consumption), and record it with the full signed token AND
         the canonical output hash it binds (auditor reverification needs only
         the row + the run record). Returns None on success, else the failed
-        check's reason — and no state moves on a reason."""
-        out_hash = step_receipts.output_hash(output)
-        token = step_receipts.issue_step_receipt(
-            signer=signer, now=now_fn(), output_hash=out_hash, node_id=src,
-            attempt=attempt, ttl_s=receipt_ttl_s, **identity)
-        check = step_receipts.verify_step_receipt(
-            token, signer=signer, now=now_fn(), output_hash=out_hash,
-            consumed=consumed, node_id=src, attempt=attempt, **identity)
+        check's reason — no state moves on a reason. An exception from
+        issuance/signing or the durable ledger is a broken signing plane:
+        durable gate_failure finding, then SigningPlaneBroken (run -> killed,
+        never an escaping exception)."""
+        nonlocal final_reason
+        try:
+            token = step_receipts.issue_step_receipt(
+                signer=signer, now=now_fn(), output_hash=output_hash,
+                node_id=src, attempt=attempt, ttl_s=receipt_ttl_s, **identity)
+            check = step_receipts.verify_step_receipt(
+                token, signer=signer, now=now_fn(), output_hash=output_hash,
+                consumed=consumed, node_id=src, attempt=attempt, **identity)
+        except Exception as exc:
+            run.log("gate_failure", node_id=src, why=f"signing_plane:{kind}",
+                    reason=f"{type(exc).__name__}: {exc}")
+            final_reason = "gate_failure:signing_plane"
+            raise SigningPlaneBroken(str(exc)) from exc
         if not check.ok:
             run.log("transition_blocked", node_id=src, to=dst, kind=kind,
                     reason=check.reason)
@@ -584,229 +650,285 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         row = {"from": src, "to": dst, "kind": kind, "attempt": attempt,
                "step_receipt": token,
                "step_receipt_sha256": _sha256_text(token),
-               "output_sha256": out_hash,
+               "output_sha256": output_hash,
                "ts": _now_iso(now_fn)}
         if note is not None:
             row["note"] = note
+        if failed_check is not None:
+            row["failed_check"] = failed_check
         run.record["transitions"].append(row)
         run.persist()
         run.log("transition", **{k: v for k, v in row.items()
                                  if k != "step_receipt"})
         return None
 
-    final_reason: str | None = None
-
-    def _terminalize(src: str, attempt: int, output: dict, why: str) -> str:
-        """Receipt-gate an escalation exit. Every escalated terminal carries
-        its own validated transition row; if even THIS gate cannot validate,
-        the signing plane is broken and the run takes the accepted unreceipted
-        safety abort: killed."""
+    def _fire_exit(src: str, attempt: int, out_hash: str, why: str,
+                   exit_state: str = "escalated", kind: str = "escalation",
+                   failed_check: str | None = None) -> str:
+        """Receipt-gate a run exit as an explicit checkpoint decision. The
+        concrete failed check (C2) rides in the receipt-bearing row. If even
+        this gate cannot validate, the signing plane is broken and the run
+        takes the accepted unreceipted safety abort: killed."""
         nonlocal final_reason
-        reason = _gated_transition(src=src, dst=None, kind="escalation",
-                                   attempt=attempt, output=output, note=why)
+        rec = run.record["nodes"].setdefault(
+            src, {"state": "exit", "attempts": attempt, "output_hash": out_hash})
+        decision = {"edge": f"exit:{why}", "kind": kind, "to": None,
+                    "satisfied": True, "state": "pending",
+                    "exit": exit_state, "why": why}
+        rec.setdefault("decisions", []).append(decision)
+        run.persist()
+        reason = _gated_transition(src=src, dst=None, kind=kind,
+                                   attempt=attempt, output_hash=out_hash,
+                                   note=why, failed_check=failed_check)
         if reason is None:
+            decision["state"] = "fired"
             final_reason = why
-            return "escalated"
+            run.persist()
+            return exit_state
         run.log("gate_failure", node_id=src, why=why, reason=reason)
         final_reason = f"gate_failure:{why}"
         return "killed"
 
-    def _verification_escalation(src: str, attempt: int, kind: str,
-                                 reason: str) -> str:
-        why = f"verification_failed:{kind}"
-        return _terminalize(src, attempt,
-                            {"status": "runner_escalation", "node_id": src,
-                             "why": why, "failed_check": reason}, why)
+    def _complete(nid: str) -> bool:
+        rec = run.record["nodes"].get(nid)
+        if not rec or rec.get("state") not in ("done", "failed", "exit"):
+            return False
+        decisions = rec.get("decisions")
+        if decisions is None:
+            return False
+        return all(d.get("state") == "fired" for d in decisions
+                   if d.get("satisfied") is True)
 
-    run.advance("running", "run_started")
-    # Frontier reconstruction (identical for fresh and resumed runs): a node
-    # counts COMPLETED only if it is done AND at least one transition row from
-    # it exists — a done node whose transitions never recorded (crash in the
-    # transition window) is re-executed, because predicates need its output
-    # body, which is deliberately not persisted (hash-only records).
-    prior_transitions = run.record["transitions"]
-    completed = {nid for nid, rec in run.record["nodes"].items()
-                 if rec.get("state") == "done"
-                 and any(t.get("from") == nid for t in prior_transitions)}
-    terminal_reached = any(
-        t.get("kind") == "terminal" for t in prior_transitions)
-    frontier: deque = deque()
-    queued: set = set()
-    if subgraph["entry"] not in completed:
-        frontier.append(subgraph["entry"])
-        queued.add(subgraph["entry"])
-    for row in prior_transitions:
-        fed = row.get("to")
-        if fed and fed not in completed and fed not in queued:
-            frontier.append(fed)
-            queued.add(fed)
-    queued |= completed
-    final_state: str | None = None
-
-    while frontier and final_state is None:
-        node_id = frontier.popleft()
-        node = nodes[node_id]
-        if (state_dir / "KILL").exists():
-            run.log("kill_switch", node_id=node_id, phase="pre_node")
-            final_state, final_reason = "killed", "kill_switch"
-            break
-        node_record = run.record["nodes"].setdefault(
-            node_id, {"state": "pending", "attempts": 0})
-        node_record["state"] = "running"
-        run.persist()
-
-        output, failure, attempts_used = _execute_with_policy(
-            run, node, dept_name=dept_dir.name, root=root, env_base=env_base,
-            sleep_fn=sleep_fn)
-        # All token work happens INSIDE awaiting_receipt; the state exits only
-        # after every transition for this node holds a validated token.
-        run.advance("awaiting_receipt")
-
-        # Kill poll AFTER node completion, BEFORE any transition: a kill
-        # raised while the node ran stops the graph walk cold.
-        if (state_dir / "KILL").exists():
-            run.log("kill_switch", node_id=node_id, phase="post_node")
-            final_state, final_reason = "killed", "kill_switch"
-            break
-
-        if output is not None:
-            # Shadow enforcement (observational, fail-closed): the kernel
-            # dispatcher is the authority on effects; a receipt CLAIMING an
-            # external action in an unpromoted run is a violation, not a debate.
-            external = output.get("external_actions_taken", 0)
-            if external not in (0, None):
-                node_record["state"] = "failed"
-                node_record["reason"] = "external_actions_taken != 0 in shadow"
-                run.log("shadow_violation", node_id=node_id,
-                        external_actions_taken=external)
-                final_state, final_reason = "killed", "shadow_violation"
-                break
-            attempt = node_record["attempts"] = attempts_used
-            node_record["state"] = "done"
-            node_record["output_hash"] = step_receipts.output_hash(output)
-            run.persist()
-            run.log("node_done", node_id=node_id, attempt=attempt)
-
-            satisfied_any = False
-            for edge in edges:
-                if edge.get("from") != node_id:
-                    continue
-                try:
-                    satisfied = rungraph.eval_predicate(edge["when"], output)
-                except rungraph.PredicateError as exc:
-                    run.log("predicate_blocked", node_id=node_id,
-                            to=edge.get("to"), reason=str(exc))
-                    continue
-                if not satisfied:
-                    continue
+    def _decide_success(node_id: str, output: dict) -> list:
+        """Evaluate every out-edge ONCE and persist the decisions as the
+        durable checkpoint BEFORE any transition fires (C3). A blocked
+        predicate is recorded as satisfied=None — never true, never false."""
+        decisions = []
+        satisfied_any = False
+        for idx, edge in enumerate(edges):
+            if edge.get("from") != node_id:
+                continue
+            try:
+                sat = rungraph.eval_predicate(edge["when"], output)
+            except rungraph.PredicateError as exc:
+                run.log("predicate_blocked", node_id=node_id,
+                        to=edge.get("to"), reason=str(exc))
+                sat = None
+            decision = {"edge": str(idx), "kind": edge["kind"],
+                        "to": edge.get("to"), "satisfied": sat,
+                        "state": "pending"}
+            if edge["kind"] == "escalation" and edge.get("to") is None:
+                decision["exit"] = "escalated"
+                decision["why"] = "escalation_edge"
+            if sat is True:
                 satisfied_any = True
-                kind = edge["kind"]
-                if kind == "terminal":
-                    reason = _gated_transition(src=node_id, dst=None,
-                                               kind="terminal",
-                                               attempt=attempt, output=output)
-                    if reason is None:
-                        terminal_reached = True
-                    else:
-                        final_state = _verification_escalation(
-                            node_id, attempt, "terminal", reason)
-                    continue
-                dst = edge.get("to")
-                if kind == "escalation" and dst is None:
-                    reason = _gated_transition(src=node_id, dst=None,
-                                               kind="escalation",
-                                               attempt=attempt, output=output)
-                    if reason is None:
-                        run.log("escalation_edge", node_id=node_id)
-                        final_state, final_reason = "escalated", "escalation_edge"
-                    else:
-                        final_state = _verification_escalation(
-                            node_id, attempt, "escalation", reason)
-                    continue
-                reason = _gated_transition(src=node_id, dst=dst, kind=kind,
-                                           attempt=attempt, output=output)
-                if reason is not None:
-                    final_state = _verification_escalation(
-                        node_id, attempt, kind, reason)
-                    continue
-                done_state = run.record["nodes"].get(dst, {}).get("state")
-                if dst not in queued and done_state != "done":
-                    queued.add(dst)
-                    frontier.append(dst)
-            if not satisfied_any:
-                # A node whose edges all block is a stuck path — escalate,
-                # and even that exit consumes a validated token.
-                run.log("no_edge_satisfied", node_id=node_id)
-                final_state = _terminalize(node_id, attempt, output,
-                                           "no_edge_satisfied")
-            if final_state is None:
-                run.advance("running")
-            continue
+            decisions.append(decision)
+        if not satisfied_any:
+            run.log("no_edge_satisfied", node_id=node_id)
+            decisions.append({"edge": "exit:no_edge_satisfied",
+                              "kind": "escalation", "to": None,
+                              "satisfied": True, "state": "pending",
+                              "exit": "escalated", "why": "no_edge_satisfied"})
+        return decisions
 
-        # Failure path: retries exhausted. The runner's own failure record
-        # becomes the receipt output, so refusal routing AND the direct
-        # failure/escalation exits are receipt-gated like the success path.
-        attempt = node_record["attempts"] = attempts_used
-        node_record["state"] = "failed"
-        node_record["reason"] = failure["reason"]
-        run.persist()
-        run.log("node_failed", node_id=node_id, **failure)
-        failure_output = {"status": "node_failed", "node_id": node_id,
-                          "reason": failure["reason"],
-                          "exit_code": failure["exit_code"],
-                          "attempts": attempt}
+    def _decide_failure(node_id: str, node: dict, failure_output: dict) -> list:
         on_fail = node["failure_policy"]["on_fail"]
         if on_fail == "fail":
-            reason = _gated_transition(src=node_id, dst=None, kind="failure",
-                                       attempt=attempt, output=failure_output,
-                                       note="on_fail")
-            if reason is None:
-                final_state, final_reason = "failed", "on_fail_fail"
-            else:
-                final_state = _verification_escalation(
-                    node_id, attempt, "failure", reason)
-        elif on_fail == "escalate":
-            final_state = _terminalize(node_id, attempt, failure_output,
-                                       "on_fail_escalate")
-        else:
-            routed = False
-            for edge in edges:
-                if (edge.get("from") != node_id or edge.get("to") != on_fail
-                        or edge.get("kind") not in ("refusal", "escalation")):
-                    continue
-                try:
-                    satisfied = rungraph.eval_predicate(edge["when"],
-                                                        failure_output)
-                except rungraph.PredicateError as exc:
-                    run.log("predicate_blocked", node_id=node_id, to=on_fail,
-                            reason=str(exc))
-                    continue
-                if satisfied and _gated_transition(
-                        src=node_id, dst=on_fail, kind=edge["kind"],
-                        attempt=attempt, output=failure_output) is None:
-                    if on_fail not in queued:
-                        queued.add(on_fail)
-                        frontier.append(on_fail)
-                    routed = True
-                break
-            if not routed:
-                run.log("failure_route_blocked", node_id=node_id, to=on_fail)
-                final_state = _terminalize(node_id, attempt, failure_output,
-                                           "failure_route_blocked")
-        if final_state is None:
-            run.advance("running")
+            return [{"edge": "on_fail", "kind": "failure", "to": None,
+                     "satisfied": True, "state": "pending",
+                     "exit": "failed", "why": "on_fail_fail"}]
+        if on_fail == "escalate":
+            return [{"edge": "on_fail", "kind": "escalation", "to": None,
+                     "satisfied": True, "state": "pending",
+                     "exit": "escalated", "why": "on_fail_escalate"}]
+        for idx, edge in enumerate(edges):
+            if (edge.get("from") != node_id or edge.get("to") != on_fail
+                    or edge.get("kind") not in ("refusal", "escalation")):
+                continue
+            try:
+                satisfied = rungraph.eval_predicate(edge["when"], failure_output)
+            except rungraph.PredicateError as exc:
+                run.log("predicate_blocked", node_id=node_id, to=on_fail,
+                        reason=str(exc))
+                satisfied = False
+            if satisfied:
+                return [{"edge": str(idx), "kind": edge["kind"],
+                         "to": on_fail, "satisfied": True, "state": "pending"}]
+            break
+        run.log("failure_route_blocked", node_id=node_id, to=on_fail)
+        return [{"edge": "exit:failure_route_blocked", "kind": "escalation",
+                 "to": None, "satisfied": True, "state": "pending",
+                 "exit": "escalated", "why": "failure_route_blocked"}]
 
-    if final_state is None:
-        if terminal_reached:
-            final_state, final_reason = "done", "terminal_edge"
-        else:
-            # The walk ended without a terminal edge firing: a stall. Even
-            # this exit is receipt-gated, bound to the run itself.
-            run.log("no_terminal_reached")
-            final_state = _terminalize(
-                "__run__", 0,
-                {"status": "run_stalled", "run_id": run.run_id},
-                "no_terminal_reached")
+    def _fire_decisions(node_id: str, rec: dict, attempt: int,
+                        out_hash: str) -> str | None:
+        """Fire every satisfied pending decision. Each firing flips its
+        explicit checkpoint state to 'fired' AFTER its receipt-bearing row is
+        recorded, so resume knows exactly which edges remain."""
+        nonlocal terminal_reached, final_reason
+        result = None
+        for decision in list(rec.get("decisions", [])):
+            if (decision.get("satisfied") is not True
+                    or decision.get("state") != "pending"):
+                continue
+            kind = decision["kind"]
+            dst = decision.get("to")
+            reason = _gated_transition(src=node_id, dst=dst, kind=kind,
+                                       attempt=attempt, output_hash=out_hash,
+                                       note=decision.get("why"))
+            if reason is not None:
+                result = _fire_exit(node_id, attempt, out_hash,
+                                    f"verification_failed:{kind}",
+                                    failed_check=reason)
+                continue
+            decision["state"] = "fired"
+            run.persist()
+            if decision.get("exit"):
+                final_reason = decision.get("why")
+                result = "failed" if decision["exit"] == "failed" else "escalated"
+                if decision.get("why") == "escalation_edge":
+                    run.log("escalation_edge", node_id=node_id)
+                continue
+            if kind == "terminal":
+                terminal_reached = True
+                continue
+            if dst is not None and dst not in queued and not _complete(dst):
+                queued.add(dst)
+                frontier.append(dst)
+        return result
+
+    # Reconstruction from the explicit checkpoint (identical for fresh and
+    # resumed runs — a fresh record just yields entry-only). A fired exit
+    # decision concludes the run in ITS state: resume never appends a second
+    # terminal row nor mutates failed into escalated (C3c).
+    concluded: tuple | None = None
+    for rec in run.record["nodes"].values():
+        for decision in rec.get("decisions", []):
+            if decision.get("state") != "fired":
+                continue
+            if decision.get("kind") == "terminal":
+                terminal_reached = True
+            if decision.get("exit"):
+                concluded = (decision["exit"], decision.get("why"))
+    frontier: deque = deque()
+    queued: set = set()
+
+    def _want(nid: str) -> None:
+        if nid not in queued and not _complete(nid):
+            queued.add(nid)
+            frontier.append(nid)
+
+    _want(subgraph["entry"])
+    for nid, rec in run.record["nodes"].items():
+        for decision in rec.get("decisions", []):
+            if decision.get("satisfied") is not True:
+                continue
+            if decision.get("state") == "fired" and decision.get("to"):
+                _want(decision["to"])
+            elif decision.get("state") == "pending":
+                _want(nid)
+    queued |= {nid for nid in run.record["nodes"] if _complete(nid)}
+    final_state: str | None = None
+
+    run.advance("running", "run_started")
+    if concluded is not None:
+        final_state, final_reason = concluded
+
+    try:
+        while frontier and final_state is None:
+            node_id = frontier.popleft()
+            if (state_dir / "KILL").exists():
+                run.log("kill_switch", node_id=node_id, phase="pre_node")
+                final_state, final_reason = "killed", "kill_switch"
+                break
+            rec = run.record["nodes"].get(node_id)
+            if (rec is not None and rec.get("decisions") is not None
+                    and rec.get("state") in ("done", "failed", "exit")):
+                # Resume refire: the node already completed and checkpointed
+                # its decisions — fire the remaining pending edges from the
+                # persisted output hash, never re-execute (C3b).
+                attempt = int(rec.get("attempts", 0))
+                out_hash = rec["output_hash"]
+                run.advance("awaiting_receipt")
+                run.log("resume_refire", node_id=node_id)
+            else:
+                node = nodes[node_id]
+                node_record = run.record["nodes"].setdefault(
+                    node_id, {"state": "pending", "attempts": 0})
+                node_record["state"] = "running"
+                run.persist()
+                output, failure, attempts_used = _execute_with_policy(
+                    run, node, dept_name=dept_dir.name, root=root,
+                    env_base=env_base, sleep_fn=sleep_fn)
+                # All token work happens INSIDE awaiting_receipt; the state
+                # exits only after every transition holds a validated token.
+                run.advance("awaiting_receipt")
+                # Kill poll AFTER node completion, BEFORE any transition: a
+                # kill raised while the node ran stops the graph walk cold.
+                if (state_dir / "KILL").exists():
+                    run.log("kill_switch", node_id=node_id, phase="post_node")
+                    final_state, final_reason = "killed", "kill_switch"
+                    break
+                rec = node_record
+                attempt = rec["attempts"] = attempts_used
+                if output is not None:
+                    # Shadow enforcement (observational, fail-closed): the
+                    # kernel dispatcher is the authority on effects; a receipt
+                    # CLAIMING an external action in an unpromoted run is a
+                    # violation, not a debate.
+                    external = output.get("external_actions_taken", 0)
+                    if external not in (0, None):
+                        rec["state"] = "failed"
+                        rec["reason"] = "external_actions_taken != 0 in shadow"
+                        run.log("shadow_violation", node_id=node_id,
+                                external_actions_taken=external)
+                        final_state, final_reason = "killed", "shadow_violation"
+                        break
+                    rec["state"] = "done"
+                    out_hash = rec["output_hash"] = \
+                        step_receipts.output_hash(output)
+                    rec["decisions"] = _decide_success(node_id, output)
+                    run.persist()  # durable checkpoint BEFORE any firing (C3)
+                    run.log("node_done", node_id=node_id, attempt=attempt)
+                else:
+                    # Failure path: the runner's own failure record becomes
+                    # the receipt-bound step output, and the on_fail route is
+                    # checkpointed as an explicit decision before it fires.
+                    rec["state"] = "failed"
+                    rec["reason"] = failure["reason"]
+                    failure_output = {"status": "node_failed",
+                                      "node_id": node_id,
+                                      "reason": failure["reason"],
+                                      "exit_code": failure["exit_code"],
+                                      "attempts": attempt}
+                    out_hash = rec["output_hash"] = \
+                        step_receipts.output_hash(failure_output)
+                    rec["decisions"] = _decide_failure(node_id, node,
+                                                       failure_output)
+                    run.persist()
+                    run.log("node_failed", node_id=node_id, **failure)
+
+            result = _fire_decisions(node_id, rec, attempt, out_hash)
+            if result is not None:
+                final_state = result
+            if final_state is None:
+                run.advance("running")
+
+        if final_state is None:
+            if terminal_reached:
+                final_state, final_reason = "done", "terminal_edge"
+            else:
+                # The walk ended without a terminal edge firing: a stall.
+                # Even this exit is receipt-gated, bound to the run itself.
+                run.log("no_terminal_reached")
+                stall_hash = step_receipts.output_hash(
+                    {"status": "run_stalled", "run_id": run.run_id})
+                final_state = _fire_exit("__run__", 0, stall_hash,
+                                         "no_terminal_reached")
+    except SigningPlaneBroken:
+        final_state = "killed"
+        if not (final_reason or "").startswith("gate_failure"):
+            final_reason = "gate_failure:signing_plane"
     run.record["termination_reason"] = final_reason
     run.advance(final_state, f"run_{final_state}")
     return final_state

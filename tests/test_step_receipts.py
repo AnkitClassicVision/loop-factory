@@ -177,6 +177,15 @@ def test_exactly_one_of_output_and_hash_required():
                                consumed=set(), **IDENTITY)
 
 
+def test_reverify_limitation_documented_verbatim():
+    # Reviewer-required wording (round-4 C5), enforced so it cannot drift.
+    required = ("attests receipt authenticity and binding integrity under the "
+                "recorded identity; does NOT prove output content, schema "
+                "conformance, or predicate correctness — no body exists to "
+                "recompute.")
+    assert required in " ".join(SR.reverify_transition.__doc__.split())
+
+
 def test_reverify_transition_from_persisted_row_and_record():
     # R2: reverification needs ONLY (key service + run record + row).
     token = _issue()
