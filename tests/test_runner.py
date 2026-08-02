@@ -683,60 +683,78 @@ def test_escalation_row_carries_the_failed_check(tmp_path):
 # decision state, reverified receipts, never row-shape inference.
 # --------------------------------------------------------------------------- #
 
-HANDLER_MARKING = """\
-import json, pathlib
-state = pathlib.Path(__file__).resolve().parents[1] / "state"
-state.mkdir(parents=True, exist_ok=True)
-with (state / "markers.txt").open("a", encoding="utf-8") as fh:
-    fh.write("handled\\n")
-print(json.dumps({"status": "handled"}))
-"""
-
-
-def _refusal_manifest():
+def _chain_manifest():
     return {
         "schema_version": 2,
         "subgraphs": [{
             "id": "SG-RUN",
             "concept_refs": ["C1"],
             "entry": "N1",
-            "nodes": [_node("N1", "runtime/flaky.py", on_fail="H1"),
-                      _node("H1", "runtime/handler.py")],
+            "nodes": [_node("N1", "runtime/n1.py"),
+                      _node("N2", "runtime/n2.py"),
+                      _node("N3", "runtime/n3.py")],
             "edges": [
-                {"from": "N1", "to": "H1", "kind": "refusal",
-                 "when": "receipt.status == 'node_failed'"},
-                {"from": "N1", "kind": "terminal",
-                 "when": "receipt.status == 'ok'"},
-                {"from": "H1", "kind": "terminal", "when": "true"},
+                {"from": "N1", "to": "N2", "kind": "normal", "when": "true"},
+                {"from": "N2", "to": "N3", "kind": "normal", "when": "true"},
+                {"from": "N3", "kind": "terminal", "when": "true"},
             ],
         }],
     }
 
 
-def test_resume_after_routed_failure_does_not_requeue_or_double_feed(tmp_path):
-    # (a) crash after the refusal transition fired but before the handler ran:
-    # the FAILED node must not re-execute; the handler is fed exactly once.
-    dept = _make_dept(tmp_path, {"flaky.py": FAIL_NODE,
-                                 "handler.py": HANDLER_MARKING},
-                      _refusal_manifest())
-    first = _run(dept, tmp_path, fingerprint="routed-1")
-    assert first["state"] == "done"
-    assert _markers(dept) == ["fail", "handled"]
-    run_id = first["run_id"]
+def _ledger_lines(dept, run_id):
+    path = (dept / "state" / "graph_runs" / run_id / "consumed_nonces.jsonl")
+    if not path.exists():
+        return 0
+    return len([line for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()])
 
-    def crash_before_handler(state):
+
+# --------------------------------------------------------------------------- #
+# R5-C1: the decision checkpoint is SIGNED — tampered routing state refuses
+# resume before any token is minted.
+# --------------------------------------------------------------------------- #
+
+def test_flipped_satisfied_decision_refuses_resume(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="flip-1")
+    assert first["state"] == "done"
+    rows_before = len(_transitions(dept, first))
+    ledger_before = _ledger_lines(dept, first["run_id"])
+
+    def flip(state):
         state["state"] = "running"
-        del state["nodes"]["H1"]
-        state["transitions"] = [t for t in state["transitions"]
-                                if t["from"] != "H1"]
-    _rewrite_state(dept, run_id, crash_before_handler)
-    second = _run(dept, tmp_path, fingerprint="routed-1")
-    assert second["resumed"] is True
-    assert second["state"] == "done"
-    assert _markers(dept) == ["fail", "handled", "handled"]  # N1 NOT re-run
-    feeds = [t for t in _transitions(dept, second)
-             if t["from"] == "N1" and t["to"] == "H1"]
-    assert len(feeds) == 1  # no double-feed
+        escalation = [d for d in state["nodes"]["N1"]["decisions"]
+                      if d["kind"] == "escalation"][0]
+        escalation["satisfied"] = True  # was False: resurrect a dead edge
+    _rewrite_state(dept, first["run_id"], flip)
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="flip-1")
+    assert len(_transitions(dept, first)) == rows_before  # no token minted
+    assert _ledger_lines(dept, first["run_id"]) == ledger_before
+    assert _markers(dept) == ["sense"]
+
+
+def test_redirected_decision_target_refuses_resume(tmp_path):
+    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
+                                 "n2.py": _mark_node("n2"),
+                                 "n3.py": _mark_node("n3")},
+                      _chain_manifest())
+    first = _run(dept, tmp_path, fingerprint="redirect-1")
+    assert first["state"] == "done"
+    rows_before = len(_transitions(dept, first))
+
+    def redirect(state):
+        state["state"] = "running"
+        feed = [d for d in state["nodes"]["N1"]["decisions"]
+                if d.get("to") == "N2"][0]
+        feed["to"] = "N3"  # reroute to another REAL node
+    _rewrite_state(dept, first["run_id"], redirect)
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="redirect-1")
+    assert len(_transitions(dept, first)) == rows_before
+    assert _markers(dept) == ["n1", "n2", "n3"]  # nothing re-executed
 
 
 def _fanout_manifest():
@@ -759,35 +777,90 @@ def _fanout_manifest():
     }
 
 
-def test_resume_fires_remaining_fanout_edges(tmp_path):
-    # (b) crash after the FIRST outgoing transition of a fan-out: the second
-    # satisfied edge must still fire on resume — not silently drop.
+# --------------------------------------------------------------------------- #
+# R5-C5: TRUE boundary interruptions — a hook raises at the exact boundary,
+# simulating process death; resume must give exactly-once effects.
+# --------------------------------------------------------------------------- #
+
+def _crash_once_at(boundary):
+    state = {"armed": True}
+
+    def hook(name):
+        if name == boundary and state["armed"]:
+            state["armed"] = False
+            raise RuntimeError(f"simulated crash at {boundary}")
+    return hook
+
+
+def test_interrupt_before_row_persist_resumes_exactly_once(tmp_path):
+    # (i) crash after token mint/verify but BEFORE the row lands: the edge
+    # has no row, so resume refires it — the source node must NOT re-execute.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    with pytest.raises(RuntimeError, match="pre_row_persist"):
+        RUN.run_graph(dept, trigger_fingerprint="b1", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("pre_row_persist"))
+    assert _markers(dept) == ["sense"]
+    second = RUN.run_graph(dept, trigger_fingerprint="b1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert second["resumed"] is True
+    assert second["state"] == "done"
+    assert _markers(dept) == ["sense"]  # N1 executed exactly once, ever
+    feeds = [t for t in _transitions(dept, second)
+             if t["from"] == "N1" and t["to"] == "N2"]
+    assert len(feeds) == 1  # exactly one row for the edge
+
+
+def test_interrupt_between_row_and_fired_mints_no_second_token(tmp_path):
+    # (ii) crash AFTER the row persisted, BEFORE the decision marked fired:
+    # resume must ADOPT the row — exactly-once, provable via the nonce ledger.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    with pytest.raises(RuntimeError, match="post_row_persist"):
+        RUN.run_graph(dept, trigger_fingerprint="b2", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("post_row_persist"))
+    second = RUN.run_graph(dept, trigger_fingerprint="b2", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert second["resumed"] is True
+    assert second["state"] == "done"
+    assert _markers(dept) == ["sense"]
+    transitions = _transitions(dept, second)
+    feeds = [t for t in transitions if t["from"] == "N1" and t["to"] == "N2"]
+    assert len(feeds) == 1  # the persisted row was adopted, not re-minted
+    rows = [json.loads(line) for line in
+            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("event") == "row_adopted" for row in rows)
+    # one consumption per minted token, one token per row: exactly-once
+    assert _ledger_lines(dept, second["run_id"]) == len(transitions)
+
+
+def test_interrupt_after_fired_before_enqueue_feeds_successor_once(tmp_path):
+    # (iii) crash AFTER the decision marked fired, BEFORE the successor was
+    # enqueued: resume feeds the successor from the fired decision and fires
+    # the remaining fan-out edge — every node executes exactly once.
     dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
                                  "n2.py": _mark_node("n2"),
                                  "n3.py": _mark_node("n3")},
                       _fanout_manifest())
-    first = _run(dept, tmp_path, fingerprint="fan-1")
-    assert first["state"] == "done"
-    run_id = first["run_id"]
-
-    def crash_after_first_edge(state):
-        state["state"] = "running"
-        decisions = state["nodes"]["N1"]["decisions"]
-        n3_edge = [d for d in decisions if d.get("to") == "N3"][0]
-        n3_edge["state"] = "pending"
-        del state["nodes"]["N3"]
-        state["transitions"] = [t for t in state["transitions"]
-                                if "N3" not in (t["from"], t["to"])]
-    _rewrite_state(dept, run_id, crash_after_first_edge)
-    second = _run(dept, tmp_path, fingerprint="fan-1")
+    with pytest.raises(RuntimeError, match="post_mark_fired"):
+        RUN.run_graph(dept, trigger_fingerprint="b3", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("post_mark_fired"))
+    second = RUN.run_graph(dept, trigger_fingerprint="b3", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
     assert second["resumed"] is True
     assert second["state"] == "done"
     markers = _markers(dept)
-    assert markers.count("n1") == 1  # fan-out source not re-executed
-    assert markers.count("n2") == 1  # completed branch untouched
-    assert markers.count("n3") == 2  # dropped branch re-fed and executed
-    assert any(t["from"] == "N1" and t["to"] == "N3"
-               for t in _transitions(dept, second))
+    assert markers.count("n1") == 1
+    assert markers.count("n2") == 1
+    assert markers.count("n3") == 1
+    transitions = _transitions(dept, second)
+    assert len([t for t in transitions
+                if t["from"] == "N1" and t["to"] == "N2"]) == 1
+    assert len([t for t in transitions
+                if t["from"] == "N1" and t["to"] == "N3"]) == 1
 
 
 def test_resume_concludes_persisted_failure_exit_without_new_rows(tmp_path):
@@ -939,22 +1012,51 @@ def _run_id_for(fingerprint):
     return "SG-RUN-" + hashlib.sha256(fingerprint.encode()).hexdigest()
 
 
-def test_wedged_nonterminal_run_is_resumed_not_noop(tmp_path):
+def test_identity_incomplete_checkpoint_refuses_resume(tmp_path):
+    # R5-C3: an EXISTING state file with missing or malformed identity must
+    # refuse — it would silently skip the re-pin fence otherwise. Only a
+    # genuinely absent state file may initialize fresh.
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
     run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-1")
     run_dir.mkdir(parents=True)
     (run_dir / "run_state.json").write_text(
         json.dumps({"schema": "graph-run-v1", "state": "awaiting_receipt"}),
-        encoding="utf-8")  # a crash left the run mid-flight
-    result = _run(dept, tmp_path, fingerprint="wedge-1")
-    assert result["resumed"] is True
-    assert result["duplicate"] is False
-    assert result["state"] == "done"
-    assert _markers(dept) == ["sense"]  # it actually re-executed
+        encoding="utf-8")  # no graph/release identity at all
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="wedge-1")
+    assert _markers(dept) == []
+    run_dir2 = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
+    run_dir2.mkdir(parents=True)
+    (run_dir2 / "run_state.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
+        _run(dept, tmp_path, fingerprint="wedge-2")
+    assert _markers(dept) == []
+
+
+def test_stale_projection_cannot_pass_after_signing_failure(tmp_path):
+    # R5-C4: a signing failure must not leave the PRIOR signed projection in
+    # place as if it were current — quarantine it and leave an unmistakably
+    # invalid artifact at the canonical path.
+    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
+                      _two_node_manifest())
+    first = _run(dept, tmp_path, fingerprint="proj-1")
+    assert first["state"] == "done"
+    proj_path = dept / "state" / "receipts" / "execution-projection.json"
+    assert PJ.verify_projection(
+        json.loads(proj_path.read_text(encoding="utf-8")), SIGNER) == []
+    raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
+    result = RUN.run_graph(dept, trigger_fingerprint="proj-2", signer=raising,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "killed"
+    current = json.loads(proj_path.read_text(encoding="utf-8"))
+    findings = PJ.verify_projection(current, SIGNER)
+    assert findings, "old projection still passes as current"
+    stale = proj_path.with_suffix(".json.stale")
+    assert stale.exists()  # the prior projection is quarantined, not erased
     rows = [json.loads(line) for line in
             (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert any(row.get("event") == "run_resumed" for row in rows)
+    assert any(row.get("event") == "projection_export_failed" for row in rows)
 
 
 def test_crash_before_first_state_persist_recovers(tmp_path):

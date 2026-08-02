@@ -152,6 +152,55 @@ def verify_step_receipt(token, *, signer, now, consumed, department, graph_id,
         seen_nonces=consumed)
 
 
+def _checkpoint_material(*, department, graph_id, graph_hash, release_hash,
+                         run_id, node_id, record) -> bytes:
+    """Canonical bytes of one node's ROUTING checkpoint under the run
+    identity: state, attempts, output hash, and the full edge-decision list
+    (source, edge identity, destination, kind, predicate result, fired
+    state). The signature field itself is never part of the material."""
+    material = {
+        "department": department,
+        "graph_id": graph_id,
+        "graph_hash": graph_hash,
+        "release_hash": release_hash,
+        "run_id": run_id,
+        "node_id": node_id,
+        "state": record.get("state"),
+        "attempts": record.get("attempts"),
+        "output_hash": record.get("output_hash"),
+        "decisions": record.get("decisions"),
+    }
+    return json.dumps(material, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
+
+
+def sign_node_checkpoint(signer, *, department, graph_id, graph_hash,
+                         release_hash, run_id, node_id, record) -> str:
+    """Sign a node's decision checkpoint. Receipts authorize TRANSITIONS;
+    this authenticates the ROUTING STATE a resume would otherwise trust
+    unsigned — the same kernel signer covers both planes."""
+    return signer.sign(_checkpoint_material(
+        department=department, graph_id=graph_id, graph_hash=graph_hash,
+        release_hash=release_hash, run_id=run_id, node_id=node_id,
+        record=record))
+
+
+def verify_node_checkpoint(signer, *, department, graph_id, graph_hash,
+                           release_hash, run_id, node_id, record,
+                           signature) -> bool:
+    """Verify a persisted decision checkpoint. Absent, malformed, or
+    non-matching signatures are False — the caller must refuse resume."""
+    if not isinstance(signature, str) or not signature:
+        return False
+    try:
+        return signer.verify(_checkpoint_material(
+            department=department, graph_id=graph_id, graph_hash=graph_hash,
+            release_hash=release_hash, run_id=run_id, node_id=node_id,
+            record=record), signature)
+    except Exception:
+        return False
+
+
 def reverify_transition(row, *, record, signer, now):
     """Auditor-plane reverification from PERSISTED materials only: a run
     record (run_state.json — carries department/loop_id/graph_hash/

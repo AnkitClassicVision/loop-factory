@@ -84,7 +84,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER_VERSION = "2.2.0"
+RUNNER_VERSION = "2.3.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
@@ -459,7 +459,7 @@ def _log_refusal(state_dir: Path, reason: str, now_fn) -> None:
 def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
               subgraph_id: str | None = None, root=None, env_base=None,
               now_fn=time.time, sleep_fn=time.sleep,
-              receipt_ttl_s=None) -> dict:
+              receipt_ttl_s=None, crash_hook=None) -> dict:
     """Execute one pinned graph run.
     Returns {"run_id", "state", "duplicate", "resumed"}."""
     receipts = _load("kreceipts", "kernel/receipts.py")
@@ -510,11 +510,30 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             existing: dict = {}
             state_path = run_dir / "run_state.json"
             if state_path.exists():
+                # R5-C3: an EXISTING checkpoint must parse and carry full
+                # identity — anything less would silently skip the re-pin
+                # fence. Only a genuinely absent state file (crash before
+                # the first persist) initializes fresh.
                 try:
-                    existing = _strict_loads(
+                    parsed = _strict_loads(
                         state_path.read_text(encoding="utf-8"))
-                except ValueError:
-                    existing = {}
+                    if not isinstance(parsed, dict):
+                        raise ValueError("run_state.json root must be an object")
+                    existing = parsed
+                except ValueError as exc:
+                    message = (f"resume_integrity: run {run_id} state file is "
+                               f"malformed ({exc}) — resume refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message) from exc
+                required = ("department", "loop_id", "run_id",
+                            "graph_hash", "release_hash")
+                missing = sorted(k for k in required if not existing.get(k))
+                if missing:
+                    message = (f"resume_integrity: run {run_id} checkpoint "
+                               f"lacks identity fields {missing} — resume "
+                               f"refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message)
             prior_state = existing.get("state", "unknown")
             if prior_state in TERMINAL_RUN_STATES:
                 row = {"ts": _now_iso(now_fn), "event": "duplicate_trigger_noop",
@@ -530,7 +549,7 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             # release; a re-pin between crash and resume refuses, leaving the
             # run resumable under the old release or by owner decision.
             prior_rows = existing.get("transitions", [])
-            if existing.get("graph_hash") is not None and (
+            if existing and (
                     existing.get("graph_hash") != loaded["graph_hash"]
                     or existing.get("release_hash") != loaded["release_hash"]):
                 message = (
@@ -561,6 +580,30 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
                         f"resume refused")
                     _log_refusal(state_dir, message, now_fn)
                     raise RunnerRefused(message)
+            # R5-C1: receipts authorize transitions, but resume also trusts
+            # ROUTING state — every persisted decision checkpoint must carry
+            # a valid kernel signature before the frontier is rebuilt from
+            # it. Tampered satisfied flags, redirected destinations, or
+            # resurrected pending states die here, before any token mints.
+            for check_nid, check_rec in (existing.get("nodes") or {}).items():
+                if (not isinstance(check_rec, dict)
+                        or check_rec.get("decisions") is None):
+                    continue
+                checkpoint_ok = step_receipts.verify_node_checkpoint(
+                    signer, department=existing["department"],
+                    graph_id=existing["loop_id"],
+                    graph_hash=existing["graph_hash"],
+                    release_hash=existing["release_hash"],
+                    run_id=existing["run_id"], node_id=check_nid,
+                    record=check_rec,
+                    signature=check_rec.get("checkpoint_sig"))
+                if not checkpoint_ok:
+                    message = (
+                        f"resume_integrity: node {check_nid} decision "
+                        f"checkpoint in run {run_id} fails signature "
+                        f"verification — resume refused")
+                    _log_refusal(state_dir, message, now_fn)
+                    raise RunnerRefused(message)
             resumed_from = prior_state
 
         run = _Run(dept_dir=dept_dir, state_dir=state_dir, run_id=run_id,
@@ -582,16 +625,27 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             run, subgraph, nodes, edges, loaded=loaded, signer=signer,
             step_receipts=step_receipts, rungraph=rungraph, root=root,
             env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
-            receipt_ttl_s=receipt_ttl_s)
+            receipt_ttl_s=receipt_ttl_s, crash_hook=crash_hook)
 
         try:
             _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
                                now_fn=now_fn)
         except Exception as exc:
-            # A projection that cannot be signed is simply ABSENT — the
-            # auditor plane treats a missing/stale projection as findings;
-            # the run outcome itself is already durably recorded.
+            # R5-C4: a signing failure must not leave the PRIOR signed
+            # projection in place as if it were current. Quarantine it
+            # (.stale keeps the evidence) and put an unmistakably-invalid
+            # failure artifact at the canonical path — verify_projection
+            # reports schema_mismatch on it — plus a durable finding.
+            proj_path = state_dir / "receipts" / "execution-projection.json"
             with records_lock(state_dir):
+                if proj_path.exists():
+                    os.replace(proj_path,
+                               proj_path.with_suffix(".json.stale"))
+                _atomic_write_json(proj_path, {
+                    "schema": "execution-projection-export-failed",
+                    "run_id": run_id,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "ts": _now_iso(now_fn)})
                 _append_jsonl(state_dir / "runs.jsonl",
                               {"ts": _now_iso(now_fn),
                                "event": "projection_export_failed",
@@ -605,7 +659,8 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
 
 def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                  loaded: dict, signer, step_receipts, rungraph, root,
-                 env_base, now_fn, sleep_fn, receipt_ttl_s) -> str:
+                 env_base, now_fn, sleep_fn, receipt_ttl_s,
+                 crash_hook=None) -> str:
     dept_dir = run.dept_dir
     state_dir = run.state_dir
     identity = dict(
@@ -619,9 +674,31 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
     final_reason: str | None = None
     terminal_reached = False
 
+    def _boundary(name: str) -> None:
+        """Test seam (R5-C5): a hook that raises here models process death at
+        the exact persistence boundary. Production passes no hook."""
+        if crash_hook is not None:
+            crash_hook(name)
+
+    def _seal(node_id: str, rec: dict) -> None:
+        """Sign the node's routing checkpoint (R5-C1). Every mutation of a
+        decisions-bearing record re-seals before it persists; a signing
+        failure here is a broken signing plane, exactly like token issuance."""
+        nonlocal final_reason
+        try:
+            rec["checkpoint_sig"] = step_receipts.sign_node_checkpoint(
+                signer, node_id=node_id, record=rec, **identity)
+        except Exception as exc:
+            run.log("gate_failure", node_id=node_id,
+                    why="signing_plane:checkpoint",
+                    reason=f"{type(exc).__name__}: {exc}")
+            final_reason = "gate_failure:signing_plane"
+            raise SigningPlaneBroken(str(exc)) from exc
+
     def _gated_transition(*, src: str, dst, kind: str, attempt: int,
                           output_hash: str, note: str | None = None,
-                          failed_check: str | None = None) -> str | None:
+                          failed_check: str | None = None,
+                          edge_id: str | None = None) -> str | None:
         """Mint one fresh token for THIS transition, verify it (single-use,
         durable consumption), and record it with the full signed token AND
         the canonical output hash it binds (auditor reverification needs only
@@ -647,11 +724,14 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
             run.log("transition_blocked", node_id=src, to=dst, kind=kind,
                     reason=check.reason)
             return check.reason
+        _boundary("pre_row_persist")
         row = {"from": src, "to": dst, "kind": kind, "attempt": attempt,
                "step_receipt": token,
                "step_receipt_sha256": _sha256_text(token),
                "output_sha256": output_hash,
                "ts": _now_iso(now_fn)}
+        if edge_id is not None:
+            row["edge"] = edge_id
         if note is not None:
             row["note"] = note
         if failed_check is not None:
@@ -660,6 +740,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
         run.persist()
         run.log("transition", **{k: v for k, v in row.items()
                                  if k != "step_receipt"})
+        _boundary("post_row_persist")
         return None
 
     def _fire_exit(src: str, attempt: int, out_hash: str, why: str,
@@ -676,13 +757,16 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                     "satisfied": True, "state": "pending",
                     "exit": exit_state, "why": why}
         rec.setdefault("decisions", []).append(decision)
+        _seal(src, rec)
         run.persist()
         reason = _gated_transition(src=src, dst=None, kind=kind,
                                    attempt=attempt, output_hash=out_hash,
-                                   note=why, failed_check=failed_check)
+                                   note=why, failed_check=failed_check,
+                                   edge_id=decision["edge"])
         if reason is None:
             decision["state"] = "fired"
             final_reason = why
+            _seal(src, rec)
             run.persist()
             return exit_state
         run.log("gate_failure", node_id=src, why=why, reason=reason)
@@ -775,13 +859,15 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
             dst = decision.get("to")
             reason = _gated_transition(src=node_id, dst=dst, kind=kind,
                                        attempt=attempt, output_hash=out_hash,
-                                       note=decision.get("why"))
+                                       note=decision.get("why"),
+                                       edge_id=decision.get("edge"))
             if reason is not None:
                 result = _fire_exit(node_id, attempt, out_hash,
                                     f"verification_failed:{kind}",
                                     failed_check=reason)
                 continue
             decision["state"] = "fired"
+            _seal(node_id, rec)
             run.persist()
             if decision.get("exit"):
                 final_reason = decision.get("why")
@@ -793,9 +879,40 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 terminal_reached = True
                 continue
             if dst is not None and dst not in queued and not _complete(dst):
+                _boundary("post_mark_fired")
                 queued.add(dst)
                 frontier.append(dst)
         return result
+
+    # Row/fired reconciliation (R5-C2): a crash between the transition row
+    # landing and the decision flipping to fired must not mint a SECOND token
+    # on resume. Rows were already reverified before the checkpoint was
+    # trusted, so an existing row for a pending decision means the decision
+    # IS fired — adopt it, re-seal, mint nothing. Exactly-once per edge.
+    try:
+        for adopt_nid, adopt_rec in run.record["nodes"].items():
+            adopted = False
+            for decision in adopt_rec.get("decisions") or []:
+                if (decision.get("satisfied") is not True
+                        or decision.get("state") != "pending"):
+                    continue
+                match = next(
+                    (row for row in run.record["transitions"]
+                     if row.get("from") == adopt_nid
+                     and row.get("edge") == decision.get("edge")), None)
+                if match is not None:
+                    decision["state"] = "fired"
+                    adopted = True
+                    run.log("row_adopted", node_id=adopt_nid,
+                            edge=decision.get("edge"), to=decision.get("to"),
+                            kind=decision.get("kind"))
+            if adopted:
+                _seal(adopt_nid, adopt_rec)
+                run.persist()
+    except SigningPlaneBroken:
+        run.record["termination_reason"] = final_reason
+        run.advance("killed", "run_killed")
+        return "killed"
 
     # Reconstruction from the explicit checkpoint (identical for fresh and
     # resumed runs — a fresh record just yields entry-only). A fired exit
@@ -888,7 +1005,8 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                     out_hash = rec["output_hash"] = \
                         step_receipts.output_hash(output)
                     rec["decisions"] = _decide_success(node_id, output)
-                    run.persist()  # durable checkpoint BEFORE any firing (C3)
+                    _seal(node_id, rec)
+                    run.persist()  # durable SIGNED checkpoint before firing
                     run.log("node_done", node_id=node_id, attempt=attempt)
                 else:
                     # Failure path: the runner's own failure record becomes
@@ -905,6 +1023,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                         step_receipts.output_hash(failure_output)
                     rec["decisions"] = _decide_failure(node_id, node,
                                                        failure_output)
+                    _seal(node_id, rec)
                     run.persist()
                     run.log("node_failed", node_id=node_id, **failure)
 
