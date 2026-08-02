@@ -87,15 +87,26 @@ class DurableNonceSet:
 
 class LockService:
     def __init__(self, signer, *, budget_ledger, freq_ledger, nonce_ledger,
-                 clock=time.time, budget_ceilings=None, max_ttl_s=MAX_TTL_S):
+                 clock=time.time, budget_ceilings=None, max_ttl_s=MAX_TTL_S,
+                 telemetry_path=None, price_table_path=None):
         self.signer = signer
         self.clock = clock  # server clock; NOT caller-supplied per call
         self.max_ttl_s = max_ttl_s
         nonce_ledger = pathlib.Path(nonce_ledger)
         self.seen_nonces = DurableNonceSet(nonce_ledger.with_suffix(".consumed.jsonl"))
         self.revoked = DurableNonceSet(nonce_ledger.with_suffix(".revoked.jsonl"))
+        budget_ledger = pathlib.Path(budget_ledger)
         self.budget = budget_mod.BudgetBroker(budget_ledger, budget_ceilings or DEFAULT_CEILINGS)
         self.freq = freq_mod.FrequencyService(freq_ledger)
+        state_dir = (
+            budget_ledger.parent.parent
+            if budget_ledger.parent.name == "kernel"
+            else budget_ledger.parent
+        )
+        self.telemetry_path = pathlib.Path(telemetry_path or state_dir / "telemetry.jsonl")
+        self.price_table_path = price_table_path or model.DEFAULT_PRICE_TABLE
+        self.department = state_dir.parent.name if state_dir.name == "state" else None
+        self._model_reservations = {}
 
     # --- trusted internals --------------------------------------------------- #
 
@@ -152,12 +163,13 @@ class LockService:
         # reserve the model-call spend first — raises BudgetExceeded /
         # BudgetReviewRequired on/near the ceiling, so no receipt is minted for a
         # call that would breach budget (GLM P0 #3, budget half).
-        self.budget.reserve("model_calls", 1, self._now())
+        reservation_id = self.budget.reserve("model_calls", 1, self._now())
         nonce = self._nonce()
         binding = model.model_binding(prompt, sanitized=True)
         receipt = receipts.issue_receipt(
             "model_call", binding, self._ttl(ttl_s), self.signer, self._now(), nonce
         )
+        self._model_reservations[receipt] = reservation_id
         return {"receipt": receipt, "nonce": nonce}
 
     # --- execution (server clock + revocation + durable single-use) ---------- #
@@ -175,14 +187,46 @@ class LockService:
         except Exception as exc:  # gateway malfunction -> refuse, never allow
             raise LockServiceDown(f"dispatch gateway error: {exc}") from exc
 
-    def call_model(self, prompt, receipt, *, runner) -> str:
+    def call_model(
+        self,
+        prompt,
+        receipt,
+        *,
+        runner,
+        run_id=None,
+        step_id=None,
+        node=None,
+        operation_name="chat",
+        provider_name=None,
+        request_model=None,
+        auth_route="blocked",
+        engine=None,
+    ) -> str:
+        reservation_id = self._model_reservations.get(receipt)
         try:
             return model.call_model(
                 prompt, receipt,
                 signer=self.signer, now=self._now(),
                 seen_nonces=self.seen_nonces, revoked=self.revoked, runner=runner,
+                telemetry_path=self.telemetry_path,
+                department=self.department,
+                run_id=run_id,
+                step_id=step_id,
+                node=node,
+                operation_name=operation_name,
+                provider_name=provider_name,
+                request_model=request_model,
+                auth_route=auth_route,
+                engine=engine,
+                price_table_path=self.price_table_path,
+                budget_broker=self.budget,
+                budget_reservation_id=reservation_id,
             )
         except model.GatewayDenied:
             raise
         except Exception as exc:
-            raise LockServiceDown(f"model gateway error: {exc}") from exc
+            raise LockServiceDown(
+                f"model gateway error: {type(exc).__name__}"
+            ) from exc
+        finally:
+            self._model_reservations.pop(receipt, None)
