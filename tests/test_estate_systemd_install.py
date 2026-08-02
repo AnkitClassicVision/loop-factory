@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
+import shutil
 import subprocess
 import sys
-import shutil
 from pathlib import Path
+
+import pytest
 
 from deploy import install_estate_watchdog
 
@@ -21,6 +24,8 @@ def test_units_are_uniquely_named_and_invoke_real_entrypoints():
     assert "estate-manager.service" not in deadman
     assert "--outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl" in estate
     assert "--outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl" in deadman
+    assert "--alarm-state /mnt/d_drive/repos/loop-factory/state/estate-deadman/alarm_state.json" in deadman
+    assert "--cooldown-seconds 21600" in deadman
 
 
 def test_units_are_fail_closed_and_network_denied():
@@ -55,6 +60,7 @@ def test_installer_command_plan_is_idempotent_and_unique(tmp_path):
     assert {Path(command[-1]).name for command in copies} == set(install_estate_watchdog.UNIT_NAMES)
     assert commands[0][-1] == "--self-test-poisoned-registry"
     assert commands[1][:2] == ["systemd-analyze", "verify"]
+    assert ["install", "-d", "-m", "0755", str(ROOT / "state" / "estate-deadman")] in commands
     systemctl = [command for command in commands if command and command[0] == "systemctl"]
     assert systemctl[0] == ["systemctl", "--user", "daemon-reload"]
     assert systemctl[1][:4] == ["systemctl", "--user", "enable", "--now"]
@@ -66,7 +72,7 @@ def test_installer_command_plan_is_idempotent_and_unique(tmp_path):
 
 def test_systemd_analyze_verifies_temporary_unit_copies(tmp_path):
     if shutil.which("systemd-analyze") is None:
-        return
+        pytest.skip("systemd-analyze is unavailable")
     copies = []
     for name in install_estate_watchdog.UNIT_NAMES:
         target = tmp_path / name
@@ -94,15 +100,38 @@ def test_default_installer_is_display_only():
     assert "Re-run with --apply to execute exactly the commands above." in result.stdout
 
 
-def test_apply_refuses_from_noncanonical_worktree_without_executing_commands():
-    result = subprocess.run(
-        ["python3", str(ROOT / "deploy" / "install_estate_watchdog.py"), "--apply"],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode == 2
-    assert "REFUSING: installer must run from" in result.stdout
+def test_no_real_subprocess_call_in_this_suite_contains_apply_flag():
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        function = call.func
+        is_subprocess_run = (
+            isinstance(function, ast.Attribute)
+            and isinstance(function.value, ast.Name)
+            and function.value.id == "subprocess"
+            and function.attr == "run"
+        )
+        if not is_subprocess_run or not call.args:
+            continue
+        constants = {
+            node.value
+            for node in ast.walk(call.args[0])
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert "--apply" not in constants
+
+
+def test_apply_refuses_noncanonical_root_without_executing_commands(monkeypatch, capsys):
+    sentinel_root = ROOT.parent / "not-the-current-checkout"
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("refusal path must not execute subprocesses")
+
+    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", sentinel_root)
+    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fail_if_called)
+    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply"])
+
+    assert install_estate_watchdog.main() == 2
+    assert "REFUSING: installer must run from" in capsys.readouterr().out
 
 
 def test_apply_executes_exact_plan_only_when_explicit(monkeypatch):

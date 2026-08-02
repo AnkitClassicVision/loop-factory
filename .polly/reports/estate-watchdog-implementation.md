@@ -45,11 +45,11 @@
 
 ## Verification receipts
 
-- Focused tests after fresh-QA fixes: `35 passed in 0.25s`.
+- Focused tests after PR #10 cross-review fixes: `44 passed in 0.42s`.
 - Poisoned registry: `INFO poisoned-registry self-test passed: detected
   estate_registry_unreadable`.
 - Unit parser: all four repo-local units returned exit 0 from
   `systemd-analyze verify`.
-- Repository check after all accepted BLOCK/HIGH fixes: `173 passed in 3.59s`,
+- Repository check after all accepted review fixes: `182 passed in 4.08s`,
   `CHECK PASS`.
 - Live-state actions during build and review: zero.

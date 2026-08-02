@@ -9,11 +9,13 @@ It never reports healthy from STATE.json alone.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import logging
 import shutil
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,7 @@ from typing import Any
 LOGGER = logging.getLogger("loop_factory.estate_deadman")
 DEFAULT_MAX_AGE_SECONDS = 27 * 3600
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 5 * 60
+DEFAULT_ALARM_COOLDOWN_SECONDS = 6 * 3600
 
 
 def _load_module(name: str, filename: str):
@@ -56,32 +59,29 @@ def _read_json_object(path: Path) -> tuple[dict[str, Any] | None, str | None]:
 
 def _read_last_heartbeat(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        rows = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except (OSError, UnicodeError) as exc:
+        rows = [line for line in path.read_bytes().splitlines() if line.strip()]
+    except OSError as exc:
         return None, f"{path.name} unreadable: {exc.__class__.__name__}"
     if not rows:
         return None, f"{path.name} has no heartbeat rows"
-    last_value = None
-    for row_number, row in enumerate(rows, 1):
-        try:
-            value = json.loads(row)
-        except ValueError:
-            return None, f"{path.name} row {row_number} is malformed JSON"
-        if not isinstance(value, dict):
-            return None, f"{path.name} row {row_number} must be a JSON object"
-        payload = value.get("payload")
-        required_counters = ("epoch", "findings", "escalations")
-        if (
-            _parse_timestamp(value.get("ts")) is None
-            or value.get("emitter") != "estate-manager"
-            or value.get("kind") != "cycle"
-            or not isinstance(payload, dict)
-            or any(type(payload.get(key)) is not int for key in required_counters)
-            or any(payload.get(key, -1) < 0 for key in required_counters)
-        ):
-            return None, f"{path.name} row {row_number} has invalid estate heartbeat schema"
-        last_value = value
-    return last_value, None
+    try:
+        value = json.loads(rows[-1].decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None, f"{path.name} last row is malformed or not UTF-8"
+    if not isinstance(value, dict):
+        return None, f"{path.name} last row must be a JSON object"
+    payload = value.get("payload")
+    required_counters = ("epoch", "findings", "escalations")
+    if (
+        _parse_timestamp(value.get("ts")) is None
+        or value.get("emitter") != "estate-manager"
+        or value.get("kind") != "cycle"
+        or not isinstance(payload, dict)
+        or any(type(payload.get(key)) is not int for key in required_counters)
+        or any(payload.get(key, -1) < 0 for key in required_counters)
+    ):
+        return None, f"{path.name} last row has invalid estate heartbeat schema"
+    return value, None
 
 
 def _finding(code: str, detail: str) -> dict[str, str]:
@@ -105,10 +105,10 @@ def evaluate_deadman(
     estate_state_dir = Path(estate_state_dir)
     findings: list[dict[str, str]] = []
 
-    registry = _load_module("estate_registry_deadman", "estate_registry.py")
     try:
+        registry = _load_module("estate_registry_deadman", "estate_registry.py")
         entries = registry.load_registry(registry_dir)
-    except (OSError, ValueError, registry.RegistryError) as exc:
+    except Exception as exc:
         findings.append(_finding("estate_registry_unreadable", f"registry validation failed: {exc}"))
     else:
         if not entries:
@@ -227,6 +227,104 @@ def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, An
     )
 
 
+def _atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _read_alarm_state(path: str | Path) -> tuple[dict[str, Any] | None, str | None]:
+    path = Path(path)
+    if not path.exists():
+        return None, None
+    value, error = _read_json_object(path)
+    if error:
+        return None, error
+    codes = value.get("finding_codes")
+    last_alarm_at = value.get("last_alarm_at")
+    if (
+        not isinstance(codes, list)
+        or any(not isinstance(code, str) or not code for code in codes)
+        or codes != sorted(set(codes))
+        or (codes and _parse_timestamp(last_alarm_at) is None)
+        or (not codes and last_alarm_at is not None)
+    ):
+        return None, f"{path.name} has invalid cooldown schema"
+    return value, None
+
+
+@contextmanager
+def _alarm_state_lock(alarm_state_path: str | Path):
+    alarm_state_path = Path(alarm_state_path)
+    alarm_state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = alarm_state_path.with_suffix(alarm_state_path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def raise_alarm_with_cooldown(
+    report: dict[str, Any],
+    outbox_path: str | Path,
+    alarm_state_path: str | Path,
+    *,
+    now: datetime | None = None,
+    cooldown_seconds: int = DEFAULT_ALARM_COOLDOWN_SECONDS,
+) -> dict[str, Any]:
+    """Raise once per finding-code set per cooldown window, then persist proof."""
+    if cooldown_seconds <= 0:
+        raise ValueError("alarm cooldown must be positive")
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    alarm_state_path = Path(alarm_state_path)
+    with _alarm_state_lock(alarm_state_path):
+        prior, prior_error = _read_alarm_state(alarm_state_path)
+        if prior_error:
+            report = {**report, "findings": [
+                *report["findings"],
+                _finding("deadman_cooldown_state_unreadable", prior_error),
+            ]}
+        codes = sorted({finding["code"] for finding in report["findings"]})
+        if prior is not None and prior["finding_codes"] == codes:
+            last_alarm_at = _parse_timestamp(prior["last_alarm_at"])
+            age_seconds = (now_dt - last_alarm_at).total_seconds()
+            if 0 <= age_seconds < cooldown_seconds:
+                return {"alarmed": False, "suppressed": True, "finding_codes": codes}
+
+        raise_alarm(report, outbox_path)
+        _atomic_write_json(alarm_state_path, {
+            "finding_codes": codes,
+            "last_alarm_at": now_dt.isoformat(),
+            "healthy_at": None,
+        })
+        return {"alarmed": True, "suppressed": False, "finding_codes": codes}
+
+
+def record_healthy(alarm_state_path: str | Path, *, now: datetime | None = None) -> None:
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    with _alarm_state_lock(alarm_state_path):
+        _atomic_write_json(alarm_state_path, {
+            "finding_codes": [],
+            "last_alarm_at": None,
+            "healthy_at": now_dt.isoformat(),
+        })
+
+
+def _internal_error_report(exc: Exception, max_age_seconds: int) -> dict[str, Any]:
+    observed_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "ok": False,
+        "alarm": True,
+        "observed_at": observed_at,
+        "max_age_seconds": max_age_seconds,
+        "findings": [_finding(
+            "deadman_internal_error",
+            f"deadman infrastructure failure: {exc.__class__.__name__}",
+        )],
+    }
+
+
 def poisoned_registry_self_test(registry_dir: str | Path) -> dict[str, Any]:
     """Corrupt a temporary registry copy and prove fail-closed detection."""
     source = Path(registry_dir)
@@ -270,7 +368,9 @@ def main() -> int:
     parser.add_argument("--registry-dir", default="estate/registry.d")
     parser.add_argument("--estate-state-dir", default="estate/state")
     parser.add_argument("--outbox", default="state/decisions_outbox.jsonl")
+    parser.add_argument("--alarm-state", default="state/estate-deadman/alarm_state.json")
     parser.add_argument("--max-age-seconds", type=int, default=DEFAULT_MAX_AGE_SECONDS)
+    parser.add_argument("--cooldown-seconds", type=int, default=DEFAULT_ALARM_COOLDOWN_SECONDS)
     parser.add_argument("--self-test-poisoned-registry", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -293,22 +393,45 @@ def main() -> int:
             args.estate_state_dir,
             max_age_seconds=args.max_age_seconds,
         )
-    except (OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
         LOGGER.error("deadman evaluation failed closed: %s", exc)
+        report = _internal_error_report(exc, args.max_age_seconds)
+        try:
+            raise_alarm_with_cooldown(
+                report,
+                args.outbox,
+                args.alarm_state,
+                cooldown_seconds=args.cooldown_seconds,
+            )
+        except Exception as alarm_exc:
+            LOGGER.error("deadman internal-error alarm failed: %s", alarm_exc)
         return 2
 
     if report["alarm"]:
         try:
-            raise_alarm(report, args.outbox)
+            outcome = raise_alarm_with_cooldown(
+                report,
+                args.outbox,
+                args.alarm_state,
+                cooldown_seconds=args.cooldown_seconds,
+            )
         except Exception as exc:  # the alarm path itself must fail visibly
             LOGGER.error("alarm detected but outbox append failed: %s", exc)
             return 2
-        LOGGER.error(
-            "estate deadman alarm recorded: %s",
-            ",".join(finding["code"] for finding in report["findings"]),
-        )
+        action = "suppressed by cooldown" if outcome["suppressed"] else "recorded"
+        LOGGER.error("estate deadman alarm %s: %s", action, ",".join(outcome["finding_codes"]))
         return 1
 
+    try:
+        record_healthy(args.alarm_state)
+    except Exception as exc:
+        LOGGER.error("deadman healthy-state record failed: %s", exc)
+        internal_report = _internal_error_report(exc, args.max_age_seconds)
+        try:
+            raise_alarm(internal_report, args.outbox)
+        except Exception as alarm_exc:
+            LOGGER.error("deadman healthy-state failure alarm failed: %s", alarm_exc)
+        return 2
     LOGGER.info("estate deadman healthy")
     return 0
 

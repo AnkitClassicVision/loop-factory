@@ -30,6 +30,7 @@ def install_commands(repo_root: Path, user_home: Path) -> list[list[str]]:
         ["install", "-d", "-m", "0755", str(unit_target)],
         ["install", "-d", "-m", "0755", str(repo_root / "estate" / "state")],
         ["install", "-d", "-m", "0755", str(repo_root / "state")],
+        ["install", "-d", "-m", "0755", str(repo_root / "state" / "estate-deadman")],
     ]
     commands.extend(
         ["install", "-m", "0644", str(unit_source / name), str(unit_target / name)]

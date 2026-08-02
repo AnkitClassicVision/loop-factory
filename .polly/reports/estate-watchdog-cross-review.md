@@ -99,3 +99,40 @@
 - OAuth security scan: not run because its required artifact location would
   violate the worktree-only boundary. Static security coverage remained
   explicitly degraded; no live system or external state was touched.
+
+## PR #10 blocking review remediation
+
+- B1 BLOCK: replaced the real `--apply` subprocess test with an in-process
+  `main()` call, a sentinel canonical root, and a subprocess trap. Added an AST
+  regression that rejects `--apply` in every real `subprocess.run` call in the
+  installer test module.
+- N1: registry module loading now occurs inside the fail-closed boundary.
+  Unexpected evaluator failures generate a synthetic `deadman_internal_error`
+  report and attempt the normal outbox alarm path before exit 2.
+- N2: unchanged finding-code sets are capped to one outbox append per six
+  hours. State is atomic and deadman-owned at
+  `state/estate-deadman/alarm_state.json`; a healthy check resets recurrence.
+- N3: accepted as a bounded hardening change. The latest heartbeat row remains
+  strict and fail-closed, while historical rows are ignored so one old corrupt
+  row cannot create a permanent alarm.
+- N4: missing `systemd-analyze` now produces an explicit pytest skip.
+- Environment-dependence audit: the only real subprocess calls left in
+  `tests/test_estate_systemd_install.py` are read-only `systemd-analyze verify`
+  against temporary copies and the installer without `--apply`. Every apply or
+  rollback test is in-process with `subprocess.run` monkeypatched.
+- Verification before the concurrency hardening: focused `42 passed in 0.26s`;
+  full repository `180 passed in 3.78s`, `CHECK PASS`.
+- Degraded fresh review found the cooldown check was not concurrency-safe.
+  The full read-check-outbox-write sequence now holds an exclusive lock in the
+  deadman state directory, with a two-invocation regression proving one append
+  and one suppression.
+- Verification after the concurrency hardening: focused `43 passed in 0.30s`;
+  full repository `181 passed in 4.01s`, `CHECK PASS`.
+- Final fresh review found no BLOCK/HIGH issue and one MED: healthy-state writes
+  did not share the alarm-state lock. Both alarm and healthy writers now use
+  the same exclusive lock; a concurrent regression checks that their atomic
+  writes never overlap.
+- Final verification after the MED fix: focused `44 passed in 0.42s`; full
+  repository `182 passed in 4.08s`, `CHECK PASS`.
+- Narrow fresh-context recheck of the shared-lock remediation: `PASS`, with no
+  remaining BLOCK, HIGH, or MED finding.
