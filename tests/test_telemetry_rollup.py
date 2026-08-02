@@ -185,6 +185,111 @@ def test_known_usage_refuses_unratified_price_table(tmp_path):
         lock_service.model.compute_cost_usd("m", 1, 1, prices)
 
 
+def test_declared_model_refuses_unratified_table_before_runner(tmp_path):
+    prices = tmp_path / "prices.json"
+    prices.write_text(
+        json.dumps(
+            {
+                "schema_version": "model-prices/v1",
+                "effective_date": "2026-08-02",
+                "ratified": False,
+                "models": {
+                    "m": {
+                        "input_usd_per_1m_tokens": None,
+                        "output_usd_per_1m_tokens": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = _service(tmp_path, prices)
+    issued = service.request_model("safe", sanitized=True)
+    invoked = []
+
+    with pytest.raises(lock_service.LockServiceDown):
+        service.call_model(
+            "safe",
+            issued["receipt"],
+            runner=lambda _: invoked.append(True) or "must not run",
+            provider_name="openai",
+            request_model="m",
+            auth_route="oauth_cli",
+            engine="codex_oauth",
+        )
+
+    assert invoked == []
+    budget = _read_jsonl(tmp_path / "state" / "kernel" / "budget.jsonl")
+    assert [row.get("event", "reserve") for row in budget] == ["reserve", "release"]
+
+
+def test_caller_provider_uses_the_same_allowlist_and_refuses_before_runner(tmp_path):
+    prices = tmp_path / "prices.json"
+    prices.write_text(json.dumps({"models": {}}), encoding="utf-8")
+    service = _service(tmp_path, prices)
+    issued = service.request_model("safe", sanitized=True)
+    invoked = []
+
+    with pytest.raises(lock_service.LockServiceDown):
+        service.call_model(
+            "safe",
+            issued["receipt"],
+            runner=lambda _: invoked.append(True) or "must not run",
+            provider_name="untrusted-provider",
+        )
+
+    assert invoked == []
+    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
+    assert row["gen_ai.provider.name"] is None
+
+
+def test_success_survives_telemetry_loss_and_failure_chains_it(tmp_path, monkeypatch, caplog):
+    prices = tmp_path / "prices.json"
+    prices.write_text(json.dumps({"models": {}}), encoding="utf-8")
+    service = _service(tmp_path, prices)
+
+    def append_failure(*_args, **_kwargs):
+        raise OSError("telemetry unavailable")
+
+    monkeypatch.setattr(lock_service.model, "append_jsonl", append_failure)
+    issued = service.request_model("safe", sanitized=True)
+    assert service.call_model("safe", issued["receipt"], runner=lambda _: "kept") == "kept"
+    assert "model telemetry append failed" in caplog.text
+
+    failed = service.request_model("fails", sanitized=True)
+    with pytest.raises(lock_service.LockServiceDown) as raised:
+        service.call_model(
+            "fails",
+            failed["receipt"],
+            runner=lambda _: (_ for _ in ()).throw(RuntimeError("provider failed")),
+        )
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert isinstance(raised.value.__cause__.__cause__, OSError)
+
+
+def test_model_and_budget_share_the_kernel_jsonl_module_identity():
+    assert lock_service.model.append_jsonl is append_jsonl
+    assert lock_service.budget_mod.append_jsonl is append_jsonl
+
+
+def test_candidate_price_table_covers_review_lanes():
+    table = json.loads((PROJECT_ROOT / "factory" / "prices.json").read_text(encoding="utf-8"))
+    assert table["ratified"] is False
+    assert {
+        "claude-subscription/default",
+        "codex-oauth/default",
+        "glm-oauth/default",
+        "gemini-subscription/default",
+        "kimi-subscription/default",
+        "openrouter/x-ai/grok-default",
+    } <= set(table["models"])
+    for model in table["models"].values():
+        if model["input_usd_per_1m_tokens"] is None:
+            assert model["output_usd_per_1m_tokens"] is None
+            assert model["estimated"] is False
+            assert model["price_status"] == "unknown_placeholder"
+
+
 def test_jsonl_append_is_concurrent_and_score_records_are_separate(tmp_path):
     path = tmp_path / "state" / "concurrent.jsonl"
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -217,6 +322,28 @@ def test_jsonl_append_is_concurrent_and_score_records_are_separate(tmp_path):
             config_version="v1",
             target_ref={"run_id": None, "step_id": None, "node": "qa", "department": "alpha"},
         )
+
+
+def test_jsonl_allows_symlinked_parent_but_refuses_symlink_below_state(tmp_path):
+    real_root = tmp_path / "real-root"
+    state_dir = real_root / "state"
+    state_dir.mkdir(parents=True)
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+
+    linked_path = linked_root / "state" / "telemetry.jsonl"
+    append_jsonl(linked_path, {"ok": True})
+    assert _read_jsonl(state_dir / "telemetry.jsonl") == [{"ok": True}]
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (state_dir / "redirected").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        append_jsonl(
+            state_dir / "redirected" / "nested" / "telemetry.jsonl",
+            {"ok": False},
+        )
+    assert list(outside.iterdir()) == []
 
 
 def test_budget_reservations_replay_inside_cross_process_transaction(tmp_path):

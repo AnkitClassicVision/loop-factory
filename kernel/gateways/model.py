@@ -2,16 +2,20 @@ import sys, pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import receipts
-from jsonl_store import append_jsonl
+from kernel.jsonl_store import append_jsonl
 
 import hashlib
 import json
+import logging
 import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class GatewayDenied(RuntimeError):
@@ -129,12 +133,9 @@ def compute_cost_usd(
     """Compute token cost from the versioned table, or return null honestly."""
     if model is None or input_tokens is None or output_tokens is None:
         return None
-    table = json.loads(Path(price_table_path).read_text(encoding="utf-8"))
-    if table.get("schema_version") != "model-prices/v1":
-        raise ValueError("unsupported model price schema")
+    table = _load_price_table(price_table_path)
     if table.get("ratified") is not True:
         raise ValueError("model price table is not owner-ratified")
-    _optional_identifier(table.get("effective_date"), "price effective_date")
     price = (table.get("models") or {}).get(model)
     if not isinstance(price, dict):
         return None
@@ -150,17 +151,26 @@ def compute_cost_usd(
     return float(cost)
 
 
-def _price_model_allowlist(price_table_path: str | Path) -> frozenset[str]:
-    """Return the owner-reviewed model identifiers safe to persist."""
+def _load_price_table(price_table_path: str | Path) -> dict[str, Any]:
     table = json.loads(Path(price_table_path).read_text(encoding="utf-8"))
-    if table.get("schema_version") != "model-prices/v1":
+    if not isinstance(table, dict) or table.get("schema_version") != "model-prices/v1":
         raise ValueError("unsupported model price schema")
+    _optional_identifier(table.get("effective_date"), "price effective_date")
+    if not isinstance(table.get("ratified"), bool):
+        raise ValueError("model price table ratified must be boolean")
     models = table.get("models")
     if not isinstance(models, dict):
         raise ValueError("model price table models must be an object")
-    for model_name in models:
+    for model_name, price in models.items():
         _optional_identifier(model_name, "price model")
-    return frozenset(models)
+        if not isinstance(price, dict):
+            raise ValueError("model price entry must be an object")
+    return table
+
+
+def _price_model_allowlist(price_table_path: str | Path) -> frozenset[str]:
+    """Return the owner-reviewed model identifiers safe to persist."""
+    return frozenset(_load_price_table(price_table_path)["models"])
 
 
 def call_model(
@@ -186,13 +196,54 @@ def call_model(
     budget_broker=None,
     budget_reservation_id=None,
 ) -> str:
-    """Verify, execute, account, and append one payload-free telemetry row."""
+    """Verify, execute, account, and append one payload-free telemetry row.
+
+    Invalid declared attribution and unratified declared models refuse before
+    provider invocation. Telemetry persistence is best-effort after execution:
+    loss is logged and chained to an existing call failure, but telemetry loss
+    alone never discards a successful provider result.
+    """
     started = time.perf_counter()
     invoked = False
     output = None
     metadata: dict[str, Any] = {}
     failure: Exception | None = None
+    secondary_failure: Exception | None = None
+    safe_operation = None
+    safe_provider = None
+    safe_request_model = None
+    safe_engine = None
+    safe_department = None
+    safe_run_id = None
+    safe_step_id = None
+    safe_node = None
+    safe_auth_route = "blocked"
     try:
+        safe_operation = _optional_identifier(operation_name, "operation_name")
+        safe_provider = _optional_identifier(provider_name, "provider_name")
+        if safe_provider is not None and safe_provider not in _PROVIDERS:
+            safe_provider = None
+            raise ValueError("provider is not allowlisted")
+        safe_request_model = _optional_identifier(request_model, "request_model")
+        safe_engine = _optional_identifier(engine, "engine")
+        if safe_engine is not None and safe_engine not in _ENGINES:
+            safe_engine = None
+            raise ValueError("engine is not allowlisted")
+        safe_department = _optional_identifier(department, "department")
+        safe_run_id = _optional_identifier(run_id, "run_id")
+        safe_step_id = _optional_identifier(step_id, "step_id")
+        safe_node = _optional_identifier(node, "node")
+        safe_auth_route = _optional_identifier(auth_route, "auth_route")
+        if safe_auth_route not in AUTH_ROUTES:
+            safe_auth_route = "blocked"
+            raise ValueError("auth route is not allowlisted")
+        if safe_request_model is not None:
+            price_table = _load_price_table(price_table_path)
+            if safe_request_model not in price_table["models"]:
+                safe_request_model = None
+                raise ValueError("request model is not allowlisted")
+            if price_table["ratified"] is not True:
+                raise ValueError("model price table is not owner-ratified")
         if receipt is None:
             raise GatewayDenied("no sanitation receipt")
         chk = receipts.verify_receipt(
@@ -211,39 +262,16 @@ def call_model(
     except Exception as exc:
         failure = exc
 
-    if invoked and budget_broker is not None and budget_reservation_id is not None:
-        try:
-            budget_broker.commit(budget_reservation_id, 1)
-        except Exception as exc:
-            if failure is None:
-                failure = exc
-
-    try:
-        operation_name = _optional_identifier(operation_name, "operation_name")
-        provider_name = _optional_identifier(provider_name, "provider_name")
-        request_model = _optional_identifier(request_model, "request_model")
-        engine = _optional_identifier(engine, "engine")
-        department = _optional_identifier(department, "department")
-        run_id = _optional_identifier(run_id, "run_id")
-        step_id = _optional_identifier(step_id, "step_id")
-        node = _optional_identifier(node, "node")
-        auth_route = _optional_identifier(auth_route, "auth_route")
-    except Exception as exc:
-        if failure is None:
-            failure = exc
-        operation_name = operation_name if operation_name == "chat" else None
-        provider_name = request_model = engine = department = run_id = step_id = node = None
-        auth_route = "blocked"
-    resolved_route = metadata.get("auth_route") or auth_route
+    resolved_route = metadata.get("auth_route") or safe_auth_route
     if resolved_route not in AUTH_ROUTES:
         if failure is None:
             failure = ValueError("auth route is not allowlisted")
         resolved_route = "blocked"
     input_tokens = metadata.get("input_tokens")
     output_tokens = metadata.get("output_tokens")
-    resolved_request_model = metadata.get("request_model") or request_model
+    resolved_request_model = metadata.get("request_model") or safe_request_model
     resolved_response_model = metadata.get("response_model")
-    resolved_engine = metadata.get("engine") or engine
+    resolved_engine = metadata.get("engine") or safe_engine
     if resolved_engine is not None and resolved_engine not in _ENGINES:
         if failure is None:
             failure = ValueError("engine is not allowlisted")
@@ -279,7 +307,7 @@ def call_model(
     price_effective_date = None
     if price_model is not None and input_tokens is not None and output_tokens is not None:
         try:
-            price_table = json.loads(Path(price_table_path).read_text(encoding="utf-8"))
+            price_table = _load_price_table(price_table_path)
             price_schema_version = _optional_identifier(
                 price_table.get("schema_version"), "price schema_version"
             )
@@ -288,11 +316,28 @@ def call_model(
             )
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
+
+    if budget_broker is not None and budget_reservation_id is not None:
+        try:
+            if invoked:
+                budget_broker.commit(budget_reservation_id, 1)
+            else:
+                budget_broker.release(budget_reservation_id)
+        except Exception as exc:
+            if failure is None:
+                failure = exc
+            else:
+                secondary_failure = exc
+                LOGGER.error(
+                    "model budget accounting failed while preserving %s",
+                    type(failure).__name__,
+                    exc_info=True,
+                )
     row = {
         "schema_version": SCHEMA_VERSION,
         "ts": datetime.fromtimestamp(now, timezone.utc).isoformat(),
-        "gen_ai.operation.name": operation_name,
-        "gen_ai.provider.name": metadata.get("provider") or provider_name,
+        "gen_ai.operation.name": safe_operation,
+        "gen_ai.provider.name": metadata.get("provider") or safe_provider,
         "gen_ai.request.model": resolved_request_model,
         "gen_ai.response.model": resolved_response_model,
         "gen_ai.usage.input_tokens": input_tokens,
@@ -305,17 +350,30 @@ def call_model(
         "loopfactory.engine": resolved_engine,
         "loopfactory.price.schema_version": price_schema_version,
         "loopfactory.price.effective_date": price_effective_date,
-        "loopfactory.department": department,
-        "loopfactory.run_id": run_id,
-        "loopfactory.step_id": step_id,
-        "loopfactory.node": node,
+        "loopfactory.department": safe_department,
+        "loopfactory.run_id": safe_run_id,
+        "loopfactory.step_id": safe_step_id,
+        "loopfactory.node": safe_node,
         "loopfactory.telemetry.source": (
             "runner_reported" if metadata else "legacy_null"
         ),
         "estimated": metadata.get("estimated", False),
     }
+    telemetry_error: Exception | None = None
     if telemetry_path is not None:
-        append_jsonl(telemetry_path, row)
+        try:
+            append_jsonl(telemetry_path, row)
+        except Exception as exc:
+            telemetry_error = exc
+            LOGGER.error(
+                "model telemetry append failed after %s",
+                "provider invocation" if invoked else "preflight refusal",
+                exc_info=True,
+            )
     if failure is not None:
+        if telemetry_error is not None:
+            raise failure from telemetry_error
+        if secondary_failure is not None:
+            raise failure from secondary_failure
         raise failure
     return output

@@ -4,12 +4,15 @@ import fcntl
 import json
 import math
 import os
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jsonl_store import append_jsonl, open_no_follow
+from kernel.jsonl_store import (
+    append_jsonl,
+    ensure_parent_dirs,
+    open_no_follow,
+    trusted_root_for,
+)
 
 
 DEFAULT_CEILINGS = {
@@ -30,6 +33,7 @@ class BudgetReviewRequired(RuntimeError):
 class BudgetBroker:
     def __init__(self, ledger_path, ceilings=None):
         self.ledger_path = Path(ledger_path)
+        self.trusted_root = trusted_root_for(self.ledger_path)
         self.ceilings = dict(DEFAULT_CEILINGS if ceilings is None else ceilings)
         self._reservations = {}
         self._telemetry_failed = False
@@ -38,7 +42,9 @@ class BudgetBroker:
     def _load_ledger(self):
         self._reservations = {}
         try:
-            fd = open_no_follow(self.ledger_path, os.O_RDONLY)
+            fd = open_no_follow(
+                self.ledger_path, os.O_RDONLY, trusted_root=self.trusted_root
+            )
             with os.fdopen(fd, encoding="utf-8") as ledger:
                 for line in ledger:
                     row = json.loads(line)
@@ -65,9 +71,14 @@ class BudgetBroker:
     @contextmanager
     def _transaction(self):
         lock_path = self.ledger_path.with_suffix(self.ledger_path.suffix + ".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_parent_dirs(lock_path, trusted_root=self.trusted_root)
         try:
-            fd = open_no_follow(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fd = open_no_follow(
+                lock_path,
+                os.O_CREAT | os.O_RDWR,
+                0o600,
+                trusted_root=self.trusted_root,
+            )
         except OSError as exc:
             self._telemetry_failed = True
             raise BudgetExceeded("budget telemetry unavailable") from exc
@@ -84,7 +95,9 @@ class BudgetBroker:
 
     def _append(self, row):
         try:
-            append_jsonl(self.ledger_path, row)
+            append_jsonl(
+                self.ledger_path, row, trusted_root=self.trusted_root
+            )
         except (OSError, TypeError, ValueError) as exc:
             self._telemetry_failed = True
             raise BudgetExceeded("budget telemetry unavailable") from exc

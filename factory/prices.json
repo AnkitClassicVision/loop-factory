@@ -4,17 +4,68 @@
   "ratified": false,
   "source": "https://openai.com/index/gpt-5-6/",
   "models": {
+    "claude-subscription/default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "claude_subscription"
+    },
+    "codex-oauth/default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "codex_oauth"
+    },
+    "gemini-subscription/default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "gemini_subscription"
+    },
     "gpt-5.6-luna": {
       "input_usd_per_1m_tokens": 1.0,
-      "output_usd_per_1m_tokens": 6.0
+      "output_usd_per_1m_tokens": 6.0,
+      "estimated": false,
+      "price_status": "candidate_official",
+      "engine": "codex_oauth"
     },
     "gpt-5.6-sol": {
       "input_usd_per_1m_tokens": 5.0,
-      "output_usd_per_1m_tokens": 30.0
+      "output_usd_per_1m_tokens": 30.0,
+      "estimated": false,
+      "price_status": "candidate_official",
+      "engine": "codex_oauth"
     },
     "gpt-5.6-terra": {
       "input_usd_per_1m_tokens": 2.5,
-      "output_usd_per_1m_tokens": 15.0
+      "output_usd_per_1m_tokens": 15.0,
+      "estimated": false,
+      "price_status": "candidate_official",
+      "engine": "codex_oauth"
+    },
+    "glm-oauth/default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "glm_oauth"
+    },
+    "kimi-subscription/default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "kimi_subscription"
+    },
+    "openrouter/x-ai/grok-default": {
+      "input_usd_per_1m_tokens": null,
+      "output_usd_per_1m_tokens": null,
+      "estimated": false,
+      "price_status": "unknown_placeholder",
+      "engine": "grok_openrouter"
     }
   }
 }
