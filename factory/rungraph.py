@@ -21,9 +21,17 @@ the transition BLOCKS — it never silently evaluates to a boolean.
 """
 from __future__ import annotations
 
+import math
 import re
 
 GRAPH_SCHEMA_VERSION = 2
+
+# Exhaustion caps (documented contract): a predicate is at most
+# MAX_PREDICATE_LENGTH characters and MAX_PREDICATE_DEPTH nested
+# parentheses/negations. Past either limit it is malformed — PredicateError,
+# blocked transition — never a RecursionError that could wedge a run.
+MAX_PREDICATE_LENGTH = 4096
+MAX_PREDICATE_DEPTH = 32
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +78,24 @@ class _Missing:
 _MISSING = _Missing()
 
 
+def _family(value) -> str:
+    """The type family a JSON value belongs to for comparison purposes.
+    bool is deliberately NOT a number: 1 == true must block, not allow."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if value is None:
+        return "null"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    return type(value).__name__
+
+
 def _resolve_path(path: str, receipt) -> object:
     segments = path.split(".")
     if segments[0] != "receipt" or len(segments) < 2:
@@ -103,6 +129,13 @@ class _Parser:
         self._receipt = receipt
         self._validate_only = validate_only
         self._idx = 0
+        self._depth = 0
+
+    def _descend(self):
+        self._depth += 1
+        if self._depth > MAX_PREDICATE_DEPTH:
+            raise PredicateError(
+                f"predicate nesting depth exceeds {MAX_PREDICATE_DEPTH}")
 
     def _peek(self):
         if self._idx < len(self._tokens):
@@ -144,7 +177,11 @@ class _Parser:
     def _not_expr(self):
         if self._peek() == ("word", "not"):
             self._next()
-            return not self._as_bool(self._not_expr())
+            self._descend()
+            try:
+                return not self._as_bool(self._not_expr())
+            finally:
+                self._depth -= 1
         return self._comparison()
 
     def _comparison(self):
@@ -159,7 +196,11 @@ class _Parser:
     def _operand(self):
         kind, text = self._next()
         if kind == "lparen":
-            value = self._expr()
+            self._descend()
+            try:
+                value = self._expr()
+            finally:
+                self._depth -= 1
             if self._next()[0] != "rparen":
                 raise PredicateError("unbalanced parenthesis")
             return value
@@ -195,21 +236,21 @@ class _Parser:
     def _compare(self, op, left, right):
         if self._validate_only and (left is _MISSING or right is _MISSING):
             return True
+        # Every comparison is defined only WITHIN one type family — Python's
+        # == would coerce (1 == True) into a default-allow, so a cross-family
+        # comparison of any kind raises and BLOCKS. bool is not a number here.
+        left_family, right_family = _family(left), _family(right)
+        if left_family != right_family:
+            raise PredicateError(
+                f"comparison across type families: {left_family} {op} "
+                f"{right_family}")
         if op == "==":
             return left == right
         if op == "!=":
             return left != right
-        # Ordering is defined only within one type family: numbers with numbers
-        # (bool excluded), strings with strings. Anything else blocks.
-        numeric = (lambda v: isinstance(v, (int, float)) and not isinstance(v, bool))
-        if numeric(left) and numeric(right):
-            pass
-        elif isinstance(left, str) and isinstance(right, str):
-            pass
-        else:
+        if left_family not in ("number", "string"):
             raise PredicateError(
-                f"ordering comparison across types: {type(left).__name__} "
-                f"{op} {type(right).__name__}")
+                f"ordering comparison not defined for {left_family} values")
         if op == "<":
             return left < right
         if op == "<=":
@@ -227,10 +268,17 @@ def eval_predicate(expression: str, receipt: dict) -> bool:
     """
     if not isinstance(expression, str) or not expression.strip():
         raise PredicateError("empty predicate")
+    if len(expression) > MAX_PREDICATE_LENGTH:
+        raise PredicateError(
+            f"predicate length {len(expression)} exceeds "
+            f"{MAX_PREDICATE_LENGTH} (documented length cap)")
     tokens = _tokenize(expression)
     if not tokens:
         raise PredicateError("empty predicate")
-    return _Parser(tokens, receipt).parse()
+    try:
+        return _Parser(tokens, receipt).parse()
+    except RecursionError as exc:  # defense-in-depth behind the depth cap
+        raise PredicateError("predicate exhausted the parser") from exc
 
 
 def check_predicate(expression: str) -> str | None:
@@ -239,10 +287,17 @@ def check_predicate(expression: str) -> str | None:
     try:
         if not isinstance(expression, str) or not expression.strip():
             raise PredicateError("empty predicate")
+        if len(expression) > MAX_PREDICATE_LENGTH:
+            raise PredicateError(
+                f"predicate length {len(expression)} exceeds "
+                f"{MAX_PREDICATE_LENGTH} (documented length cap)")
         tokens = _tokenize(expression)
         if not tokens:
             raise PredicateError("empty predicate")
-        _Parser(tokens, receipt=None, validate_only=True).parse()
+        try:
+            _Parser(tokens, receipt=None, validate_only=True).parse()
+        except RecursionError as exc:
+            raise PredicateError("predicate exhausted the parser") from exc
         return None
     except PredicateError as exc:
         return str(exc)
@@ -307,8 +362,14 @@ def _type_ok(expected: str, value) -> bool:
 
 
 def validate_instance(schema: dict, value, where="$") -> list[str]:
-    """Validate a VALUE against a contract. Returns failure strings."""
+    """Validate a VALUE against a contract. Returns failure strings.
+    Canonical-JSON policy: non-finite numbers (NaN/Inf) are rejected at every
+    contract boundary — they have no canonical JSON form to hash or sign."""
     fails: list[str] = []
+    if isinstance(value, float) and not math.isfinite(value):
+        fails.append(f"{where}: non-finite number rejected "
+                     f"(canonical JSON has no NaN/Inf)")
+        return fails
     stype = schema.get("type")
     if stype is not None and not _type_ok(stype, value):
         fails.append(f"{where}: expected {stype}, got {type(value).__name__}")

@@ -22,7 +22,10 @@ TELEMETRY_SCHEMA_VERSION = 1
 
 
 def _canonical(value) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Canonical JSON: sorted keys, tight separators, and NO non-finite
+    numbers — NaN/Inf have no canonical form, so hashing/signing raises."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
 
 
 def canonical_hash(value) -> str:

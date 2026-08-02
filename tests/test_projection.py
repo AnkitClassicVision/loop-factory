@@ -95,3 +95,16 @@ def test_unsigned_projection_blocks():
     del body["signature"]
     findings = PJ.verify_projection(body, R.LocalSigner(key="k"))
     assert any(f["kind"] == "bad_signature" for f in findings)
+
+
+def test_non_finite_values_cannot_be_hashed_or_signed():
+    import pytest
+    with pytest.raises(ValueError):
+        PJ.build_projection(
+            department="demo", graph_id="SG-RUN", graph_hash="a" * 64,
+            release_hash="feedfeedfeedfeed", factory_version={},
+            nodes=[{"id": "N1", "weight": float("nan")}], edges=[], runs=[],
+            generated_at="2026-08-02T00:00:01+00:00")
+    with pytest.raises(ValueError):
+        PJ.sign_projection({"schema": PJ.SCHEMA, "x": float("inf")},
+                           R.LocalSigner(key="k"))

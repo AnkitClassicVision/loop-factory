@@ -4,8 +4,9 @@ Closes the audit gap 'step receipts are forgeable plain JSON': a transition
 token is HMAC-signed over a binding of (department, graph identity + hash,
 release hash, run, node, attempt, output hash) using the SAME hardened
 issue/verify path as effect receipts (kernel/receipts.py) — which this module
-extends and must never weaken. Consumption is single-use per successor edge,
-so a fan-out node can feed each declared successor exactly once.
+extends and must never weaken. A token is single-use PERIOD: one consumption,
+any successor (fan-out mints one token per transition), and consumption is
+DURABLE — a runner restart must not reopen replay.
 """
 import importlib.util
 from pathlib import Path
@@ -47,13 +48,12 @@ def _issue(now=1000.0, key="k", **overrides):
         signer=_signer(key), now=now, output=OUTPUT, ttl_s=600, **identity)
 
 
-def _verify(token, *, now=1010.0, key="k", consumed=None, successor="N2",
-            output=OUTPUT, **overrides):
+def _verify(token, *, now=1010.0, key="k", consumed=None, output=OUTPUT,
+            **overrides):
     identity = {**IDENTITY, **overrides}
     return SR.verify_step_receipt(
         token, signer=_signer(key), now=now, output=output,
-        consumed=consumed if consumed is not None else set(),
-        successor=successor, **identity)
+        consumed=consumed if consumed is not None else set(), **identity)
 
 
 def test_valid_step_receipt_verifies():
@@ -95,11 +95,47 @@ def test_release_disagreement_rejected():
     assert "binding" in result.reason
 
 
-def test_single_use_per_successor_fanout_allowed_replay_blocked():
+def test_single_use_period_any_successor(tmp_path):
+    # One consumption, ANY successor: the second verify dies even though a
+    # different successor would consume it — fan-out mints one token per edge.
     token = _issue()
-    consumed: set = set()
-    assert _verify(token, consumed=consumed, successor="N2").ok is True
-    replay = _verify(token, consumed=consumed, successor="N2")
+    consumed = SR.DurableNonceStore(tmp_path / "consumed.jsonl")
+    assert _verify(token, consumed=consumed).ok is True
+    replay = _verify(token, consumed=consumed)
     assert replay.ok is False
     assert "replay" in replay.reason
-    assert _verify(token, consumed=consumed, successor="N3").ok is True
+
+
+def test_consumption_survives_restart(tmp_path):
+    # Simulated restart: a FRESH store over the same file (new process) must
+    # still refuse the consumed token — durability, not process memory.
+    token = _issue()
+    path = tmp_path / "consumed.jsonl"
+    assert _verify(token, consumed=SR.DurableNonceStore(path)).ok is True
+    after_restart = _verify(token, consumed=SR.DurableNonceStore(path))
+    assert after_restart.ok is False
+    assert "replay" in after_restart.reason
+
+
+def test_distinct_tokens_for_same_step_consume_independently(tmp_path):
+    consumed = SR.DurableNonceStore(tmp_path / "consumed.jsonl")
+    first, second = _issue(), _issue()
+    assert first != second  # fresh nonce per token
+    assert _verify(first, consumed=consumed).ok is True
+    assert _verify(second, consumed=consumed).ok is True
+
+
+def test_torn_trailing_line_is_tolerated(tmp_path):
+    path = tmp_path / "consumed.jsonl"
+    token = _issue()
+    assert _verify(token, consumed=SR.DurableNonceStore(path)).ok is True
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write('{"nonce": "tor')  # crashed mid-write
+    reloaded = SR.DurableNonceStore(path)
+    assert _verify(token, consumed=reloaded).ok is False  # prior consumption kept
+
+
+def test_non_finite_output_has_no_canonical_hash():
+    import pytest
+    with pytest.raises(ValueError):
+        SR.output_hash({"n": float("inf")})

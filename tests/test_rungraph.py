@@ -58,8 +58,21 @@ def test_boolean_combinators_and_parentheses():
     assert RG.eval_predicate("not receipt.flagged", RECEIPT) is True
 
 
-def test_inequality_across_types_is_deterministic_not_error():
-    assert RG.eval_predicate("receipt.status != 3", RECEIPT) is True
+def test_cross_type_equality_blocks():
+    # Python's == would coerce (1 == True, 0 == False) — a default-allow.
+    # Contract: equality across TYPE FAMILIES blocks exactly like ordering.
+    for expr in ("receipt.status != 3",
+                 "receipt.flagged == 0",          # bool is not int here
+                 "receipt.delivered_count == false",
+                 "receipt.status == null"):
+        with pytest.raises(RG.PredicateError):
+            RG.eval_predicate(expr, RECEIPT)
+
+
+def test_same_family_equality_still_works():
+    assert RG.eval_predicate("receipt.flagged == false", RECEIPT) is True
+    assert RG.eval_predicate("receipt.delivered_count == 0", RECEIPT) is True
+    assert RG.eval_predicate("receipt.metrics.score == 0.75", RECEIPT) is True
 
 
 def test_missing_field_blocks_instead_of_defaulting():
@@ -94,6 +107,34 @@ def test_non_boolean_result_blocks():
 def test_parse_rejects_trailing_garbage():
     with pytest.raises(RG.PredicateError):
         RG.eval_predicate("receipt.status == 'ok' extra", RECEIPT)
+
+
+def test_nesting_depth_capped():
+    depth = RG.MAX_PREDICATE_DEPTH + 8
+    expr = "(" * depth + "true" + ")" * depth
+    with pytest.raises(RG.PredicateError, match="depth"):
+        RG.eval_predicate(expr, RECEIPT)
+    assert RG.check_predicate(expr) is not None
+
+
+def test_pathological_nesting_never_raises_recursionerror():
+    depth = 5000  # far past any recursion limit — must still be PredicateError
+    expr = "(" * depth + "true" + ")" * depth
+    with pytest.raises(RG.PredicateError):
+        RG.eval_predicate(expr, RECEIPT)
+
+
+def test_expression_length_capped():
+    expr = "receipt.status == 'ok'" + (" and true" * 600)
+    assert len(expr) > RG.MAX_PREDICATE_LENGTH
+    with pytest.raises(RG.PredicateError, match="length"):
+        RG.eval_predicate(expr, RECEIPT)
+    assert RG.check_predicate(expr) is not None
+
+
+def test_depth_within_limit_still_evaluates():
+    expr = "(" * 8 + "true" + ")" * 8
+    assert RG.eval_predicate(expr, RECEIPT) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -296,6 +337,14 @@ def test_boolean_is_not_integer():
     fails = RG.validate_instance(
         {"type": "object", "properties": {"n": {"type": "integer"}}}, {"n": True})
     assert fails
+
+
+def test_non_finite_numbers_rejected_at_contract_boundary():
+    schema = {"type": "object", "properties": {"n": {"type": "number"}}}
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        fails = RG.validate_instance(schema, {"n": bad})
+        assert any("finite" in f for f in fails)
+    assert RG.validate_instance(schema, {"n": 0.5}) == []
 
 
 # --------------------------------------------------------------------------- #
