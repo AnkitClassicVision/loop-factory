@@ -4,7 +4,8 @@ The second loop of every department. It does NOT draft or send; it watches the
 worker loop's telemetry and keeps the lane healthy.
 
 Cycle (each wake):  Sense -> Compare -> Decide (Act) -> Record.
-  Sense    read-only, model-free: run cards, approval queue, receipt, budget.
+  Sense    read-only, model-free: run cards, approval queue, receipt, budget,
+           and release drift (live tree vs pinned release — hard rule 4).
   Compare  deterministic thresholds (no LLM).
   Decide   pick whitelisted acts only; SHADOW limits Act to
            {escalate, daily_brief, record, dispatch, bounded_retry}.
@@ -30,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -198,6 +200,83 @@ def sense(
     }
 
 
+def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
+    """Read-only, model-free release-drift snapshot (graphs.check_drift).
+
+    Deny-by-default: a check that cannot run reports drift_error rather than
+    quietly reading as healthy. A releases/ dir with no `current` pin surfaces
+    as not-ok with the check_drift reason. The ONLY quiet-ish outcome is a
+    department that exists but has never had a releases/ dir (pre-F4), which
+    reports drift_checked=False with a visible skip reason; a missing or
+    unreadable department dir, or a releases path that exists but is not a
+    directory, is a broken deployment and reports drift_error.
+    """
+    dept_dir = Path(dept_dir)
+    release_root = Path(release_root) if release_root else dept_dir / "releases"
+
+    def _error(message: str) -> dict[str, Any]:
+        return {
+            "drift_checked": True,
+            "drift_ok": False,
+            "drift_error": message,
+            "drift_release": None,
+            "drift_mismatch_count": 0,
+            "drift_mismatches": [],
+            "drift_mismatches_truncated": False,
+        }
+
+    try:
+        dept_stat = os.stat(dept_dir)
+    except FileNotFoundError:
+        # os.stat follows symlinks, so a dangling link raises as if absent;
+        # islink (lstat-based) distinguishes the broken-deployment case.
+        if os.path.islink(dept_dir):
+            return _error(f"department path is a dangling symlink: {dept_dir}")
+        return _error(f"department directory does not exist: {dept_dir}")
+    except OSError as exc:
+        return _error(f"department directory unreadable: {type(exc).__name__}: {exc}")
+    if not stat.S_ISDIR(dept_stat.st_mode):
+        return _error(f"department path is not a directory: {dept_dir}")
+
+    try:
+        root_stat = os.stat(release_root)
+    except FileNotFoundError:
+        # only a genuinely absent path is pre-F4; a dangling releases symlink
+        # EXISTS and is a broken deployment — it must breach, never warn.
+        if os.path.islink(release_root):
+            return _error(f"release root is a dangling symlink: {release_root}")
+        return {
+            "drift_checked": False,
+            "drift_skipped_reason": "no releases directory — nothing pinned yet (pre-F4)",
+        }
+    except OSError as exc:
+        return _error(f"release root unreadable: {type(exc).__name__}: {exc}")
+    if not stat.S_ISDIR(root_stat.st_mode):
+        return _error(f"release root exists but is not a directory: {release_root}")
+
+    try:  # fail-closed: an unrunnable check (loader included) is a finding
+        import importlib.util
+
+        graphs_path = Path(__file__).resolve().parent / "graphs.py"
+        spec = importlib.util.spec_from_file_location("graphs", graphs_path)
+        graphs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(graphs)
+        verdict = graphs.check_drift(dept_dir, release_root)
+    except Exception as exc:
+        return _error(f"{type(exc).__name__}: {exc}")
+    mismatches = sorted(verdict.get("mismatches") or [])
+    return {
+        "drift_checked": True,
+        "drift_ok": bool(verdict.get("ok")),
+        "drift_error": None,
+        "drift_release": verdict.get("current"),
+        "drift_reason": verdict.get("reason"),
+        "drift_mismatch_count": len(mismatches),
+        "drift_mismatches": mismatches[:20],  # bounded for STATE.json
+        "drift_mismatches_truncated": len(mismatches) > 20,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Compare  (deterministic thresholds)
 # --------------------------------------------------------------------------- #
@@ -270,6 +349,42 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         findings.append(
             _finding("budget_telemetry_unreadable", "breach",
                      "budget telemetry exists but could not be parsed — spend is unverifiable",
+                     observed=None, setpoint=None)
+        )
+
+    # release drift (hard rule 4: process change = map change + QA). The
+    # manager only reports and escalates — re-pin/revert is the human-run
+    # process-change runbook, never an automated act.
+    if sensed.get("drift_checked"):
+        if sensed.get("drift_error"):
+            findings.append(
+                _finding("drift_check_failed", "breach",
+                         f"release drift check could not run ({sensed['drift_error']}) — "
+                         "process integrity is unverifiable (deny-by-default)",
+                         observed=None, setpoint=0)
+            )
+        elif sensed.get("drift_ok") is False:
+            count = int(sensed.get("drift_mismatch_count", 0) or 0)
+            if count:
+                sample = ", ".join(sensed.get("drift_mismatches", [])[:5])
+                findings.append(
+                    _finding("release_drift", "breach",
+                             f"{count} artifact(s) differ from pinned release "
+                             f"{sensed.get('drift_release')} ({sample}) — process changed "
+                             "without re-pin; run runbooks/process-change-qa.md",
+                             observed=count, setpoint=0)
+                )
+            else:
+                findings.append(
+                    _finding("release_unpinned", "breach",
+                             sensed.get("drift_reason")
+                             or "releases/ exists but no current release is pinned",
+                             observed=0, setpoint=1)
+                )
+    elif sensed.get("drift_skipped_reason"):
+        findings.append(
+            _finding("drift_unverifiable", "warn",
+                     f"release drift not verifiable: {sensed['drift_skipped_reason']}",
                      observed=None, setpoint=None)
         )
 
@@ -496,6 +611,8 @@ def run_manager_cycle(
     department: str = "department",
     now: str | datetime | None = None,
     sense_fn: Callable[..., dict] | None = None,
+    dept_dir=None,
+    release_root=None,
     **telemetry_paths,
 ) -> dict[str, Any]:
     """One full Sense -> Compare -> Decide -> Act -> Record cycle.
@@ -504,9 +621,15 @@ def run_manager_cycle(
     telemetry contract (approval queue, touches, conversions). A department
     with a different worker shape supplies its own sense_fn returning the same
     flat snapshot keys — the compare/decide/act discipline is what is fixed.
+
+    When dept_dir is given, the release-drift sensor runs on every tick and
+    its snapshot merges into sensed regardless of sense_fn — hard rule 4 is
+    watched on the same cadence as everything else.
     """
     state_dir = Path(state_dir)
     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
+    if dept_dir is not None:
+        sensed.update(sense_drift(dept_dir, release_root))
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(
@@ -586,9 +709,13 @@ def main() -> None:
         def escalate_fn(issue, context=None):  # noqa: E306
             hil.escalate(args.department, issue, args.outbox, context=context)
 
+    # dept_dir passes unconditionally: a CLI invocation whose department dir
+    # cannot be resolved must surface drift_check_failed, never silently take
+    # the legacy no-drift path (that path is for programmatic callers only).
     report = run_manager_cycle(
         state_dir, autonomy_state=autonomy, thresholds=thresholds,
         escalate_fn=escalate_fn, department=args.department,
+        dept_dir=root / "departments" / args.department,
     )
     print(json.dumps({
         "department": args.department,
