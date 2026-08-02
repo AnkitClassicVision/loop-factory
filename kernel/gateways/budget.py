@@ -141,5 +141,6 @@ class BudgetBroker:
 
     def release(self, rid):
         with self._transaction():
+            self._reservations[rid]
             self._append({"event": "release", "rid": rid})
             del self._reservations[rid]

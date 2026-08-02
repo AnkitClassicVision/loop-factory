@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -272,6 +273,53 @@ def test_model_and_budget_share_the_kernel_jsonl_module_identity():
     assert lock_service.budget_mod.append_jsonl is append_jsonl
 
 
+def test_social_file_loaded_kernel_round_trips_model_without_pythonpath(tmp_path):
+    runtime_dir = PROJECT_ROOT / "departments" / "social" / "runtime"
+    state_dir = tmp_path / "state"
+    child = r"""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+runtime_dir = Path.cwd().resolve()
+assert Path(sys.path[0] or ".").resolve() == runtime_dir
+bridge_path = runtime_dir.parents[2] / "kernel" / "bridge.py"
+spec = importlib.util.spec_from_file_location("social_kernel_bridge", bridge_path)
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["social_kernel_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+kernel = bridge.load_kernel(Path(sys.argv[1]))
+issued = kernel.request_model("sanitized", sanitized=True)
+result = kernel.call_model("sanitized", issued["receipt"], runner=lambda _: "ok")
+assert result == "ok"
+lock_service_module = sys.modules["lock_service"]
+assert lock_service_module.model.append_jsonl is lock_service_module.budget_mod.append_jsonl
+assert lock_service_module.model.append_jsonl is sys.modules["kernel.jsonl_store"].append_jsonl
+rows = [
+    json.loads(line)
+    for line in (Path(sys.argv[1]) / "telemetry.jsonl").read_text(encoding="utf-8").splitlines()
+]
+assert len(rows) == 1
+"""
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    environment["OE_KERNEL_SIGNING_KEY"] = "launch-context-test"
+
+    completed = subprocess.run(
+        [sys.executable, "-c", child, str(state_dir)],
+        cwd=runtime_dir,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(_read_jsonl(state_dir / "telemetry.jsonl")) == 1
+
+
 def test_candidate_price_table_covers_review_lanes():
     table = json.loads((PROJECT_ROOT / "factory" / "prices.json").read_text(encoding="utf-8"))
     assert table["ratified"] is False
@@ -364,6 +412,22 @@ def test_budget_reservations_replay_inside_cross_process_transaction(tmp_path):
     assert len(set(reservation_ids)) == 10
     reloaded = lock_service.budget_mod.BudgetBroker(ledger, {"model_calls": 100})
     assert reloaded.usage("model_calls") == 10
+
+
+def test_budget_release_checks_reservation_before_append(tmp_path):
+    ledger = tmp_path / "budget.jsonl"
+    broker = lock_service.budget_mod.BudgetBroker(ledger, {"model_calls": 100})
+
+    with pytest.raises(KeyError):
+        broker.release("missing")
+
+    assert not ledger.exists() or _read_jsonl(ledger) == []
+    reloaded = lock_service.budget_mod.BudgetBroker(ledger, {"model_calls": 100})
+    reservation_id = reloaded.reserve("model_calls", 1, 1)
+    reloaded.release(reservation_id)
+    assert lock_service.budget_mod.BudgetBroker(
+        ledger, {"model_calls": 100}
+    ).usage("model_calls") == 0
 
 
 def _write_jsonl(path, rows):
