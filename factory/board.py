@@ -37,6 +37,8 @@ body{background:var(--bg);color:var(--ink);font:400 .95rem/1.5 system-ui,-apple-
 header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.75rem 1.5rem;padding-bottom:1.1rem;border-bottom:1px solid var(--ink)}
 header h1{font-size:1.3rem;font-weight:650;letter-spacing:-.01em}
 header .proto{font-size:.78rem;color:var(--muted)}header .meta{margin-left:auto;font-size:.82rem;color:var(--muted)}
+.projection-warning{margin-top:1rem;padding:.9rem 1rem;border:2px solid var(--red);background:var(--red-tint);color:var(--ink);font-size:.86rem}
+.projection-warning b{color:var(--red)}
 .tabs{display:flex;flex-wrap:wrap;gap:.45rem 1.15rem;padding:.8rem 0;border-bottom:1px solid var(--rule)}
 .tab{color:var(--muted);font-size:.82rem;text-decoration:none}.tab.active{color:var(--ink);font-weight:650;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.3rem}
 .status-summary{display:flex;flex-wrap:wrap;gap:.4rem 1.5rem;margin-top:.8rem}.chip{display:flex;align-items:center;gap:.5rem;font-size:.82rem}.chip .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none}.dot.ok{background:var(--green)}.dot.deg{background:var(--violet)}.chip .state{color:var(--muted)}
@@ -747,6 +749,24 @@ def render_html(
     history: str | Path | Sequence[dict[str, Any]] | None = None,
 ) -> str:
     """Render already-validated records into a deterministic HTML document."""
+    health_rows = [row for row in records if row["kind"] == "feed_health"]
+    health = sorted(health_rows, key=_record_key)[-1]["data"] if health_rows else {}
+    projection_status = str(health.get("projection_status", "fresh")).lower()
+    projection_warning = ""
+    protocol_label = "LIVE — rendered from board-feed.ndjson"
+    if projection_status in {"stale", "incomplete"}:
+        reason = health.get("projection_reason", UNKNOWN)
+        age = health.get("rollup_age_s", UNKNOWN)
+        limit = health.get("rollup_max_age_s", UNKNOWN)
+        protocol_label = "STALE / INCOMPLETE — canonical rollup projection"
+        projection_warning = (
+            '<div class="projection-warning" role="alert">'
+            '<b>STALE / INCOMPLETE CANONICAL ROLLUP</b> · '
+            f'state {_esc(projection_status)} · reason {_esc(reason)} · '
+            f'age {_esc(age)}s · freshness limit {_esc(limit)}s. '
+            "Canonical rows shown below were not replaced with direct department reads."
+            "</div>"
+        )
     selected = [row for row in records if department is None or row["department"] == department]
     selected.sort(key=_record_key)
     departments = sorted({row["department"] for row in selected})
@@ -816,7 +836,8 @@ def render_html(
 <style>{CSS}</style>
 </head>
 <body><div class="wrap">
-<header><h1>{_esc(page_title)}</h1><span class="proto">LIVE — rendered from board-feed.ndjson</span><span class="meta num">{_esc(status_meta)}</span></header>
+<header><h1>{_esc(page_title)}</h1><span class="proto">{_esc(protocol_label)}</span><span class="meta num">{_esc(status_meta)}</span></header>
+{projection_warning}
 {_render_tabs(tabs, current_tab) if tabs is not None else ""}
 {_render_status_summary(departments, statuses)}{empty_notice}
 <section aria-label="Metrics"><div class="zone-h"><h2>1 · Metrics</h2><span class="note">objectives and daily measures</span></div><hr class="zone-rule">

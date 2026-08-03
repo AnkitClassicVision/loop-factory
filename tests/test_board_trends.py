@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from factory import rollup
 from factory.board import render_html, render_site
 from factory.boardfeed import build_feed
 from factory.runrecord import append_record, build_record
@@ -31,6 +32,11 @@ def _department(root: Path, name: str = "alpha") -> Path:
     (state / "heartbeats.jsonl").write_text(
         json.dumps({"ts": NOW, "ok": True}) + "\n",
         encoding="utf-8",
+    )
+    estate = root / "estate" / "state"
+    estate.mkdir(parents=True, exist_ok=True)
+    (estate / "STATE.json").write_text(
+        json.dumps({"ok": True, "last_cycle_at": NOW}), encoding="utf-8"
     )
     return department
 
@@ -68,6 +74,34 @@ def _run(department: Path, run_id: str, *, status: str = "ok") -> None:
         external_actions_taken=0,
     )
     append_record(department / "state", record)
+    telemetry = {
+        "schema_version": "step-telemetry/v1",
+        "ts": "2026-08-02T19:00:00+00:00",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "fixture",
+        "gen_ai.response.model": "fixture",
+        "gen_ai.usage.input_tokens": 10,
+        "gen_ai.usage.output_tokens": 4,
+        "gen_ai.response.finish_reasons": ["stop"],
+        "duration_ms": 10,
+        "error.type": None,
+        "loopfactory.cost_usd": 0,
+        "loopfactory.auth.route": "oauth_cli",
+        "loopfactory.engine": "codex",
+        "loopfactory.price.schema_version": "model-prices/v1",
+        "loopfactory.price.effective_date": "2026-08-02",
+        "loopfactory.telemetry.source": "runner_reported",
+        "loopfactory.department": department.name,
+        "loopfactory.run_id": run_id,
+        "loopfactory.step_id": f"daily-{run_id}",
+        "loopfactory.node": "daily",
+        "estimated": False,
+    }
+    with (department / "state" / "telemetry.jsonl").open(
+        "a", encoding="utf-8"
+    ) as handle:
+        handle.write(json.dumps(telemetry) + "\n")
 
 
 def _timers(root: Path, rows: list[tuple[str, str, str]]) -> Path:
@@ -159,6 +193,7 @@ def test_history_file_written_with_feed_daily_shape(tmp_path):
     department = _department(tmp_path)
     _run(department, "clean")
     history_dir = tmp_path / "archive"
+    assert rollup.rebuild(tmp_path)["complete"] is True
 
     receipt = build_feed(tmp_path, now=NOW, history_dir=history_dir)
 
@@ -186,9 +221,11 @@ def test_same_day_history_rebuild_overwrites_with_latest_feed(tmp_path):
     department = _department(tmp_path)
     _run(department, "first")
     history_dir = tmp_path / "archive"
+    assert rollup.rebuild(tmp_path)["complete"] is True
     build_feed(tmp_path, now=NOW, history_dir=history_dir)
     _run(department, "second", status="error")
 
+    assert rollup.rebuild(tmp_path)["complete"] is True
     build_feed(tmp_path, now=NOW, history_dir=history_dir)
 
     saved = json.loads((history_dir / "2026-08-02.json").read_text(encoding="utf-8"))
@@ -205,15 +242,7 @@ def test_unknown_daily_metrics_stay_unknown_in_history(tmp_path):
     build_feed(tmp_path, now=NOW, history_dir=history_dir)
 
     saved = json.loads((history_dir / "2026-08-02.json").read_text(encoding="utf-8"))
-    assert saved["departments"]["alpha"] == {
-        "runs": "unknown",
-        "ok": "unknown",
-        "error": "unknown",
-        "blocked": "unknown",
-        "tokens_in": "unknown",
-        "tokens_out": "unknown",
-        "model_calls": "unknown",
-    }
+    assert saved["departments"] == {}
 
 
 def test_history_counts_loop_failures_and_totals_per_group(tmp_path):
