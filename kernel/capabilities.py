@@ -30,6 +30,16 @@ _ALLOWED_ENV = frozenset(
     }
 )
 
+# Kernel marker injected AFTER the scrub (like OE_DEPARTMENT in
+# factory/launch.py): the graph runner points every node process at its
+# per-attempt record SPOOL. Appenders write there instead of the canonical
+# streams; the runner validates, stamps identity from its own execution
+# state, signs, and promotes. Nothing secret travels to nodes, and no
+# node-supplied identity claim ever reaches a canonical stream (review B1,
+# Option C: runner-mediated appends). Deliberately NOT in _ALLOWED_ENV —
+# an ambient value from outside the runner is dropped.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
+
 # Capability env widens the strict global allowlist only for a department whose
 # human-owned charter declares the capability. XDG_RUNTIME_DIR exposes the user
 # session bus, so it must never become ambient for every confined department.

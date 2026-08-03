@@ -214,6 +214,98 @@ def sense(
     }
 
 
+# STATE.json is a bounded human surface; the sensed escalation LIST is
+# bounded only there — compare/decide/act always see every open escalation
+# (review B3: >20 open escalations must not truncate into silence).
+STATE_GRAPH_ESCALATION_BOUND = 20
+
+
+def sense_graph_escalations(state_dir) -> dict[str, Any]:
+    """Read-only, model-free replay of the runner->manager escalation bridge.
+
+    factory/runner.py appends one row per terminal escalated/killed graph run
+    to state/graph_escalations.jsonl. Rows are replayed keyed by run_id: an
+    'open' row (re)raises the escalation, a 'resolved' marker clears it, so
+    duplicate bridge rows from a crash-resume window collapse to one. ALL
+    open escalations are returned — persistence bounding is presentation-only
+    (see act). A stream that exists but cannot be parsed, or a row without a
+    run_id, is unverifiable and surfaces as its own breach (deny-by-default)
+    — an escalation must never vanish because its record is broken.
+    """
+    path = Path(state_dir) / "graph_escalations.jsonl"
+    active: dict[str, dict[str, Any]] = {}
+    unreadable = False
+    if path.exists():
+        try:
+            rows = _load_jsonl(path)
+        except (ValueError, OSError):
+            rows = []
+            unreadable = True
+        for row in rows:
+            run_id = row.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                unreadable = True
+                continue
+            marker = row.get("marker") or row.get("status")
+            if marker == "resolved" or row.get("resolved") is True:
+                active.pop(run_id, None)
+            else:
+                active[run_id] = {
+                    "run_id": run_id,
+                    "loop_id": row.get("loop_id"),
+                    "state": row.get("state"),
+                    "termination_reason": row.get("termination_reason"),
+                }
+    escalations = sorted(active.values(), key=lambda row: row["run_id"])
+    return {
+        "graph_escalations": escalations,  # ALL of them; act bounds STATE only
+        "graph_escalation_count": len(escalations),
+        "graph_escalations_truncated":
+            len(escalations) > STATE_GRAPH_ESCALATION_BOUND,
+        "graph_escalations_unreadable": unreadable,
+    }
+
+
+def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
+                             now: str | datetime | None = None) -> dict:
+    """One coordinated resolution for a bridged graph escalation (review B2).
+
+    This lives on the MANAGER because the manager owns both ledgers it must
+    reconcile: it writes escalation_fingerprints.jsonl (outbox dedup) and it
+    is the sole reader of graph_escalations.jsonl (the runner only reports —
+    giving the runner a resolution verb would be new authority). A human
+    resolves; this verb records it.
+
+    Two ordered, fsync'd appends under the records fence, fingerprint FIRST:
+    if the process dies between them the escalation stays OPEN with a freed
+    fingerprint — the next cycle re-delivers (noisy but never silent). The
+    reverse order could clear the sensor while the fingerprint still
+    suppresses, which is exactly the reopen-into-silence defect this fixes.
+    After resolution, a reopened run regains fresh fingerprint eligibility.
+    """
+    state_dir = Path(state_dir)
+    now_iso = _now(now).isoformat()
+    fingerprint = _escalation_fingerprint(
+        department, "graph_run_escalated", str(run_id))
+    with records_lock(state_dir):
+        _append_jsonl(state_dir / "escalation_fingerprints.jsonl", {
+            "department": department,
+            "finding_code": "graph_run_escalated",
+            "fingerprint": fingerprint,
+            "marker": "resolved",
+            "subject": str(run_id),
+            "timestamp": now_iso,
+        })
+        _append_jsonl(state_dir / "graph_escalations.jsonl", {
+            "department": department,
+            "run_id": str(run_id),
+            "marker": "resolved",
+            "ts": now_iso,
+        })
+    return {"resolved": str(run_id), "fingerprint": fingerprint,
+            "department": department}
+
+
 def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
     """Read-only, model-free release-drift snapshot (graphs.check_drift).
 
@@ -402,6 +494,29 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
                      observed=None, setpoint=None)
         )
 
+    # breach: a graph run terminated escalated/killed — the runner bridged it
+    # here and it stays open until a human resolves it. subject=run_id keeps
+    # the outbox delivery fingerprint unique per run.
+    for escalation in sensed.get("graph_escalations") or []:
+        finding = _finding(
+            "graph_run_escalated", "breach",
+            f"graph run {escalation.get('run_id')} "
+            f"({escalation.get('loop_id')}) terminated "
+            f"{escalation.get('state')}: "
+            f"{escalation.get('termination_reason')} — awaiting a human",
+            observed=1, setpoint=0)
+        finding["subject"] = escalation.get("run_id")
+        findings.append(finding)
+
+    # breach: the escalation bridge stream is unverifiable (fail-closed)
+    if sensed.get("graph_escalations_unreadable"):
+        findings.append(
+            _finding("graph_escalations_unreadable", "breach",
+                     "graph escalation records exist but could not be parsed "
+                     "— runner escalations are unverifiable (deny-by-default)",
+                     observed=None, setpoint=None)
+        )
+
     # breach: last worker run errored
     if sensed.get("last_run_ok") is False:
         findings.append(
@@ -527,7 +642,7 @@ def _escalation_fingerprint(
     department: str, finding_code: str, subject: str
 ) -> str:
     material = f"{department}|{finding_code}|{subject}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()[:12]
+    return hashlib.sha256(material).hexdigest()
 
 
 def _active_escalation_fingerprints(path: Path) -> set[str]:
@@ -713,7 +828,17 @@ def act(
                 ),
             )
 
-        # RECORD 3: STATE.json (atomic, monotonic epoch)
+        # RECORD 3: STATE.json (atomic, monotonic epoch). The escalation LIST
+        # is bounded here and only here — a presentation limit, never a
+        # processing limit (every open escalation was already compared,
+        # escalated, and delivered above; the honest total + truncated flag
+        # ride along).
+        state_sensed = dict(sensed)
+        escalation_rows = state_sensed.get("graph_escalations")
+        if (isinstance(escalation_rows, list)
+                and len(escalation_rows) > STATE_GRAPH_ESCALATION_BOUND):
+            state_sensed["graph_escalations"] = \
+                escalation_rows[:STATE_GRAPH_ESCALATION_BOUND]
         if state_path is not None:
             _atomic_write(
                 Path(state_path),
@@ -723,7 +848,7 @@ def act(
                         "epoch": epoch,
                         "last_cycle_at": now_iso,
                         "autonomy_state": autonomy_state,
-                        "sensed": sensed,
+                        "sensed": state_sensed,
                         "open_findings": findings,
                         "escalations": delivered,
                         "escalations_undelivered": undelivered,
@@ -797,6 +922,11 @@ def run_manager_cycle(
     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
     if dept_dir is not None:
         sensed.update(sense_drift(dept_dir, release_root))
+    # Like drift, the runner->manager escalation bridge is watched on every
+    # tick regardless of a department's custom sense_fn shape — a terminal
+    # escalated/killed graph run must never depend on the worker's telemetry
+    # contract to reach a human.
+    sensed.update(sense_graph_escalations(state_dir))
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(
@@ -846,11 +976,21 @@ def main() -> None:
     parser.add_argument("--autonomy-state", default=None,
                         help="override; the charter is the source of truth when present")
     parser.add_argument("--outbox", default=None, help="human-in-the-loop outbox to escalate into")
+    parser.add_argument("--resolve-graph-run", default=None, metavar="RUN_ID",
+                        help="record a human resolution for a bridged graph "
+                             "escalation (clears BOTH ledgers, coordinated) "
+                             "instead of running a cycle")
     args = parser.parse_args()
 
     root = Path(args.root)
     state_dir = Path(args.state_dir) if args.state_dir else (
         root / "departments" / args.department / "state")
+
+    if args.resolve_graph_run:
+        print(json.dumps(resolve_graph_escalation(
+            state_dir, department=args.department,
+            run_id=args.resolve_graph_run)))
+        return
 
     config = _load_charter_config(root, args.department)
     thresholds = config["thresholds"] if config else None

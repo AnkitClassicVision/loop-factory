@@ -7,6 +7,7 @@ from kernel.jsonl_store import append_jsonl
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
 
 
 SCHEMA_VERSION = "step-telemetry/v1"
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, telemetry rows land in the spool instead of any caller-given
+# canonical path; the runner stamps identity at promotion.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 AUTH_ROUTES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
 )
@@ -185,6 +190,7 @@ def call_model(
     telemetry_path=None,
     department=None,
     run_id=None,
+    graph_run_id=None,
     step_id=None,
     node=None,
     operation_name="chat",
@@ -215,6 +221,7 @@ def call_model(
     safe_engine = None
     safe_department = None
     safe_run_id = None
+    safe_graph_run_id = None
     safe_step_id = None
     safe_node = None
     safe_auth_route = "blocked"
@@ -233,6 +240,10 @@ def call_model(
         safe_run_id = _optional_identifier(run_id, "run_id")
         safe_step_id = _optional_identifier(step_id, "step_id")
         safe_node = _optional_identifier(node, "node")
+        # graph_run_id is an explicit non-runner tag; under the graph runner
+        # the row is spooled and the promotion step assigns identity from
+        # the runner's own execution state, overwriting any claim made here.
+        safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
         safe_auth_route = _optional_identifier(auth_route, "auth_route")
         if safe_auth_route not in AUTH_ROUTES:
             safe_auth_route = "blocked"
@@ -352,6 +363,7 @@ def call_model(
         "loopfactory.price.effective_date": price_effective_date,
         "loopfactory.department": safe_department,
         "loopfactory.run_id": safe_run_id,
+        "loopfactory.graph_run_id": safe_graph_run_id,
         "loopfactory.step_id": safe_step_id,
         "loopfactory.node": safe_node,
         "loopfactory.telemetry.source": (
@@ -359,6 +371,12 @@ def call_model(
         ),
         "estimated": metadata.get("estimated", False),
     }
+    # Runner-mediated appends (review B1, Option C): inside a node process
+    # the canonical telemetry path is unreachable — rows land in the spool
+    # and only the runner's promotion step writes the canonical stream.
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    if spool:
+        telemetry_path = Path(spool) / "telemetry.jsonl"
     telemetry_error: Exception | None = None
     if telemetry_path is not None:
         try:
