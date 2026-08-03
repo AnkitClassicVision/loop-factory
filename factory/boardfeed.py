@@ -14,7 +14,10 @@ The only sanctioned direct-read exceptions are:
 * ``charter.yaml`` for display metadata such as autonomy mode and objective
   setpoints, because governance metadata is not part of the reporting rollup.
 * ``objectives_observed.json`` for measured objective values, because each
-  department owns the generic sensor that produces those measurements.
+  department owns the generic sensor that produces those measurements;
+* configured external department mirrors under ``estate/state/external``.
+  Those mirrors are sanitized, atomic, local projections created by
+  ``factory.external_departments``; boardfeed never reads an external repo.
 
 These exceptions may add live or descriptive context. They may not replace a
 canonical rollup entity. The sole writes are the atomically replaced estate
@@ -36,6 +39,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from factory.charter_loader import CharterError, load_charter
+from factory.external_departments import MIRROR_SCHEMA, load_config
+from factory.runrecord import validate_record
 LOGGER = logging.getLogger(__name__)
 UNKNOWN = "unknown"
 ALLOWED_AUTH_CLASSES = frozenset({"oauth_cli", "service_oauth", "local_model"})
@@ -953,6 +958,271 @@ def _departments(repo_root: Path, restrict: str | None) -> list[Path]:
     return sorted(candidates, key=lambda path: path.name)
 
 
+def _external_mirrors(
+    repo_root: Path, restrict: str | None
+) -> tuple[dict[str, dict[str, Any]], int]:
+    """Load configured mirrors only; a missing mirror is not a department."""
+    config_path = repo_root / "estate" / "external_departments.yaml"
+    entries = load_config(config_path)
+    mirrors: dict[str, dict[str, Any]] = {}
+    malformed = 0
+    for entry in entries:
+        name = entry["name"]
+        if restrict is not None and name != restrict:
+            continue
+        snapshot, count = _read_json(
+            repo_root / "estate" / "state" / "external" / name / "mirror.json"
+        )
+        malformed += count
+        if snapshot is None:
+            continue
+        required = {
+            "schema",
+            "name",
+            "state",
+            "heartbeat",
+            "runs",
+            "objectives_observed",
+            "display",
+            "source_health",
+        }
+        if (
+            set(snapshot) != required
+            or snapshot.get("schema") != MIRROR_SCHEMA
+            or snapshot.get("name") != name
+            or not isinstance(snapshot.get("runs"), list)
+            or not isinstance(snapshot.get("source_health"), dict)
+            or not isinstance(snapshot["source_health"].get("unavailable"), list)
+            or any(
+                not isinstance(value, str)
+                for value in snapshot["source_health"].get("unavailable", [])
+            )
+        ):
+            LOGGER.warning("invalid external department mirror: %s", name)
+            malformed += 1
+            continue
+        valid_runs: list[dict[str, Any]] = []
+        for record in snapshot["runs"]:
+            try:
+                validated = validate_record(record)
+            except (TypeError, ValueError):
+                malformed += 1
+                continue
+            if validated.get("department") != name:
+                malformed += 1
+                continue
+            valid_runs.append(validated)
+        snapshot["runs"] = valid_runs
+        source_invalid = snapshot["source_health"].get("invalid", 0)
+        if (
+            isinstance(source_invalid, int)
+            and not isinstance(source_invalid, bool)
+            and source_invalid >= 0
+        ):
+            malformed += source_invalid
+        else:
+            malformed += 1
+        mirrors[name] = snapshot
+    return mirrors, malformed
+
+
+def _external_status_line(name: str, mirror: dict[str, Any]) -> dict[str, Any]:
+    state = mirror.get("state")
+    state = state if isinstance(state, dict) else {}
+    heartbeat = mirror.get("heartbeat")
+    heartbeat = heartbeat if isinstance(heartbeat, dict) else {}
+    display = mirror.get("display")
+    display = display if isinstance(display, dict) else {}
+    status_ts = state.get("last_cycle_at")
+    if _parse_ts(status_ts) is None:
+        status_ts = heartbeat.get("ts")
+    if _parse_ts(status_ts) is None:
+        status_ts = UNKNOWN
+    ok = heartbeat.get("ok")
+    if not isinstance(ok, bool):
+        ok = UNKNOWN
+    autonomy_state = display.get("autonomy_state", state.get("autonomy_state"))
+    return _line(
+        kind="dept_status",
+        ts=status_ts,
+        department=name,
+        subject="status",
+        event=False,
+        data={
+            "autonomy_state": _scalar(autonomy_state),
+            "epoch": _scalar(state.get("epoch")),
+            "last_cycle_at": _scalar(state.get("last_cycle_at")),
+            "ok": ok,
+            "open_findings": _scalar(state.get("open_findings")),
+            "escalations": _scalar(state.get("escalations")),
+        },
+    )
+
+
+def _external_objectives(
+    name: str, mirror: dict[str, Any], now: datetime
+) -> list[dict[str, Any]]:
+    display = mirror.get("display")
+    display = display if isinstance(display, dict) else {}
+    definitions = display.get("objectives")
+    definitions = definitions if isinstance(definitions, dict) else {}
+    objectives = _objective_metrics(
+        name, {"setpoints": {"objectives": definitions}}, now
+    )
+    observed = mirror.get("objectives_observed")
+    if isinstance(observed, dict):
+        values = observed.get("values")
+        values = values if isinstance(values, dict) else {}
+        existing = {row["data"]["objective_id"] for row in objectives}
+        for objective_id in sorted(set(values) - existing):
+            objectives.extend(
+                _objective_metrics(
+                    name,
+                    {
+                        "setpoints": {
+                            "objectives": {
+                                objective_id: {"label": objective_id}
+                            }
+                        }
+                    },
+                    now,
+                )
+            )
+        observed_at = _parse_ts(observed.get("ts"))
+        if observed_at is not None:
+            _merge_objectives_observed(
+                objectives,
+                {
+                    "ts": observed["ts"],
+                    "values": values,
+                    "stale": now - observed_at > OBJECTIVES_OBSERVED_MAX_AGE,
+                },
+            )
+    return objectives
+
+
+def _external_run_lines(
+    name: str,
+    records: Sequence[dict[str, Any]],
+    now: datetime,
+    *,
+    source_available: bool,
+) -> list[dict[str, Any]]:
+    """Project validated external v2 records without claiming rollup authority."""
+    output: list[dict[str, Any]] = []
+    lower = now - timedelta(hours=24)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily: list[dict[str, Any]] = []
+    for record in records:
+        stamp = _parse_ts(record.get("ts"))
+        if stamp is None or stamp > now:
+            continue
+        if start <= stamp:
+            daily.append(record)
+        if lower <= stamp:
+            ts = _iso(stamp)
+            output.append(
+                _line(
+                    kind="active_run",
+                    ts=ts,
+                    department=name,
+                    subject=record["run_id"],
+                    event=True,
+                    data={
+                        "run_id": record["run_id"],
+                        "node": _scalar(record.get("node")),
+                        "status": _scalar(record.get("status")),
+                        "attempt": _scalar(record.get("attempt")),
+                        "engine": _scalar(record.get("engine")),
+                        "model": _scalar(record.get("model")),
+                        "ts": ts,
+                    },
+                )
+            )
+        code = None
+        detail = None
+        observed = record.get("auth_class")
+        setpoint = "subscription_oauth_only"
+        if record.get("metered_violation") is True:
+            code = "POLICY"
+            detail = "metered model lane is forbidden"
+            observed = "metered_forbidden"
+        elif record.get("auth_class") == "blocked":
+            code = "AUTH"
+            detail = "authentication lane blocked"
+        if code is not None:
+            output.append(
+                _line(
+                    kind="andon",
+                    ts=_iso(stamp),
+                    department=name,
+                    subject=f"{code}-{record['run_id']}",
+                    event=True,
+                    data={
+                        "severity": "breach",
+                        "code": code,
+                        "detail": detail,
+                        "observed": _scalar(observed),
+                        "setpoint": setpoint,
+                        "run_id": record["run_id"],
+                    },
+                )
+            )
+
+    def token_total(field: str) -> int:
+        total = 0
+        for record in daily:
+            usage = record.get("usage")
+            if isinstance(usage, dict):
+                total += usage.get(field, 0)
+        return total
+
+    model_calls = 0
+    for record in daily:
+        cost = record.get("cost")
+        if isinstance(cost, dict):
+            model_calls += cost.get("model_calls", 0)
+    period = start.date().isoformat()
+    summary: dict[str, Any] = {
+        "metric_type": "daily_rollup",
+        "period": period,
+        "runs": len(daily),
+        "ok": sum(row.get("status") == "ok" for row in daily),
+        "error": sum(row.get("status") == "error" for row in daily),
+        "blocked": sum(row.get("status") == "blocked" for row in daily),
+        "tokens_in": token_total("input_tokens"),
+        "tokens_out": token_total("output_tokens"),
+        "model_calls": model_calls,
+        "evaluator_pass_rate": UNKNOWN,
+    }
+    if not source_available:
+        summary.update(
+            {
+                key: UNKNOWN
+                for key in (
+                    "runs",
+                    "ok",
+                    "error",
+                    "blocked",
+                    "tokens_in",
+                    "tokens_out",
+                    "model_calls",
+                )
+            }
+        )
+    output.append(
+        _line(
+            kind="metrics",
+            ts=_iso(now),
+            department=name,
+            subject=f"daily-{period}",
+            event=False,
+            data=summary,
+        )
+    )
+    return output
+
+
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
@@ -1026,6 +1296,8 @@ def build_feed(
     feed: list[dict[str, Any]] = []
     malformed = 0
     department_dirs = _departments(repo_root, department)
+    external_mirrors, count = _external_mirrors(repo_root, department)
+    malformed += count
     canonical_path = (
         Path(rollup_path)
         if rollup_path is not None
@@ -1050,7 +1322,9 @@ def build_feed(
         for row in canonical["department"]
         if row.get("id") != "estate"
     }
-    names = sorted(canonical_departments)
+    external_names = sorted(set(external_mirrors) - set(canonical_departments))
+    malformed += len(set(external_mirrors) & set(canonical_departments))
+    names = sorted(set(canonical_departments) | set(external_names))
     heartbeat_dirs = [
         directory_by_name[name] for name in names if name in directory_by_name
     ]
@@ -1061,7 +1335,7 @@ def build_feed(
         if incident.get("status") not in CLOSED_INCIDENT_STATUSES:
             open_incidents[incident.get("department") or "estate"] += 1
 
-    for name in names:
+    for name in sorted(canonical_departments):
         charter = None
         department_dir = directory_by_name.get(name)
         if department_dir is not None:
@@ -1095,6 +1369,26 @@ def build_feed(
                 canonical["receipt"],
                 now_dt,
                 projection["readable"],
+            )
+        )
+
+    for name in external_names:
+        mirror = external_mirrors[name]
+        feed.append(_external_status_line(name, mirror))
+        objectives = _external_objectives(name, mirror, now_dt)
+        feed.extend(objectives)
+        feed.extend(_objective_breach_andons(objectives, now_dt))
+        source_health = mirror["source_health"]
+        unavailable = source_health.get("unavailable")
+        runs_available = not (
+            isinstance(unavailable, list) and "runs_v2" in unavailable
+        )
+        feed.extend(
+            _external_run_lines(
+                name,
+                mirror["runs"],
+                now_dt,
+                source_available=runs_available,
             )
         )
 
