@@ -39,6 +39,10 @@
      "impl": "runtime/escalate_outbox.py"
     },
     {
+     "id": "N5",
+     "impl": "runtime/hopper_sensor.py"
+    },
+    {
      "id": "N9",
      "impl": "runtime/record.py"
     }

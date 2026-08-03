@@ -13,6 +13,8 @@ The only sanctioned direct-read exceptions are:
   not part of the rollup schema;
 * ``charter.yaml`` for display metadata such as autonomy mode and objective
   setpoints, because governance metadata is not part of the reporting rollup.
+* ``objectives_observed.json`` for measured objective values, because each
+  department owns the generic sensor that produces those measurements.
 
 These exceptions may add live or descriptive context. They may not replace a
 canonical rollup entity. The sole writes are the atomically replaced estate
@@ -23,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sqlite3
 import stat
@@ -40,6 +43,8 @@ OPEN_APPROVAL_STATUSES = frozenset({"pending_approval", "pending", "open", "queu
 CLOSED_INCIDENT_STATUSES = frozenset({"closed", "resolved", "dismissed", "cleared"})
 TIMER_SNAPSHOT_SCHEMA = "timers-snapshot/v1"
 TIMER_RESULTS = frozenset({"success", "failure", UNKNOWN})
+OBJECTIVES_OBSERVED_SCHEMA = "objectives-observed/v1"
+OBJECTIVES_OBSERVED_MAX_AGE = timedelta(hours=48)
 ROLLUP_ENTITIES = (
     "department",
     "run",
@@ -725,6 +730,100 @@ def _objective_metrics(
     return output
 
 
+def _load_objectives_observed(
+    path: Path, now: datetime
+) -> tuple[dict[str, Any] | None, int]:
+    snapshot, malformed = _read_json(path)
+    if snapshot is None:
+        return None, malformed
+    observed_at = _parse_ts(snapshot.get("ts"))
+    values = snapshot.get("values")
+    valid_values = isinstance(values, dict) and all(
+        isinstance(objective_id, str)
+        and (
+            isinstance(value, str)
+            or (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+        )
+        for objective_id, value in (values.items() if isinstance(values, dict) else ())
+    )
+    if (
+        snapshot.get("schema") != OBJECTIVES_OBSERVED_SCHEMA
+        or observed_at is None
+        or not valid_values
+    ):
+        LOGGER.warning("invalid objectives-observed source: %s", path)
+        return None, malformed + 1
+    return {
+        "ts": snapshot["ts"],
+        "values": values,
+        "stale": now - observed_at > OBJECTIVES_OBSERVED_MAX_AGE,
+    }, malformed
+
+
+def _merge_objectives_observed(
+    objectives: list[dict[str, Any]], snapshot: dict[str, Any] | None
+) -> None:
+    if snapshot is None:
+        return
+    values = snapshot["values"]
+    for objective in objectives:
+        data = objective["data"]
+        objective_id = data["objective_id"]
+        if objective_id not in values:
+            continue
+        data["observed"] = values[objective_id]
+        data["observed_ts"] = snapshot["ts"]
+        if snapshot["stale"]:
+            data["stale"] = True
+
+
+def _objective_breach_andons(
+    objectives: Iterable[dict[str, Any]], now: datetime
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for objective in objectives:
+        data = objective["data"]
+        observed = data.get("observed")
+        minimum = data.get("minimum")
+        if (
+            isinstance(observed, bool)
+            or isinstance(minimum, bool)
+            or not isinstance(observed, (int, float))
+            or not isinstance(minimum, (int, float))
+            or not math.isfinite(observed)
+            or not math.isfinite(minimum)
+            or observed >= minimum
+        ):
+            continue
+        label = data.get("label")
+        if label == UNKNOWN:
+            label = data["objective_id"]
+        ts = data.get("observed_ts", _iso(now))
+        output.append(
+            _line(
+                kind="andon",
+                ts=ts,
+                department=objective["department"],
+                subject=f"objective-below-min-{data['objective_id']}",
+                event=True,
+                data={
+                    "code": "OBJECTIVE_BELOW_MIN",
+                    "severity": "breach",
+                    "detail": (
+                        f"{label}: observed {observed} below minimum {minimum}"
+                    ),
+                    "observed": observed,
+                    "setpoint": minimum,
+                },
+            )
+        )
+    return output
+
+
 def _load_charter(path: Path, department: str) -> tuple[dict[str, Any] | None, int]:
     if not path.exists():
         return None, 0
@@ -977,7 +1076,16 @@ def build_feed(
                 open_incidents[name],
             )
         )
-        feed.extend(_objective_metrics(name, charter, now_dt))
+        objectives = _objective_metrics(name, charter, now_dt)
+        observed = None
+        if department_dir is not None:
+            observed, count = _load_objectives_observed(
+                department_dir / "state" / "objectives_observed.json", now_dt
+            )
+            malformed += count
+        _merge_objectives_observed(objectives, observed)
+        feed.extend(objectives)
+        feed.extend(_objective_breach_andons(objectives, now_dt))
         feed.extend(
             _canonical_metrics(
                 name,

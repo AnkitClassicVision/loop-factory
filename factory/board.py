@@ -49,7 +49,7 @@ section{margin-top:3.1rem}.zone-h{display:flex;align-items:baseline;gap:1rem;mar
 .dept-h{font-size:.82rem;font-weight:650;margin:1.5rem 0 .65rem}.subhead{font-size:.82rem;font-weight:600;margin:1.2rem 0 .45rem}
 .objgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2.5rem;align-items:start}
 .obj .goalline{font-size:.8rem;color:var(--muted);margin-bottom:.6rem;min-height:2.4em}.obj .goalline b{color:var(--ink)}
-.obj .fig{font-size:2.3rem;font-weight:650;letter-spacing:-.01em;line-height:1.1;white-space:nowrap}.obj .fig .unit{font-size:1rem;font-weight:400;color:var(--muted)}
+.obj .fig{font-size:2.3rem;font-weight:650;letter-spacing:-.01em;line-height:1.1;white-space:nowrap}.obj .fig .unit,.obj .fig .stale{font-size:1rem;font-weight:400;color:var(--muted)}
 .obj .sub{font-size:.82rem;color:var(--muted);margin-top:.25rem}
 .bullet-wrap{margin-top:1rem;max-width:34rem}.bullet{position:relative;height:1.05rem;background:var(--surface);border-radius:2px}
 .bullet .minzone{position:absolute;left:0;top:0;bottom:0;background:var(--red-tint);border-radius:2px 0 0 2px}
@@ -450,7 +450,10 @@ def _render_objective(record: dict[str, Any]) -> str:
     figure = (
         '<span class="unknown">unknown</span>'
         if _is_unknown(observed)
-        else f'{_display_number(observed)}<span class="unit">{_esc(unit)}</span>'
+        else (
+            f'{_display_number(observed)}<span class="unit">{_esc(unit)}</span>'
+            + ('<span class="stale"> (stale)</span>' if data.get("stale") is True else "")
+        )
     )
     bullet = ""
     minimum = _number(data.get("minimum"))
