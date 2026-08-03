@@ -48,7 +48,7 @@ def test_rss_fixture_parses_to_valid_index(tmp_path):
     row = json.loads(out.read_text())
     assert set(row) == {
         "item_id", "source_type", "title", "url", "published_at", "body_path",
-        "last_resurfaced_at", "prior_engagement",
+        "last_resurfaced_at", "prior_engagement", "thumbnail_url",
     }
     assert row["item_id"] == "ep-1"
 

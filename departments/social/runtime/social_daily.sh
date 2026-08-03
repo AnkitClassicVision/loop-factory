@@ -15,8 +15,8 @@ OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
 SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
 BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
 OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
-DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-claude_subscription codex_oauth glm_oauth}"
-QA_ENGINE="${SOCIAL_QA_ENGINE:-codex_oauth}"
+DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-codex_oauth glm_oauth claude_subscription}"
+QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
 ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
 ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-600}"
 QA_RETRY_BACKOFF_SECONDS="${SOCIAL_QA_RETRY_BACKOFF_SECONDS:-1}"
@@ -499,6 +499,11 @@ sys.stdout.write(
 PY
 )"
 if test "${DISPATCH_STATUS}" = "yielded"; then
+  RECORD_OUT="${RUN_DIR}/N9-record.json"
+  run_step "N9-record" "${RECORD_OUT}" \
+    python3 "${RUNTIME_DIR}/record.py" --node "SG-REPUBLISH" \
+    --state-dir "${STATE_DIR}" --payload "$(cat "${DISPATCH_OUT}")" \
+    --shadow --out "${RECORD_OUT}"
   exit 0
 fi
 
@@ -515,7 +520,8 @@ run_step "N9-record" "${RECORD_OUT}" \
   --shadow --out "${RECORD_OUT}"
 
 CARD_OUT="${RUN_DIR}/N10-review-card.json"
-python3 "${RUNTIME_DIR}/create_review_card.py" \
+run_step "N10-review-card" "${CARD_OUT}" \
+  python3 "${RUNTIME_DIR}/create_review_card.py" \
   --draft "${DRAFT_OUT}" --candidate "${CANDIDATE_OUT}" \
   --run-id "${RUN_ID}" --ledger "${STATE_DIR}/card_ledger.jsonl" \
-  --out "${CARD_OUT}" 2>&1 || echo "review card creation failed (non-blocking)" >&2
+  --out "${CARD_OUT}"

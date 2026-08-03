@@ -376,6 +376,13 @@ def test_deterministic_checks_stay_silent_on_clean_draft(tmp_path):
         "pass": True,
         "defects": [],
         "engine": "claude_subscription",
+        "verdict": "allow",
+        "gating": "advisory",
+        "evaluator": {
+            "pass": True,
+            "verdict": "allow",
+            "gating": "advisory",
+        },
     }
 
 
