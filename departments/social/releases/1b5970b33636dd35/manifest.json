@@ -1,0 +1,128 @@
+{
+  "hash": "1b5970b33636dd35",
+  "source_ref": "c60e17003f1f7c45fe430e48a136773506c12d2f",
+  "factory_version": {
+    "graph_schema_version": 2,
+    "runner_version": "2.5.0",
+    "telemetry_schema_version": 1,
+    "template_set_hash": "91af9f62bf0a7990"
+  },
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "ef5dbcb0ef21e11709659b4ce0e51c5f87ec1e56592cb8b09ec692874a42f9e6"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "04d7a51ef24cadf35165f6fac88fc826a9b38cba251bb38139801214ae3d696d"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "0ed912aee735065fa6b541d1e88ae3a24dfd2e3b0cac0af4519a6ae5454538ef"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "de0b770189c868f22934f15728b04674159f8b4b2dcd1ed52e4c6833d0f37644"
+    },
+    {
+      "path": "runtime/assemble_context.py",
+      "sha256": "a913bcce100d5beadb8c4587939f6b2da8e226b02972aef1d5ff5fec2c0bf48b"
+    },
+    {
+      "path": "runtime/assemble_weekly_digest.py",
+      "sha256": "41083f989746359dd8c6a244f3d108acea8d1b7dfe29cf7240a1099d598a2132"
+    },
+    {
+      "path": "runtime/compare_charter.py",
+      "sha256": "1eb71c465450e16bd343a8ed35cfe85d1098dcef26be0ef4a68f41f1e8ca2e75"
+    },
+    {
+      "path": "runtime/create_review_card.py",
+      "sha256": "b28510cd8316f1a0a5d04c46538fb7d42a6822f70bad854a8df18954af39f6bf"
+    },
+    {
+      "path": "runtime/delivery_verify.py",
+      "sha256": "3832623aea9aea7343b3f4136f6b6a2048583caf0d9589ba4376fbc733b4cd9d"
+    },
+    {
+      "path": "runtime/dispatch.py",
+      "sha256": "32348f1abc5cbfa1510a7d4265fed1882c3e1647ef85e6e8649603cca439690d"
+    },
+    {
+      "path": "runtime/draft_post.py",
+      "sha256": "0be69321c570dbb5ea73095810e94bba357b84c699538219469546e95529249d"
+    },
+    {
+      "path": "runtime/guards.py",
+      "sha256": "8445bfd6a4d130ba5eb0a1f6d9a50840409ae567fc911f99c04dbdd496cb2e2e"
+    },
+    {
+      "path": "runtime/harvest_review_asks.py",
+      "sha256": "e6fdefecd99e8f7924ce76a07ce94a0f63d6767cb6ac0e3efca6228cfd011e3e"
+    },
+    {
+      "path": "runtime/inventory_backcatalog.py",
+      "sha256": "79431d6fee0df76916fe3d3f7a1108ffd55fa86d815404c8542eb61061ff922f"
+    },
+    {
+      "path": "runtime/kernel_bridge.py",
+      "sha256": "ff1d6c0ef9574b4ff067d0022f742c35dc01372e16869cf1263a4a66bbf38dd1"
+    },
+    {
+      "path": "runtime/linear_close_issue.py",
+      "sha256": "394e9296227b98042e14971df1fa326b204f7a97af98d4f6759c28e736d34a21"
+    },
+    {
+      "path": "runtime/linear_read_comments.py",
+      "sha256": "9755f9dff3378b9ed7ce699a7efbc14b85da4ae699c19d30f8b8d834b393b009"
+    },
+    {
+      "path": "runtime/objectives_sensor.py",
+      "sha256": "090970aa26bf87d536ebbc346c8fd8cf9198c8a8e70faa4890b64d8e7ba6cad7"
+    },
+    {
+      "path": "runtime/proposal_card_to_outbox.py",
+      "sha256": "2ce1c9b011f0838deb16a0362005ebfa8995c32992188546ffe4a36b63a07171"
+    },
+    {
+      "path": "runtime/propose_insights.py",
+      "sha256": "ff2097d7c2f3bcf5ba0ac45e44fe9de5166e3e955dced7e58f36f27e31fb697a"
+    },
+    {
+      "path": "runtime/pull_call_joins.py",
+      "sha256": "37994af84cf9fd17c9622b0d5336e5ab3d7b05a898a842caf0cf4eab633b8a8e"
+    },
+    {
+      "path": "runtime/pull_zernio_analytics.py",
+      "sha256": "24b671c4e795190518d7044ca65328feeecd342fa81741ef4f279f2605bfa66a"
+    },
+    {
+      "path": "runtime/qa_post.py",
+      "sha256": "43f738b2d35e21aae54f1e6a3a420b3931933a4104a82f8c7e0f2b80c258ba18"
+    },
+    {
+      "path": "runtime/read_metrics_records.py",
+      "sha256": "aaeff53b2941fd7d41b88ba562eb2459155984ae79df29e7eb750f0e3b7df165"
+    },
+    {
+      "path": "runtime/record.py",
+      "sha256": "b4f5a04d7a10d672d2374040eed805a5d6b59bb221baa7d3a70d12374120cb87"
+    },
+    {
+      "path": "runtime/select_candidate.py",
+      "sha256": "403ab733595670e32ff595139a9663a67afc3317653bf28c0830e878cd28e743"
+    },
+    {
+      "path": "runtime/social_daily.sh",
+      "sha256": "74d35793e9a420e2359269a31717829ecea68466d8a47ccd37804b5e2ca46d80"
+    },
+    {
+      "path": "runtime/v2_record.py",
+      "sha256": "be384747108353c801c5843f1ccb289edaa28bd72cbec91649f8efe86e8fa816"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "2d21ce124e13a38526a3ed7d2db12278a420ce6c6b17000255bb6dce7515ec51"
+    }
+  ]
+}
