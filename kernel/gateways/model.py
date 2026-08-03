@@ -2,12 +2,12 @@ import sys, pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import receipts
-import graph_context
 from kernel.jsonl_store import append_jsonl
 
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -32,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
 
 
 SCHEMA_VERSION = "step-telemetry/v1"
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, telemetry rows land in the spool instead of any caller-given
+# canonical path; the runner stamps identity at promotion.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 AUTH_ROUTES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
 )
@@ -236,30 +240,10 @@ def call_model(
         safe_run_id = _optional_identifier(run_id, "run_id")
         safe_step_id = _optional_identifier(step_id, "step_id")
         safe_node = _optional_identifier(node, "node")
-        # Graph-runner identity: inside a runner-executed node the SIGNED
-        # context token is authoritative — identity comes only from its
-        # payload, and a caller-supplied mismatch (run OR node attribution)
-        # refuses the call BEFORE the provider is invoked (fail-closed,
-        # never silent null). A malformed/expired/forged-where-checkable
-        # token raises ContextInvalid here, also pre-invocation.
+        # graph_run_id is an explicit non-runner tag; under the graph runner
+        # the row is spooled and the promotion step assigns identity from
+        # the runner's own execution state, overwriting any claim made here.
         safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
-        context = graph_context.load_context(now=time.time())
-        if context is not None:
-            if (
-                safe_graph_run_id is not None
-                and safe_graph_run_id != context["run_id"]
-            ):
-                safe_graph_run_id = context["run_id"]
-                raise ValueError(
-                    "graph_run_id does not match the runner-signed "
-                    "graph context"
-                )
-            safe_graph_run_id = context["run_id"]
-            if safe_node is not None and safe_node != context["node"]:
-                raise ValueError(
-                    "node does not match the runner-signed graph context"
-                )
-            safe_node = context["node"]
         safe_auth_route = _optional_identifier(auth_route, "auth_route")
         if safe_auth_route not in AUTH_ROUTES:
             safe_auth_route = "blocked"
@@ -387,6 +371,12 @@ def call_model(
         ),
         "estimated": metadata.get("estimated", False),
     }
+    # Runner-mediated appends (review B1, Option C): inside a node process
+    # the canonical telemetry path is unreachable — rows land in the spool
+    # and only the runner's promotion step writes the canonical stream.
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    if spool:
+        telemetry_path = Path(spool) / "telemetry.jsonl"
     telemetry_error: Exception | None = None
     if telemetry_path is not None:
         try:

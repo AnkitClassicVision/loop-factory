@@ -31,13 +31,14 @@ _ALLOWED_ENV = frozenset(
 )
 
 # Kernel marker injected AFTER the scrub (like OE_DEPARTMENT in
-# factory/launch.py): the graph runner stamps a SIGNED context token
-# (kernel/graph_context.py) into every node process so every record stream
-# emitted inside that process carries the same correlation identity. It is a
-# signed claim, not a credential, and is deliberately NOT in _ALLOWED_ENV —
-# an ambient value from outside the runner is dropped. Raw identity strings
-# (the earlier OE_GRAPH_RUN_ID) are gone: a plain env string was spoofable.
-GRAPH_CONTEXT_ENV = "OE_GRAPH_CONTEXT"
+# factory/launch.py): the graph runner points every node process at its
+# per-attempt record SPOOL. Appenders write there instead of the canonical
+# streams; the runner validates, stamps identity from its own execution
+# state, signs, and promotes. Nothing secret travels to nodes, and no
+# node-supplied identity claim ever reaches a canonical stream (review B1,
+# Option C: runner-mediated appends). Deliberately NOT in _ALLOWED_ENV —
+# an ambient value from outside the runner is dropped.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 
 # Capability env widens the strict global allowlist only for a department whose
 # human-owned charter declares the capability. XDG_RUNTIME_DIR exposes the user

@@ -74,6 +74,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -86,16 +87,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER_VERSION = "2.5.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
-# Correlation identity injected into every node process AFTER the capability
+# Runner-mediated appends (review B1, Option C). The runner injects a
+# per-attempt record SPOOL path into every node process AFTER the capability
 # scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical name
-# in kernel/capabilities.py). Identity travels ONLY as a runner-SIGNED token
-# (kernel/graph_context.py) — a plain env string was spoofable (review B1).
-# Every record stream an emitter writes inside a runner-executed node —
-# runs-v2, telemetry, scores — carries this run's identity from that token,
-# and the runner re-verifies every appended claim before a transition fires.
-GRAPH_CONTEXT_ENV = "OE_GRAPH_CONTEXT"
-# The streams whose appended rows the runner identity-verifies post-node.
-_IDENTITY_STREAMS = ("runs-v2.jsonl", "telemetry.jsonl", "scores.jsonl")
+# in kernel/capabilities.py). Appenders write there; canonical streams are
+# unreachable from node code. Post-node — and BEFORE any transition receipt
+# mints — the runner validates each spooled row, stamps identity from its
+# OWN execution state (identity is assigned, never claimed), signs each
+# promoted row, and appends under the records fence. Nothing secret travels
+# to nodes at all.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
+SPOOL_STREAMS = ("runs-v2.jsonl", "telemetry.jsonl", "scores.jsonl")
+MAX_SPOOL_ROWS_PER_STREAM = 1000
+MAX_SPOOL_ROW_BYTES = 65536
+PROMOTION_SCHEMA = "promotion/v1"
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
 
@@ -401,15 +406,15 @@ class _Run:
 
 
 def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
-                 context_token: str) -> tuple:
+                 spool_dir: Path) -> tuple:
     launch = _load("launch", "factory/launch.py")
     captured: dict = {}
 
     def _capture(command, env):
-        # The signed identity token is injected AFTER the capability scrub,
-        # exactly like OE_DEPARTMENT — a signed claim, never a credential.
+        # The spool path is injected AFTER the capability scrub, exactly
+        # like OE_DEPARTMENT — a location, never a credential.
         env = dict(env)
-        env[GRAPH_CONTEXT_ENV] = context_token
+        env[RECORD_SPOOL_ENV] = str(spool_dir)
         proc = subprocess.run(command, env=env, capture_output=True, text=True)
         captured["proc"] = proc
         return proc
@@ -423,96 +428,206 @@ def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
     return returncode, stdout, stderr
 
 
-def _stream_baseline(state_dir: Path) -> dict:
-    counts = {}
-    for name in _IDENTITY_STREAMS:
-        path = state_dir / name
-        counts[name] = (
-            len(path.read_text(encoding="utf-8").splitlines())
-            if path.exists() else 0)
-    return counts
+def _canon_row_bytes(row) -> bytes:
+    return json.dumps(row, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
 
 
-def _identity_violation(state_dir: Path, baseline: dict, *, run_id: str,
-                        node_id: str) -> str | None:
-    """Trusted-plane verification of appended identity claims (review B1).
+def _promotion_row_id(run_id: str, node_id: str, stream: str,
+                      index: int) -> str:
+    """Stable across re-executions (rollup._stable_id pattern): a crash
+    between the canonical appends and the promotion marker re-appends the
+    same logical rows, and this id collapses them at read time."""
+    material = "\x1f".join(("promotion", run_id, node_id, stream, str(index)))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
-    The confined node cannot check an HMAC signature (no key by design), so
-    the runner — which minted the token — re-verifies here: every row a node
-    appended that claims THIS run's identity must attribute the CURRENT
-    node; an unreadable appended row is unverifiable and fails closed. Rows
-    claiming another run or carrying no graph identity are left alone
-    (concurrent runs and non-runner emitters legitimately share these
-    files); under one uid a direct file write can always mimic those, which
-    is the documented same-key limit — the sanctioned append path and this
-    run's own identity are what the runner can and does defend."""
-    for name in _IDENTITY_STREAMS:
-        path = state_dir / name
-        if not path.exists():
+
+def _read_spool_stream(spool_dir: Path, stream: str) -> list:
+    path = spool_dir / stream
+    if not path.exists():
+        return []
+    rows = []
+    for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
             continue
-        lines = path.read_text(encoding="utf-8").splitlines()
-        start = baseline.get(name, 0)
-        for offset, line in enumerate(lines[start:]):
-            if not line.strip():
-                continue
-            try:
-                row = _strict_loads(line)
-                if not isinstance(row, dict):
-                    raise ValueError("row is not an object")
-            except ValueError as exc:
-                return (f"identity_unverifiable: {name} appended row "
-                        f"{start + offset + 1} is unreadable ({exc})")
-            if name == "scores.jsonl":
-                target = row.get("target_ref")
-                claimed = (target.get("graph_run_id")
-                           if isinstance(target, dict) else None)
-                claimed_node = None  # target node is the score's SUBJECT
-            elif name == "telemetry.jsonl":
-                claimed = row.get("loopfactory.graph_run_id")
-                claimed_node = row.get("loopfactory.node")
-            else:
-                claimed = row.get("graph_run_id")
-                claimed_node = row.get("node")
-            if claimed != run_id:
-                continue
-            if claimed_node is not None and claimed_node != node_id:
-                return (f"identity_forgery: {name} row claims run {run_id} "
-                        f"with node {claimed_node!r} during {node_id!r}")
+        if len(line.encode("utf-8")) > MAX_SPOOL_ROW_BYTES:
+            raise ValueError(f"spool {stream} row {number} exceeds "
+                             f"{MAX_SPOOL_ROW_BYTES} bytes")
+        try:
+            row = _strict_loads(line)
+            if not isinstance(row, dict):
+                raise ValueError("row is not an object")
+        except ValueError as exc:
+            raise ValueError(f"spool {stream} row {number} is not a valid "
+                             f"record ({exc})") from exc
+        rows.append(row)
+    if len(rows) > MAX_SPOOL_ROWS_PER_STREAM:
+        raise ValueError(f"spool {stream} overflows "
+                         f"{MAX_SPOOL_ROWS_PER_STREAM} rows")
+    return rows
+
+
+def _promote_spool(run: _Run, *, node_id: str, attempt: int, spool_dir: Path,
+                   signer, crash_hook=None) -> str | None:
+    """Validate, stamp, sign, and append the node's spooled records.
+
+    This is the ONLY path from node-emitted records to the canonical streams
+    (review B1, Option C). Identity is ASSIGNED here from the runner's own
+    execution state — department, graph run, node — never taken from the
+    row; whatever a node claimed is overwritten. Every row is validated with
+    the stream's own validator FIRST; any malformed, overflowing, reserved-
+    field, or wrong-stream row refuses the WHOLE promotion (nothing partial)
+    and fails the node. Each promoted row is signed by the runner's signer
+    so factory/rollup.py can verify at read time and quarantine direct
+    same-uid file writes. Exactly-once across crash-resume: a durable
+    promotion marker (promotions.jsonl, DurableNonceStore precedent) skips
+    an already-promoted node, and the stable promotion row id collapses the
+    re-appended duplicates from a crash between append and marker.
+
+    RESIDUAL RISK (documented, not solved here): under a single uid a
+    hostile process can still truncate or delete canonical files outright —
+    detection of destructive edits needs OS-level separation or
+    hash-chaining of the streams. That is a promotion-ladder live-tier
+    concern; the KMSSigner seam in kernel/receipts.py is reserved for
+    exactly that hardening.
+
+    Returns None on success (or duplicate skip), else the refusal reason.
+    """
+    # factory/scores.py imports the kernel package; when the runner is
+    # invoked by file path the repo root may be absent from sys.path.
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    runrecord = _load("runrecord", "factory/runrecord.py")
+    scores = _load("scores", "factory/scores.py")
+
+    # ---- validate (all rows, before anything is written) ------------------ #
+    try:
+        unknown = sorted(child.name for child in spool_dir.iterdir()
+                         if child.name not in SPOOL_STREAMS)
+        if unknown:
+            return (f"spool_rejected: unknown spool entries {unknown} — "
+                    f"nodes may emit only {list(SPOOL_STREAMS)}")
+        spooled = {stream: _read_spool_stream(spool_dir, stream)
+                   for stream in SPOOL_STREAMS}
+        for stream, rows in spooled.items():
+            for row in rows:
+                if "promotion" in row:
+                    raise ValueError(f"spool {stream} row carries the "
+                                     f"reserved 'promotion' field")
+                if stream == "runs-v2.jsonl":
+                    runrecord.validate_record(
+                        {k: v for k, v in row.items() if k != "promotion"})
+                elif stream == "scores.jsonl":
+                    scores.validate_score(row)
+                else:
+                    if row.get("schema_version") != "step-telemetry/v1":
+                        raise ValueError(
+                            "telemetry schema_version is invalid")
+                    _canon_row_bytes(row)  # canonical-JSON policy
+    except (ValueError, OSError) as exc:
+        return f"spool_promotion: {exc}"
+
+    # ---- stamp + sign (identity assigned from runner state) --------------- #
+    department = run.dept_dir.name
+    stamped_streams: dict[str, list] = {}
+    try:
+        for stream, rows in spooled.items():
+            stamped_rows = []
+            for index, row in enumerate(rows):
+                stamped = dict(row)
+                if stream == "runs-v2.jsonl":
+                    stamped["department"] = department
+                    stamped["graph_run_id"] = run.run_id
+                    stamped["node"] = node_id
+                elif stream == "telemetry.jsonl":
+                    stamped["loopfactory.department"] = department
+                    stamped["loopfactory.graph_run_id"] = run.run_id
+                    stamped["loopfactory.node"] = node_id
+                else:  # scores: target node stays the score's SUBJECT
+                    target = dict(stamped.get("target_ref") or {})
+                    target["department"] = department
+                    target["graph_run_id"] = run.run_id
+                    stamped["target_ref"] = target
+                stamped["promotion"] = {
+                    "schema": PROMOTION_SCHEMA,
+                    "id": _promotion_row_id(run.run_id, node_id, stream,
+                                            index),
+                    "attempt": attempt,
+                }
+                signature = signer.sign(_canon_row_bytes(stamped))
+                stamped["promotion"] = {**stamped["promotion"],
+                                        "sig": signature}
+                stamped_rows.append(stamped)
+            stamped_streams[stream] = stamped_rows
+    except Exception as exc:
+        run.log("gate_failure", node_id=node_id,
+                why="signing_plane:promotion",
+                reason=f"{type(exc).__name__}: {exc}")
+        raise SigningPlaneBroken(str(exc)) from exc
+
+    # ---- append under the records fence, then the durable marker ---------- #
+    counts = {stream: len(rows) for stream, rows in stamped_streams.items()}
+    duplicate = False
+    with records_lock(run.state_dir):
+        ledger = run.run_dir / "promotions.jsonl"
+        promoted_nodes = set()
+        if ledger.exists():
+            for line in ledger.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    promoted_nodes.add(_strict_loads(line)["node"])
+                except (ValueError, KeyError, TypeError):
+                    # torn trailing line: that marker never durably
+                    # committed, so its promotion re-runs (id-deduped)
+                    continue
+        if node_id in promoted_nodes:
+            duplicate = True
+        else:
+            for stream, stamped_rows in stamped_streams.items():
+                for stamped in stamped_rows:
+                    _append_jsonl(run.state_dir / stream, stamped)
+            if crash_hook is not None:
+                crash_hook("pre_promotion_marker")
+            _append_jsonl(ledger, {"node": node_id, "attempt": attempt,
+                                   "counts": counts,
+                                   "ts": _now_iso(run.now_fn)})
+    if duplicate:
+        run.log("promotion_skipped_duplicate", node_id=node_id)
+    else:
+        run.log("spool_promoted", node_id=node_id, attempt=attempt,
+                counts=counts)
     return None
 
 
 def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
-                         env_base, sleep_fn, signer, now_fn) -> tuple:
-    """Run one node under its failure policy.
-    Returns (output|None, failure|None, attempts_used)."""
+                         env_base, sleep_fn, signer, now_fn,
+                         crash_hook=None) -> tuple:
+    """Run one node under its failure policy, then promote its spool.
+    Returns (output|None, failure|None, attempts_used). Spool rows from
+    FAILED attempts are never promoted — they stay in the per-attempt spool
+    directory for audit; the runner's own failure record covers the books."""
     rungraph = _load("rungraph", "factory/rungraph.py")
-    graph_context = _load("graph_context", "kernel/graph_context.py")
     policy = node["failure_policy"]
     attempts = int(policy["max_retries"]) + 1
     script = (run.dept_dir / node["impl"]).resolve()
     if not script.is_relative_to(run.dept_dir.resolve()):
         return None, {"reason": "impl_escapes_department", "exit_code": None,
                       "attempt": 0}, 0
-    baseline = _stream_baseline(run.state_dir)
     failure = None
     attempt = 0
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             sleep_fn(float(policy["backoff_s"]))
-        try:
-            context_token = graph_context.issue_context(
-                signer=signer, now=now_fn(), department=dept_name,
-                run_id=run.run_id, node=node["id"], attempt=attempt)
-        except Exception as exc:
-            run.log("gate_failure", node_id=node["id"],
-                    why="signing_plane:graph_context",
-                    reason=f"{type(exc).__name__}: {exc}")
-            raise SigningPlaneBroken(str(exc)) from exc
-        run.log("node_context_issued", node_id=node["id"], attempt=attempt,
-                graph_context=context_token)
+        spool_dir = run.run_dir / "spool" / f"{node['id']}-{attempt}"
+        if spool_dir.exists():
+            # stale spool from a crashed prior execution of this attempt
+            shutil.rmtree(spool_dir)
+        spool_dir.mkdir(parents=True)
         returncode, stdout, stderr = _launch_node(
             dept_name, script, root=root, env_base=env_base,
-            context_token=context_token)
+            spool_dir=spool_dir)
         run.log("node_attempt", node_id=node["id"], attempt=attempt,
                 exit_code=returncode)
         if returncode != 0:
@@ -534,19 +649,16 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
             failure = {"reason": "output_contract: " + "; ".join(contract_fails),
                        "exit_code": 0, "attempt": attempt}
             continue
-        violation = _identity_violation(
-            run.state_dir, baseline, run_id=run.run_id, node_id=node["id"])
-        if violation is not None:
-            run.log("identity_violation", node_id=node["id"],
-                    reason=violation)
-            return None, {"reason": violation, "exit_code": 0,
+        if crash_hook is not None:
+            crash_hook("pre_promotion")
+        reason = _promote_spool(run, node_id=node["id"], attempt=attempt,
+                                spool_dir=spool_dir, signer=signer,
+                                crash_hook=crash_hook)
+        if reason is not None:
+            run.log("spool_rejected", node_id=node["id"], reason=reason)
+            return None, {"reason": reason, "exit_code": 0,
                           "attempt": attempt}, attempt
         return output, None, attempt
-    violation = _identity_violation(
-        run.state_dir, baseline, run_id=run.run_id, node_id=node["id"])
-    if violation is not None:
-        # the node already failed; the forgery still gets a durable finding
-        run.log("identity_violation", node_id=node["id"], reason=violation)
     return None, failure, attempt
 
 
@@ -1135,7 +1247,7 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 output, failure, attempts_used = _execute_with_policy(
                     run, node, dept_name=dept_dir.name, root=root,
                     env_base=env_base, sleep_fn=sleep_fn, signer=signer,
-                    now_fn=now_fn)
+                    now_fn=now_fn, crash_hook=crash_hook)
                 # All token work happens INSIDE awaiting_receipt; the state
                 # exits only after every transition holds a validated token.
                 run.advance("awaiting_receipt")

@@ -3,22 +3,22 @@ from __future__ import annotations
 
 import copy
 import json
-import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from kernel import graph_context as _graph_context
 from kernel.jsonl_store import append_jsonl
 
 
 SCHEMA_VERSION = "score-record/v1"
-
-
-def _load_graph_context():
-    """The ambient runner-signed identity, or None outside the runner.
-    Malformed/expired/forged (where checkable) tokens raise — fail-closed."""
-    return _graph_context.load_context(now=time.time())
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, appends land in the spool; the runner stamps identity from
+# its own execution state at promotion — never from the emitter's claims.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
+# "promotion" is stamped by the runner at promotion time (identity +
+# signature) — never by an emitter.
+OPTIONAL_FIELDS = frozenset({"promotion"})
 SOURCES = frozenset({"script", "judge", "human"})
 FIELDS = frozenset(
     {
@@ -49,10 +49,12 @@ def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
 def validate_score(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ValueError("score record must be an object")
-    if set(record) != FIELDS:
-        missing = sorted(FIELDS - set(record))
-        unknown = sorted(set(record) - FIELDS)
+    missing = sorted(FIELDS - set(record))
+    unknown = sorted(set(record) - FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
         raise ValueError(f"score fields mismatch: missing={missing}, unknown={unknown}")
+    if "promotion" in record and not isinstance(record["promotion"], dict):
+        raise ValueError("promotion must be an object")
     if record["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must equal {SCHEMA_VERSION}")
     for field in (
@@ -112,13 +114,6 @@ def build_score(
     target_ref: dict[str, Any],
     ts: str | None = None,
 ) -> dict[str, Any]:
-    # Inside a graph-runner node process the runner-signed identity is the
-    # default; an explicitly supplied graph_run_id is left for append_score
-    # to gate against the token.
-    if isinstance(target_ref, dict) and "graph_run_id" not in target_ref:
-        context = _load_graph_context()
-        if context is not None:
-            target_ref = {**target_ref, "graph_run_id": context["run_id"]}
     return validate_score(
         {
             "gen_ai.evaluation.name": name,
@@ -138,20 +133,14 @@ def build_score(
 def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
     """Validate and append one score to ``state/scores.jsonl``.
 
-    Fail-closed identity gate: inside a graph-runner node process (the runner
-    injects a SIGNED graph context) a score whose target_ref is missing or
-    carries a different graph_run_id is refused, never silently appended.
-    target_ref.node is deliberately NOT matched against the token's node: it
-    names the SUBJECT of the score, and a judge node scoring another node's
-    output inside the same run is legitimate.
+    Runner-mediated appends (review B1, Option C): inside a graph-runner
+    node process (RECORD_SPOOL_ENV present) the row lands in the per-attempt
+    spool — the canonical stream is unreachable from node code through this
+    API. The runner stamps target_ref.department and target_ref.graph_run_id
+    from its own execution state at promotion; target_ref.node stays the
+    SUBJECT of the score (a judge node scoring another node is legitimate).
     """
-    context = _load_graph_context()
     validated = validate_score(record)
-    if context is not None:
-        supplied = validated["target_ref"].get("graph_run_id")
-        if supplied != context["run_id"]:
-            raise ValueError(
-                "target_ref.graph_run_id must match the runner-signed "
-                "graph context"
-            )
-    return append_jsonl(Path(state_dir) / "scores.jsonl", validated)
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    target_dir = Path(spool) if spool else Path(state_dir)
+    return append_jsonl(target_dir / "scores.jsonl", validated)

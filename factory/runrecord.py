@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import copy
 import fcntl
-import importlib.util
 import json
 import os
 import re
-import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -21,32 +19,12 @@ from typing import Any, Iterator
 
 
 SCHEMA = "run-record/v2"
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, this process is a graph-runner node: appends land in the
+# spool and the canonical stream is unreachable — the runner validates,
+# stamps identity from its own execution state, signs, and promotes.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 _GRAPH_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
-
-
-def _graph_context():
-    """Load kernel/graph_context.py whether or not the repo root is on
-    sys.path (department emitters import this module both ways)."""
-    try:
-        from kernel import graph_context
-        return graph_context
-    except ImportError:
-        name = "runrecord_graph_context"
-        if name in sys.modules:
-            return sys.modules[name]
-        spec = importlib.util.spec_from_file_location(
-            name, Path(__file__).resolve().parents[1] / "kernel"
-            / "graph_context.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
-
-
-def _load_graph_context():
-    """The ambient runner-signed identity, or None outside the runner.
-    Malformed/expired/forged (where checkable) tokens raise — fail-closed."""
-    return _graph_context().load_context(now=time.time())
 
 _REQUIRED_FIELDS = frozenset(
     {
@@ -78,8 +56,9 @@ _REQUIRED_FIELDS = frozenset(
 )
 _DERIVED_FIELDS = frozenset({"metered_violation"})
 # Additive, backward-compatible fields: absent in pre-existing records and in
-# emitters that run outside the graph runner.
-_OPTIONAL_FIELDS = frozenset({"graph_run_id"})
+# emitters that run outside the graph runner. "promotion" is stamped by the
+# runner at promotion time (identity + signature) — never by an emitter.
+_OPTIONAL_FIELDS = frozenset({"graph_run_id", "promotion"})
 _AUTH_CLASSES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "blocked", None}
 )
@@ -184,6 +163,8 @@ def build_record(**fields: Any) -> dict[str, Any]:
         _fail(sorted(unknown)[0], "is not allowed")
     if "graph_run_id" in fields:
         _validate_graph_run_id(fields["graph_run_id"])
+    if "promotion" in fields:
+        _require_type("promotion", fields["promotion"], dict)
 
     if fields["schema"] != SCHEMA:
         _fail("schema", f"must equal {SCHEMA!r}")
@@ -257,30 +238,20 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
 def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
     """Validate and append one fsynced JSON line under an exclusive lock.
 
-    Fail-closed identity gate: inside a graph-runner node process the runner
-    injects a SIGNED context token (kernel/graph_context.py). Identity comes
-    only from that token's payload — a record whose graph_run_id is missing
-    or different, or whose node attribution differs from the token's node,
-    is refused, never silently appended. A malformed, expired, or (wherever
-    the kernel key is resolvable) forged token refuses before validation.
+    Runner-mediated appends (review B1, Option C): inside a graph-runner
+    node process (RECORD_SPOOL_ENV present) the row lands in the per-attempt
+    spool — the canonical stream is unreachable from node code through this
+    API. The runner later validates, stamps identity from its OWN execution
+    state, signs, and promotes; any identity the node wrote is overwritten.
     """
-    context = _load_graph_context()
     validated = validate_record(record)
-    if context is not None:
-        supplied = validated.get("graph_run_id")
-        if supplied is None:
-            _fail("graph_run_id",
-                  "is required when running under the graph runner "
-                  "(a signed graph context is present)")
-        if supplied != context["run_id"]:
-            _fail("graph_run_id",
-                  "does not match the runner-signed graph context")
-        if validated.get("node") != context["node"]:
-            _fail("node",
-                  "does not match the runner-signed graph context node")
-    state_dir = Path(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    path = state_dir / "runs-v2.jsonl"
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    if spool:
+        target_dir = Path(spool)
+    else:
+        target_dir = Path(state_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / "runs-v2.jsonl"
     line = json.dumps(validated, sort_keys=True, separators=(",", ":")) + "\n"
     with path.open("a", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -342,10 +313,11 @@ def emit_record(
     external_actions_taken: int = 0,
     graph_run_id: str | None = None,
 ) -> Path:
-    """Build and append one v2 record with generated identity and timestamp."""
-    if graph_run_id is None:
-        context = _load_graph_context()
-        graph_run_id = context["run_id"] if context is not None else None
+    """Build and append one v2 record with generated identity and timestamp.
+
+    graph_run_id is an explicit non-runner tag only; under the graph runner
+    the promotion step assigns identity regardless of what is passed here.
+    """
     optional = {} if graph_run_id is None else {"graph_run_id": graph_run_id}
     record = build_record(
         schema=SCHEMA,

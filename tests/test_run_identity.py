@@ -1,16 +1,15 @@
-"""R1 — unified execution identity across the four record streams.
+"""R1 (round 3, Option C) — runner-mediated appends unify execution identity.
 
-One logical graph execution is joinable by a single correlation key: the
-graph runner's run_id. Identity travels ONLY as a runner-minted SIGNED
-context token (OE_GRAPH_CONTEXT, kernel/graph_context.py) bound to
-(department, run_id, node, attempt) with a TTL — raw env strings are never
-trusted for identity (cross-review B1: plain env identity was spoofable).
-Appenders take identity from the token payload, refuse malformed/expired
-tokens, refuse signature failures wherever the kernel key is resolvable, and
-enforce node attribution; in the keyless confined node the runner re-verifies
-every appended identity claim before any transition fires.
+Nodes never touch the canonical record streams: with OE_RECORD_SPOOL present
+(injected post-scrub by the runner, like OE_DEPARTMENT) every appender writes
+to a per-attempt spool. After the node exits — and BEFORE any transition
+receipt mints — the runner validates each spooled row, stamps identity from
+its OWN execution state (identity is assigned, never claimed), SIGNS each
+promoted row, and appends under the records fence. No security tokens travel
+to nodes at all. factory/rollup.py verifies promotion signatures at read
+time and quarantines unsigned/invalid graph-identity claims as incidents,
+which catches same-uid direct file writes.
 """
-import base64
 import importlib.util
 import json
 import sqlite3
@@ -20,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from factory import rollup, runrecord, scores
-from kernel import capabilities, graph_context, lock_service, receipts
+from kernel import capabilities, lock_service, receipts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,90 +37,91 @@ REL = _load("identity_release", "factory/release.py")
 RUN = _load("identity_runner", "factory/runner.py")
 
 SIGNER = R.LocalSigner(key="test-key")
-KERNEL_KEY = "kernel-test-key"
-CTX_ENV = "OE_GRAPH_CONTEXT"
+SPOOL_ENV = "OE_RECORD_SPOOL"
 
 
 def _read_jsonl(path):
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    path = Path(path)
+    if not path.exists():
+        return []
+    return [json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
 
 
-def _mint(run_id="SG-RUN-ctx", node="n1", *, key=KERNEL_KEY, attempt=1,
-          ttl_s=3600, department="demo"):
-    return graph_context.issue_context(
-        signer=receipts.LocalSigner(key=key), now=time.time(),
-        department=department, run_id=run_id, node=node, attempt=attempt,
-        ttl_s=ttl_s)
-
-
-def _install(monkeypatch, token, *, kernel_key=KERNEL_KEY):
-    monkeypatch.setenv(CTX_ENV, token)
-    if kernel_key is None:
-        monkeypatch.delenv("OE_KERNEL_SIGNING_KEY", raising=False)
-    else:
-        monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", kernel_key)
-
-
-def _tamper(token, **overrides):
-    """Rewrite the payload, keep the (now wrong) signature."""
-    encoded, sig = token.rsplit(".", 1)
-    padding = "=" * (-len(encoded) % 4)
-    payload = json.loads(base64.urlsafe_b64decode(encoded + padding))
-    payload.update(overrides)
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode() + "." + sig
+def _sign_row(row, *, signer=SIGNER, pid="p" * 32, attempt=1):
+    """Replicate the runner's promotion stamp+sign for hand-built fixtures."""
+    stamped = {**row, "promotion": {"schema": "promotion/v1", "id": pid,
+                                    "attempt": attempt}}
+    payload = json.dumps(stamped, sort_keys=True,
+                         separators=(",", ":")).encode()
+    stamped["promotion"] = {**stamped["promotion"],
+                            "sig": signer.sign(payload)}
+    return stamped
 
 
 # --------------------------------------------------------------------------- #
 # The env-name contract is shared across modules; drift would silently break
-# the identity chain, so the constant must agree everywhere it exists.
+# the spool redirect, so the constant must agree everywhere it exists.
 # --------------------------------------------------------------------------- #
 
-def test_graph_context_env_name_agrees_across_modules():
-    assert graph_context.GRAPH_CONTEXT_ENV == CTX_ENV
-    assert capabilities.GRAPH_CONTEXT_ENV == CTX_ENV
-    assert RUN.GRAPH_CONTEXT_ENV == CTX_ENV
-
-
-# --------------------------------------------------------------------------- #
-# graph_context token primitives
-# --------------------------------------------------------------------------- #
-
-def test_context_round_trips_and_verifies():
-    token = _mint()
-    signer = receipts.LocalSigner(key=KERNEL_KEY)
-    payload = graph_context.verify_context(token, signer=signer, now=time.time())
-    assert payload["run_id"] == "SG-RUN-ctx"
-    assert payload["node"] == "n1"
-    assert payload["department"] == "demo"
-    assert payload["attempt"] == 1
-
-
-def test_context_rejects_forged_signature_and_tampered_payload():
-    signer = receipts.LocalSigner(key=KERNEL_KEY)
-    with pytest.raises(graph_context.ContextInvalid, match="signature"):
-        graph_context.verify_context(
-            _mint(key="wrong-key"), signer=signer, now=time.time())
-    with pytest.raises(graph_context.ContextInvalid, match="signature"):
-        graph_context.verify_context(
-            _tamper(_mint(), run_id="SG-RUN-forged"), signer=signer,
-            now=time.time())
-
-
-def test_context_rejects_expired_and_malformed():
-    expired = _tamper(_mint(), exp=time.time() - 10)
-    with pytest.raises(graph_context.ContextInvalid, match="expired"):
-        graph_context.parse_context(expired, now=time.time())
-    with pytest.raises(graph_context.ContextInvalid, match="malformed"):
-        graph_context.parse_context("not-a-token", now=time.time())
+def test_record_spool_env_name_agrees_across_modules():
+    assert capabilities.RECORD_SPOOL_ENV == SPOOL_ENV
+    assert RUN.RECORD_SPOOL_ENV == SPOOL_ENV
+    assert runrecord.RECORD_SPOOL_ENV == SPOOL_ENV
+    assert scores.RECORD_SPOOL_ENV == SPOOL_ENV
 
 
 # --------------------------------------------------------------------------- #
-# runrecord (#13 stream): identity from the verified token only
+# Appenders: with a spool present, canonical paths are unreachable
+# --------------------------------------------------------------------------- #
+
+def test_runrecord_spools_instead_of_canonical(tmp_path, monkeypatch):
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    monkeypatch.setenv(SPOOL_ENV, str(spool))
+    canonical = tmp_path / "state"
+    runrecord.emit_record(canonical, department="demo", node="n1", status="ok")
+    assert not (canonical / "runs-v2.jsonl").exists()
+    rows = _read_jsonl(spool / "runs-v2.jsonl")
+    assert len(rows) == 1 and rows[0]["status"] == "ok"
+
+
+def test_scores_spool_instead_of_canonical(tmp_path, monkeypatch):
+    spool = tmp_path / "state" / "spooldir"
+    spool.mkdir(parents=True)
+    monkeypatch.setenv(SPOOL_ENV, str(spool))
+    record = scores.build_score(
+        name="qa", value=1.0, label="pass", explanation="ok", source="script",
+        judge_model=None, config_version="v1",
+        target_ref={"run_id": None, "step_id": None, "node": "n1",
+                    "department": "demo"})
+    scores.append_score(tmp_path / "state", record)
+    assert not (tmp_path / "state" / "scores.jsonl").exists()
+    assert len(_read_jsonl(spool / "scores.jsonl")) == 1
+
+
+def test_model_telemetry_spools_instead_of_canonical(tmp_path, monkeypatch):
+    spool = tmp_path / "state" / "spooldir"
+    spool.mkdir(parents=True)
+    monkeypatch.setenv(SPOOL_ENV, str(spool))
+    service = lock_service.LockService(
+        receipts.LocalSigner(key="test"),
+        budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
+        freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
+        nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
+        telemetry_path=tmp_path / "state" / "telemetry.jsonl",
+    )
+    issued = service.request_model("sanitized", sanitized=True)
+    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
+    assert not (tmp_path / "state" / "telemetry.jsonl").exists()
+    rows = _read_jsonl(spool / "telemetry.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["schema_version"] == "step-telemetry/v1"
+
+
+# --------------------------------------------------------------------------- #
+# Appenders outside the runner: unchanged, backward-compatible behavior
 # --------------------------------------------------------------------------- #
 
 def test_runrecord_graph_run_id_round_trips(tmp_path):
@@ -133,11 +133,11 @@ def test_runrecord_graph_run_id_round_trips(tmp_path):
     runrecord.validate_record(rows[0])
 
 
-def test_runrecord_without_context_stays_backward_compatible(tmp_path):
-    """Existing podcast emitters keep working: no token, no field, no change."""
+def test_runrecord_without_spool_stays_backward_compatible(tmp_path):
     runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
     rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
     assert "graph_run_id" not in rows[0]
+    assert "promotion" not in rows[0]
     runrecord.validate_record(rows[0])
 
 
@@ -153,96 +153,30 @@ def test_runrecord_rejects_unsafe_graph_run_id(tmp_path):
     assert not (tmp_path / "runs-v2.jsonl").exists()
 
 
-def test_runrecord_under_runner_requires_graph_run_id(tmp_path, monkeypatch):
-    _install(monkeypatch, _mint())
-    record = runrecord.build_record(
-        schema=runrecord.SCHEMA, rev=2, run_id="wrapper-1", department="demo",
-        node="n1", epoch=0, ts="2026-08-02T00:00:00+00:00", attempt=1,
-        round=None, release=None, trigger=None, engine=None, model=None,
-        auth_class=None, usage=None, cost=None, duration_ms=None, status="ok",
-        errors=[], artifacts=[], receipts=[], evaluator=None, approval=None,
-        external_actions_taken=0)
-    with pytest.raises(ValueError, match="graph_run_id"):
-        runrecord.append_record(tmp_path, record)
-    assert not (tmp_path / "runs-v2.jsonl").exists()
-
-
-def test_runrecord_rejects_mismatched_graph_run_id(tmp_path, monkeypatch):
-    _install(monkeypatch, _mint(run_id="SG-RUN-truth"))
-    with pytest.raises(ValueError, match="graph_run_id"):
-        runrecord.emit_record(
-            tmp_path, department="demo", node="n1", status="ok",
-            graph_run_id="SG-RUN-forged")
-    assert not (tmp_path / "runs-v2.jsonl").exists()
-
-
-def test_emit_record_defaults_identity_from_context(tmp_path, monkeypatch):
-    _install(monkeypatch, _mint(run_id="SG-RUN-token"))
+def test_validate_record_accepts_promoted_rows(tmp_path):
     runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
-    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
-    assert rows[0]["graph_run_id"] == "SG-RUN-token"
+    row = _read_jsonl(tmp_path / "runs-v2.jsonl")[0]
+    promoted = _sign_row({**row, "graph_run_id": "SG-RUN-x"})
+    runrecord.validate_record(promoted)
 
 
-def test_runrecord_refuses_forged_or_tampered_token(tmp_path, monkeypatch):
-    """B1 regression: a rewritten env identity refuses at append time
-    wherever the kernel key is resolvable."""
-    _install(monkeypatch, _mint(key="node-forged-key"))
-    with pytest.raises(ValueError, match="signature"):
-        runrecord.emit_record(tmp_path, department="demo", node="n1",
-                              status="ok")
-    _install(monkeypatch, _tamper(_mint(), run_id="SG-RUN-forged"))
-    with pytest.raises(ValueError, match="signature"):
-        runrecord.emit_record(tmp_path, department="demo", node="n1",
-                              status="ok")
-    assert not (tmp_path / "runs-v2.jsonl").exists()
+def test_score_validation_accepts_promoted_rows():
+    record = scores.build_score(
+        name="qa", value=1.0, label="pass", explanation="ok", source="script",
+        judge_model=None, config_version="v1",
+        target_ref={"run_id": None, "step_id": None, "node": "n1",
+                    "department": "demo", "graph_run_id": "SG-RUN-x"})
+    scores.validate_score(_sign_row(record))
 
 
-def test_runrecord_refuses_expired_token(tmp_path, monkeypatch):
-    _install(monkeypatch, _tamper(_mint(), exp=time.time() - 10))
-    with pytest.raises(ValueError, match="expired"):
-        runrecord.emit_record(tmp_path, department="demo", node="n1",
-                              status="ok")
-    assert not (tmp_path / "runs-v2.jsonl").exists()
-
-
-def test_runrecord_enforces_node_attribution(tmp_path, monkeypatch):
-    """B1 regression: a record claiming a different node than the verified
-    token's node refuses — the attribution hole is closed."""
-    _install(monkeypatch, _mint(node="n1"))
-    with pytest.raises(ValueError, match="node"):
-        runrecord.emit_record(tmp_path, department="demo", node="n2",
-                              status="ok")
-    assert not (tmp_path / "runs-v2.jsonl").exists()
-
-
-def test_runrecord_keyless_plane_takes_identity_from_payload(
-        tmp_path, monkeypatch):
-    """Confined node: no kernel key, so the signature CANNOT be checked
-    in-process (symmetric verify = mint). Identity still comes only from the
-    token payload, and the runner re-verifies every appended claim before a
-    transition fires (see test_runner_fails_node_on_forged_identity_claim)."""
-    _install(monkeypatch, _mint(run_id="SG-RUN-keyless"), kernel_key=None)
-    runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
-    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
-    assert rows[0]["graph_run_id"] == "SG-RUN-keyless"
-
-
-# --------------------------------------------------------------------------- #
-# kernel telemetry (#12 stream)
-# --------------------------------------------------------------------------- #
-
-def _service(tmp_path):
-    return lock_service.LockService(
+def test_model_telemetry_explicit_tag_without_spool(tmp_path):
+    service = lock_service.LockService(
         receipts.LocalSigner(key="test"),
         budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
         freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
         nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
         telemetry_path=tmp_path / "state" / "telemetry.jsonl",
     )
-
-
-def test_model_telemetry_row_carries_explicit_graph_run_id(tmp_path):
-    service = _service(tmp_path)
     issued = service.request_model("sanitized", sanitized=True)
     service.call_model(
         "sanitized", issued["receipt"], runner=lambda _p: "ok",
@@ -250,174 +184,42 @@ def test_model_telemetry_row_carries_explicit_graph_run_id(tmp_path):
     row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
     assert row["loopfactory.graph_run_id"] == "SG-RUN-explicit"
     assert row["loopfactory.node"] == "n1"
-
-
-def test_model_telemetry_defaults_identity_from_context(tmp_path, monkeypatch):
-    _install(monkeypatch, _mint(run_id="SG-RUN-token", node="n-token"))
-    service = _service(tmp_path)
     issued = service.request_model("sanitized", sanitized=True)
     service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
-    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
-    assert row["loopfactory.graph_run_id"] == "SG-RUN-token"
-    assert row["loopfactory.node"] == "n-token"
-
-
-def test_model_telemetry_mismatched_graph_run_id_fails_closed(
-        tmp_path, monkeypatch):
-    _install(monkeypatch, _mint(run_id="SG-RUN-truth"))
-    service = _service(tmp_path)
-    issued = service.request_model("sanitized", sanitized=True)
-    invoked = []
-
-    def runner(_prompt):
-        invoked.append(True)
-        return "never"
-
-    with pytest.raises(lock_service.LockServiceDown):
-        service.call_model(
-            "sanitized", issued["receipt"], runner=runner,
-            graph_run_id="SG-RUN-forged")
-    assert invoked == []  # refused BEFORE provider invocation
-    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
-    assert row["error.type"] == "ValueError"
-    # the runner-minted identity is authoritative in the recorded row
-    assert row["loopfactory.graph_run_id"] == "SG-RUN-truth"
-
-
-def test_model_telemetry_mismatched_node_fails_closed(tmp_path, monkeypatch):
-    """B1 regression: explicit node must match the token's node."""
-    _install(monkeypatch, _mint(node="n-token"))
-    service = _service(tmp_path)
-    issued = service.request_model("sanitized", sanitized=True)
-    invoked = []
-    with pytest.raises(lock_service.LockServiceDown):
-        service.call_model(
-            "sanitized", issued["receipt"],
-            runner=lambda _p: invoked.append(True) or "never", node="n-forged")
-    assert invoked == []
-    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
-    assert row["error.type"] == "ValueError"
-
-
-def test_model_telemetry_forged_token_fails_closed(tmp_path, monkeypatch):
-    _install(monkeypatch, _tamper(_mint(), run_id="SG-RUN-forged"))
-    service = _service(tmp_path)
-    issued = service.request_model("sanitized", sanitized=True)
-    with pytest.raises(lock_service.LockServiceDown):
-        service.call_model("sanitized", issued["receipt"],
-                           runner=lambda _p: "never")
-    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
-    assert row["error.type"] == "ContextInvalid"
-
-
-def test_model_telemetry_without_context_stays_null(tmp_path):
-    service = _service(tmp_path)
-    issued = service.request_model("sanitized", sanitized=True)
-    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
-    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
+    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[1]
     assert row["loopfactory.graph_run_id"] is None
 
 
 # --------------------------------------------------------------------------- #
-# scores (#12 stream)
-# --------------------------------------------------------------------------- #
-
-def _score_kwargs(target_ref):
-    return dict(
-        name="qa", value=1.0, label="pass", explanation="ok", source="script",
-        judge_model=None, config_version="v1", target_ref=target_ref)
-
-
-def test_score_target_ref_accepts_graph_run_id(tmp_path):
-    record = scores.build_score(**_score_kwargs({
-        "run_id": None, "step_id": None, "node": "n1", "department": "demo",
-        "graph_run_id": "SG-RUN-abc"}))
-    scores.append_score(tmp_path, record)
-    row = _read_jsonl(tmp_path / "scores.jsonl")[0]
-    assert row["target_ref"]["graph_run_id"] == "SG-RUN-abc"
-
-
-def test_score_target_ref_without_graph_run_id_stays_backward_compatible(
-        tmp_path):
-    record = scores.build_score(**_score_kwargs({
-        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}))
-    scores.append_score(tmp_path, record)
-    assert "graph_run_id" not in _read_jsonl(tmp_path / "scores.jsonl")[0]["target_ref"]
-
-
-def test_build_score_defaults_graph_run_id_from_context(monkeypatch):
-    _install(monkeypatch, _mint(run_id="SG-RUN-token"))
-    record = scores.build_score(**_score_kwargs({
-        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}))
-    assert record["target_ref"]["graph_run_id"] == "SG-RUN-token"
-
-
-def test_append_score_under_runner_requires_matching_graph_run_id(
-        tmp_path, monkeypatch):
-    record = scores.build_score(**_score_kwargs({
-        "run_id": None, "step_id": None, "node": "n1", "department": "demo",
-        "graph_run_id": "SG-RUN-forged"}))
-    _install(monkeypatch, _mint(run_id="SG-RUN-truth"))
-    with pytest.raises(ValueError, match="graph_run_id"):
-        scores.append_score(tmp_path, record)
-    bare = scores.validate_score({**record, "target_ref": {
-        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}})
-    with pytest.raises(ValueError, match="graph_run_id"):
-        scores.append_score(tmp_path, bare)
-    assert not (tmp_path / "scores.jsonl").exists()
-
-
-def test_append_score_refuses_forged_token(tmp_path, monkeypatch):
-    _install(monkeypatch, _mint(key="node-forged-key"))
-    with pytest.raises(ValueError, match="signature"):
-        scores.append_score(tmp_path, scores.build_score(**_score_kwargs({
-            "run_id": None, "step_id": None, "node": "n1",
-            "department": "demo"})))
-    assert not (tmp_path / "scores.jsonl").exists()
-
-
-def test_score_target_node_may_differ_from_context_node(tmp_path, monkeypatch):
-    """target_ref.node is the SUBJECT of the score, not the emitter — a judge
-    node scoring another node's output is legitimate, so only graph_run_id is
-    enforced here."""
-    _install(monkeypatch, _mint(run_id="SG-RUN-token", node="judge"))
-    record = scores.build_score(**_score_kwargs({
-        "run_id": None, "step_id": None, "node": "judged-node",
-        "department": "demo"}))
-    scores.append_score(tmp_path, record)
-    row = _read_jsonl(tmp_path / "scores.jsonl")[0]
-    assert row["target_ref"]["node"] == "judged-node"
-    assert row["target_ref"]["graph_run_id"] == "SG-RUN-token"
-
-
-# --------------------------------------------------------------------------- #
-# rollup (#12 store): join key + bumped schema marker
+# rollup: join columns + read-time promotion-signature defense
 # --------------------------------------------------------------------------- #
 
 def test_rollup_schema_marker_bumped_for_new_columns():
     assert rollup.SCHEMA_VERSION == "rollup/v2"
 
 
-def test_rollup_carries_graph_run_id_columns(tmp_path):
+def _rollup_state(tmp_path):
     state = tmp_path / "departments" / "demo" / "state"
     state.mkdir(parents=True)
     (state / "STATE.json").write_text(
         json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
-    gid = "SG-RUN-" + "a" * 8
-    (state / "runs.jsonl").write_text(json.dumps({
-        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
-        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN",
-    }) + "\n", encoding="utf-8")
-    (state / "runs-v2.jsonl").write_text(json.dumps({
-        "schema": "run-record/v2", "rev": 2, "run_id": "wrapper-1",
+    return state
+
+
+def _v2_row(gid, run_id="wrapper-1"):
+    return {
+        "schema": "run-record/v2", "rev": 2, "run_id": run_id,
         "graph_run_id": gid, "department": "demo", "node": "n1", "epoch": 0,
         "ts": "2026-08-02T00:00:01+00:00", "attempt": 1, "round": None,
         "release": None, "trigger": None, "engine": None, "model": None,
         "auth_class": None, "usage": None, "cost": None, "duration_ms": None,
         "status": "ok", "errors": [], "artifacts": [], "receipts": [],
         "evaluator": None, "approval": None, "external_actions_taken": 0,
-    }) + "\n", encoding="utf-8")
-    (state / "telemetry.jsonl").write_text(json.dumps({
+    }
+
+
+def _telemetry_row(gid):
+    return {
         "schema_version": "step-telemetry/v1",
         "ts": "2026-08-02T00:00:02+00:00", "gen_ai.operation.name": "chat",
         "gen_ai.provider.name": None, "gen_ai.request.model": None,
@@ -432,8 +234,11 @@ def test_rollup_carries_graph_run_id_columns(tmp_path):
         "loopfactory.graph_run_id": gid, "loopfactory.step_id": None,
         "loopfactory.node": "n1", "loopfactory.telemetry.source": "legacy_null",
         "estimated": False,
-    }) + "\n", encoding="utf-8")
-    (state / "scores.jsonl").write_text(json.dumps({
+    }
+
+
+def _score_row(gid):
+    return {
         "gen_ai.evaluation.name": "qa", "gen_ai.evaluation.score.value": 1.0,
         "gen_ai.evaluation.score.label": "pass",
         "gen_ai.evaluation.explanation": "ok", "source": "script",
@@ -442,18 +247,33 @@ def test_rollup_carries_graph_run_id_columns(tmp_path):
                        "department": "demo", "graph_run_id": gid},
         "ts": "2026-08-02T00:00:03+00:00",
         "schema_version": "score-record/v1",
-    }) + "\n", encoding="utf-8")
+    }
 
-    result = rollup.rebuild(tmp_path)
+
+def _write_row(path, row):
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def test_rollup_joins_signed_promoted_rows(tmp_path):
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "a" * 8
+    _write_row(state / "runs.jsonl", {
+        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
+        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
+    _write_row(state / "runs-v2.jsonl", _sign_row(_v2_row(gid), pid="a" * 32))
+    _write_row(state / "telemetry.jsonl",
+               _sign_row(_telemetry_row(gid), pid="b" * 32))
+    _write_row(state / "scores.jsonl", _sign_row(_score_row(gid), pid="c" * 32))
+
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
     assert result["complete"], result
     assert result["schema_version"] == "rollup/v2"
     bundle = rollup.graph_run_bundle(result["database"], gid)
     assert {row["run_id"] for row in bundle["run"]} == {gid, "wrapper-1"}
-    assert len(bundle["step_telemetry"]) == 1
-    assert bundle["step_telemetry"][0]["graph_run_id"] == gid
-    assert len(bundle["score"]) == 1
-    assert bundle["score"][0]["graph_run_id"] == gid
-    connection = sqlite3.connect(bundle and result["database"])
+    assert [row["graph_run_id"] for row in bundle["step_telemetry"]] == [gid]
+    assert [row["graph_run_id"] for row in bundle["score"]] == [gid]
+    connection = sqlite3.connect(result["database"])
     try:
         marker = connection.execute(
             "SELECT schema_version FROM department").fetchone()[0]
@@ -462,8 +282,74 @@ def test_rollup_carries_graph_run_id_columns(tmp_path):
     assert marker == "rollup/v2"
 
 
+def test_rollup_quarantines_unsigned_graph_claims(tmp_path):
+    """Read-time defense: a same-uid direct file write claiming graph
+    identity carries no promotion signature — quarantined as an incident,
+    excluded from the joined tables."""
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "b" * 8
+    _write_row(state / "runs-v2.jsonl", _v2_row(gid, run_id="forged-1"))
+    _write_row(state / "telemetry.jsonl", _telemetry_row(gid))
+    _write_row(state / "scores.jsonl", _score_row(gid))
+
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"] is False
+    bundle = rollup.graph_run_bundle(result["database"], gid)
+    assert bundle["run"] == []
+    assert bundle["step_telemetry"] == []
+    assert bundle["score"] == []
+    connection = sqlite3.connect(result["database"])
+    try:
+        codes = [row[0] for row in connection.execute(
+            "SELECT code FROM incident")]
+    finally:
+        connection.close()
+    quarantined = [c for c in codes if c.startswith("graph_identity_")]
+    assert len(quarantined) == 3
+
+
+def test_rollup_quarantines_tampered_promoted_rows(tmp_path):
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "c" * 8
+    row = _sign_row(_v2_row(gid), pid="d" * 32)
+    row["node"] = "n-tampered"  # post-signature mutation
+    _write_row(state / "runs-v2.jsonl", row)
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"] is False
+    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
+
+
+def test_rollup_without_verifier_quarantines_graph_claims(tmp_path):
+    """No signer resolvable -> graph claims are unverifiable -> deny by
+    default, never silently trusted."""
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "e" * 8
+    _write_row(state / "runs-v2.jsonl", _sign_row(_v2_row(gid)))
+    result = rollup.rebuild(tmp_path)
+    assert result["complete"] is False
+    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
+
+
+def test_rollup_ingests_unsigned_rows_without_graph_claims(tmp_path):
+    """Legacy emitters (no graph identity) stay ingestible unsigned."""
+    state = _rollup_state(tmp_path)
+    row = _v2_row(None)
+    del row["graph_run_id"]
+    _write_row(state / "runs-v2.jsonl", row)
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"], result
+    connection = sqlite3.connect(result["database"])
+    try:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM run WHERE run_id = 'wrapper-1'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
+
+
 # --------------------------------------------------------------------------- #
-# runner: a SIGNED context is injected into every node process
+# runner: spool injection, promotion stamping/signing, fail-closed spool
 # --------------------------------------------------------------------------- #
 
 def _node(node_id, impl, on_fail="escalate", max_retries=0):
@@ -515,50 +401,28 @@ def _make_dept(tmp_path, scripts, manifest):
 
 
 ENV_CAPTURE = """\
-import base64, json, os, pathlib
+import json, os, pathlib
 state = pathlib.Path(__file__).resolve().parents[1] / "state"
 state.mkdir(parents=True, exist_ok=True)
-token = os.environ.get("OE_GRAPH_CONTEXT", "")
-encoded = token.rsplit(".", 1)[0]
-payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
 (state / "envcap.json").write_text(json.dumps({
-    "payload": payload,
-    "legacy_run_env": os.environ.get("OE_GRAPH_RUN_ID"),
+    "spool": os.environ.get("OE_RECORD_SPOOL"),
     "kernel_key_leaked": "OE_KERNEL_SIGNING_KEY" in os.environ,
 }), encoding="utf-8")
 print(json.dumps({"status": "ok"}))
 """
 
 
-def test_runner_injects_signed_context_into_node_env(tmp_path):
+def test_runner_injects_spool_env_no_secrets(tmp_path):
     dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
     result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
                            root=tmp_path, sleep_fn=lambda s: None)
     assert result["state"] == "done"
     captured = json.loads(
         (dept / "state" / "envcap.json").read_text(encoding="utf-8"))
-    payload = captured["payload"]
-    assert payload["schema"] == graph_context.SCHEMA
-    assert payload["run_id"] == result["run_id"]
-    assert payload["node"] == "N1"
-    assert payload["department"] == "demo"
-    assert payload["attempt"] == 1
-    # raw identity env strings are gone, and the signing key never leaks
-    assert captured["legacy_run_env"] is None
+    expected = (dept / "state" / "graph_runs" / result["run_id"] / "spool"
+                / "N1-1")
+    assert captured["spool"] == str(expected)
     assert captured["kernel_key_leaked"] is False
-
-
-def test_runner_context_verifies_under_the_runner_signer(tmp_path):
-    dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
-    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
-                           root=tmp_path, sleep_fn=lambda s: None)
-    tokens = [row["graph_context"] for row in
-              _read_jsonl(dept / "state" / "runs.jsonl")
-              if row.get("event") == "node_context_issued"]
-    assert tokens
-    payload = graph_context.verify_context(
-        tokens[0], signer=SIGNER, now=time.time())
-    assert payload["run_id"] == result["run_id"]
 
 
 def test_runner_records_carry_graph_run_id(tmp_path):
@@ -571,55 +435,6 @@ def test_runner_records_carry_graph_run_id(tmp_path):
         r.get("graph_run_id") == result["run_id"] for r in stamped)
 
 
-FORGING_NODE = """\
-import base64, json, os, pathlib, sys
-sys.path.insert(0, {root!r})
-from factory import runrecord
-
-state = pathlib.Path(__file__).resolve().parents[1] / "state"
-state.mkdir(parents=True, exist_ok=True)
-
-# The spoof probe: rewrite our own env identity. We cannot re-sign (no kernel
-# key in here), so we tamper the payload and keep a junk signature — the
-# keyless appender can only parse, so the forged row lands...
-token = os.environ["OE_GRAPH_CONTEXT"]
-encoded = token.rsplit(".", 1)[0]
-payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-payload["node"] = "N-forged"
-raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-forged = base64.urlsafe_b64encode(raw).rstrip(b"=").decode() + ".AAAA"
-os.environ["OE_GRAPH_CONTEXT"] = forged
-
-runrecord.emit_record(state, department="demo", node="N-forged", status="ok")
-print(json.dumps({{"status": "ok"}}))
-"""
-
-
-def test_runner_fails_node_on_forged_identity_claim(tmp_path):
-    """B1 regression (keyless plane): the node forges its context, the row
-    lands, and the RUNNER — the trusted verifier — fails the node before any
-    transition fires. The forgery escalates instead of advancing."""
-    dept = _make_dept(
-        tmp_path, {"sense.py": FORGING_NODE.format(root=str(ROOT))},
-        _one_node_manifest())
-    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
-                           root=tmp_path, sleep_fn=lambda s: None)
-    assert result["state"] == "escalated"
-    run_state = json.loads(
-        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
-        .read_text(encoding="utf-8"))
-    assert "identity" in run_state["nodes"]["N1"]["reason"]
-    # the ONLY receipt-bearing row is the escalation exit — nothing advanced
-    assert [(t["from"], t["to"], t["kind"]) for t in run_state["transitions"]] \
-        == [("N1", None, "escalation")]
-
-
-# --------------------------------------------------------------------------- #
-# ACCEPTANCE: one synthetic graph execution -> one joined record set across
-# runs.jsonl, runs-v2.jsonl, telemetry.jsonl, scores.jsonl, queryable by the
-# single graph run_id in rollup.sqlite3.
-# --------------------------------------------------------------------------- #
-
 EMITTER_NODE = """\
 import json, pathlib, sys
 sys.path.insert(0, {root!r})
@@ -629,10 +444,8 @@ from kernel import lock_service, receipts
 state = pathlib.Path(__file__).resolve().parents[1] / "state"
 state.mkdir(parents=True, exist_ok=True)
 
-# 1) #13 wrapper summary — identity comes from the runner-signed context
 runrecord.emit_record(state, department="demo", node="N1", status="ok")
 
-# 2) #12 telemetry — identity comes from the runner-signed context
 service = lock_service.LockService(
     receipts.LocalSigner(key="node-key"),
     budget_ledger=state / "kernel" / "budget.jsonl",
@@ -643,7 +456,6 @@ service = lock_service.LockService(
 issued = service.request_model("sanitized", sanitized=True)
 service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
 
-# 3) #12 score — identity comes from the runner-signed context
 scores.append_score(state, scores.build_score(
     name="qa", value=1.0, label="pass", explanation="ok", source="script",
     judge_model=None, config_version="v1",
@@ -655,6 +467,9 @@ print(json.dumps({{"status": "ok"}}))
 
 
 def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
+    """ACCEPTANCE: one execution through factory/runner.py -> promoted,
+    signed, runner-stamped rows across all four streams, joined by the one
+    graph run_id in rollup.sqlite3."""
     dept = _make_dept(
         tmp_path, {"sense.py": EMITTER_NODE.format(root=str(ROOT))},
         _one_node_manifest())
@@ -664,9 +479,9 @@ def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
     gid = result["run_id"]
     state = dept / "state"
 
-    # every stream carries the SAME graph run id
     v2 = _read_jsonl(state / "runs-v2.jsonl")
     assert len(v2) == 1 and v2[0]["graph_run_id"] == gid
+    assert v2[0]["promotion"]["sig"]
     telemetry = _read_jsonl(state / "telemetry.jsonl")
     assert len(telemetry) == 1
     assert telemetry[0]["loopfactory.graph_run_id"] == gid
@@ -674,20 +489,210 @@ def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
     score_rows = _read_jsonl(state / "scores.jsonl")
     assert len(score_rows) == 1
     assert score_rows[0]["target_ref"]["graph_run_id"] == gid
-    graph_rows = [r for r in _read_jsonl(state / "runs.jsonl")
-                  if r.get("graph_run_id") == gid]
-    assert graph_rows
+    assert (state / "graph_runs" / gid / "promotions.jsonl").exists()
 
-    # the rollup joins all four streams on that one key
     (state / "STATE.json").write_text(
         json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
-    built = rollup.rebuild(tmp_path)
+    built = rollup.rebuild(tmp_path, signer=SIGNER)
     assert built["complete"], built
     bundle = rollup.graph_run_bundle(built["database"], gid)
     run_ids = {row["run_id"] for row in bundle["run"]}
-    assert gid in run_ids  # the graph run itself (runs.jsonl)
-    assert v2[0]["run_id"] in run_ids  # the wrapper summary (runs-v2.jsonl)
-    assert all(row["graph_run_id"] == gid or row["run_id"] == gid
-               for row in bundle["run"])
+    assert gid in run_ids
+    assert v2[0]["run_id"] in run_ids
     assert [row["graph_run_id"] for row in bundle["step_telemetry"]] == [gid]
     assert [row["graph_run_id"] for row in bundle["score"]] == [gid]
+
+
+FORGING_EMITTER = """\
+import json, pathlib, sys
+sys.path.insert(0, {root!r})
+from factory import runrecord
+
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+runrecord.emit_record(state, department="evil-dept", node="N-forged",
+                      status="ok", graph_run_id="SG-RUN-forged")
+print(json.dumps({{"status": "ok"}}))
+"""
+
+
+def test_promotion_stamps_runner_truth_over_forged_claims(tmp_path):
+    """B1 regression (Option C): the node claims another department, node,
+    and run in its emitted record — promotion assigns the runner's own
+    execution identity; the canonical stream never carries the claim."""
+    dept = _make_dept(
+        tmp_path, {"sense.py": FORGING_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "done"
+    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["graph_run_id"] == result["run_id"]
+    assert row["department"] == "demo"
+    assert row["node"] == "N1"
+    raw = json.dumps(rows)
+    assert "SG-RUN-forged" not in raw
+    assert "evil-dept" not in raw and "N-forged" not in raw
+
+
+DIRECT_WRITER = """\
+import json, pathlib
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+row = {
+    "schema": "run-record/v2", "rev": 2, "run_id": "direct-1",
+    "graph_run_id": "SG-RUN-direct-forgery", "department": "demo",
+    "node": "N1", "epoch": 0, "ts": "2026-08-02T00:00:01+00:00",
+    "attempt": 1, "round": None, "release": None, "trigger": None,
+    "engine": None, "model": None, "auth_class": None, "usage": None,
+    "cost": None, "duration_ms": None, "status": "ok", "errors": [],
+    "artifacts": [], "receipts": [], "evaluator": None, "approval": None,
+    "external_actions_taken": 0,
+}
+with (state / "runs-v2.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(row, sort_keys=True) + "\\n")
+print(json.dumps({"status": "ok"}))
+"""
+
+
+def test_direct_canonical_write_is_quarantined_at_read_time(tmp_path):
+    """B1 regression (Option C): node code bypasses the appenders and writes
+    a graph-claiming row straight into the canonical stream — rollup
+    quarantines it as an incident (no promotion signature)."""
+    dept = _make_dept(tmp_path, {"sense.py": DIRECT_WRITER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "done"
+    (dept / "state" / "STATE.json").write_text(
+        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
+    built = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert built["complete"] is False
+    bundle = rollup.graph_run_bundle(built["database"],
+                                     "SG-RUN-direct-forgery")
+    assert bundle["run"] == []
+    connection = sqlite3.connect(built["database"])
+    try:
+        codes = [row[0] for row in connection.execute(
+            "SELECT code FROM incident")]
+    finally:
+        connection.close()
+    assert any(code.startswith("graph_identity_") for code in codes)
+
+
+MALFORMED_SPOOLER = """\
+import json, os, pathlib
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+spool.mkdir(parents=True, exist_ok=True)
+with (spool / "runs-v2.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write("this is not a record\\n")
+print(json.dumps({"status": "ok"}))
+"""
+
+
+def test_malformed_spool_row_is_node_failure_no_promotion(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": MALFORMED_SPOOLER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"  # on_fail=escalate, fail-closed
+    run_state = json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+    assert "spool" in run_state["nodes"]["N1"]["reason"]
+    assert not (dept / "state" / "runs-v2.jsonl").exists()
+    assert [(t["from"], t["to"], t["kind"]) for t in run_state["transitions"]] \
+        == [("N1", None, "escalation")]
+
+
+WRONG_STREAM_SPOOLER = """\
+import json, os, pathlib
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+spool.mkdir(parents=True, exist_ok=True)
+with (spool / "surprise.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"status": "ok"}) + "\\n")
+print(json.dumps({"status": "ok"}))
+"""
+
+
+def test_unknown_spool_stream_is_node_failure(tmp_path):
+    dept = _make_dept(tmp_path, {"sense.py": WRONG_STREAM_SPOOLER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    run_state = json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+    assert "spool" in run_state["nodes"]["N1"]["reason"]
+
+
+SINGLE_EMITTER = """\
+import json, pathlib, sys
+sys.path.insert(0, {root!r})
+from factory import runrecord
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+runrecord.emit_record(state, department="demo", node="N1", status="ok")
+print(json.dumps({{"status": "ok"}}))
+"""
+
+
+def _crash_once_at(boundary):
+    state = {"armed": True}
+
+    def hook(name):
+        if name == boundary and state["armed"]:
+            state["armed"] = False
+            raise RuntimeError(f"simulated crash at {boundary}")
+    return hook
+
+
+def test_crash_before_promotion_resumes_and_promotes_exactly_once(tmp_path):
+    dept = _make_dept(
+        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    with pytest.raises(RuntimeError, match="pre_promotion"):
+        RUN.run_graph(dept, trigger_fingerprint="c1", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("pre_promotion"))
+    assert not (dept / "state" / "runs-v2.jsonl").exists()
+    second = RUN.run_graph(dept, trigger_fingerprint="c1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert second["resumed"] is True and second["state"] == "done"
+    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["graph_run_id"] == second["run_id"]
+
+
+def test_crash_mid_promotion_dedupes_by_stable_row_id(tmp_path):
+    """A crash between the canonical appends and the promotion marker means
+    the re-executed promotion appends again — the stable promotion id makes
+    the duplicate collapse to exactly one row in the rollup."""
+    dept = _make_dept(
+        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    with pytest.raises(RuntimeError, match="pre_promotion_marker"):
+        RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
+                      root=tmp_path, sleep_fn=lambda s: None,
+                      crash_hook=_crash_once_at("pre_promotion_marker"))
+    second = RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert second["resumed"] is True and second["state"] == "done"
+    physical = _read_jsonl(dept / "state" / "runs-v2.jsonl")
+    assert len(physical) == 2  # at-least-once append...
+    assert len({json.dumps(r["promotion"]["id"]) for r in physical}) == 1
+    (dept / "state" / "STATE.json").write_text(
+        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
+    built = rollup.rebuild(tmp_path, signer=SIGNER)
+    connection = sqlite3.connect(built["database"])
+    try:
+        # wrapper rows only: the graph run's own runs.jsonl row also joins
+        count = connection.execute(
+            "SELECT COUNT(*) FROM run WHERE graph_run_id = ? AND run_id != ?",
+            (second["run_id"], second["run_id"])).fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1  # ...exactly-once at read time

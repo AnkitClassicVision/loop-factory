@@ -93,6 +93,44 @@ def _stable_id(*parts: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
+def _resolve_verifier():
+    """The kernel signer when its key is present in-process, else None."""
+    if not os.environ.get("OE_KERNEL_SIGNING_KEY"):
+        return None
+    from kernel import receipts
+
+    return receipts.LocalSigner()
+
+
+def _promotion_verdict(row: dict[str, Any], signer) -> str:
+    """Read-time defense (review B1, Option C): only the runner's promotion
+    step may put graph identity into a canonical stream, and it signs every
+    promoted row. A graph-claiming row without a valid signature is a
+    same-uid direct file write (or tampering) and is quarantined."""
+    promotion = row.get("promotion")
+    if not isinstance(promotion, dict) or not isinstance(
+            promotion.get("sig"), str):
+        return "unsigned"
+    if signer is None:
+        return "unverifiable"
+    unsigned = {**row, "promotion": {k: v for k, v in promotion.items()
+                                     if k != "sig"}}
+    try:
+        payload = json.dumps(unsigned, sort_keys=True, separators=(",", ":"),
+                             allow_nan=False).encode("utf-8")
+        verified = signer.verify(payload, promotion["sig"])
+    except Exception:
+        return "invalid"
+    return "ok" if verified else "invalid"
+
+
+def _promotion_id(row: dict[str, Any]) -> str | None:
+    promotion = row.get("promotion")
+    if isinstance(promotion, dict) and isinstance(promotion.get("id"), str):
+        return promotion["id"]
+    return None
+
+
 def _relative(root: Path, path: Path) -> str:
     try:
         return path.absolute().relative_to(root.absolute()).as_posix()
@@ -268,11 +306,28 @@ def _department_row(root: Path, department: str, state_dir: Path, state: dict | 
 
 
 def _run_rows(
-    root: Path, path: Path, department: str, incidents: list[dict[str, Any]]
+    root: Path, path: Path, department: str, incidents: list[dict[str, Any]],
+    signer=None,
 ) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     source_ref = _relative(root, path)
+    # Promoted stream: graph-identity claims must carry a valid runner
+    # promotion signature. runs.jsonl is the runner's own fenced event log —
+    # its integrity story is the SIGNED execution projection, not per-row
+    # signatures here.
+    verify_stream = path.name == "runs-v2.jsonl"
     for line_number, row in _read_jsonl(root, path, department, incidents):
+        if verify_stream and row.get("graph_run_id") is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
         run_id = row.get("run_id")
         if not isinstance(run_id, str) or not run_id:
             run_id = _stable_id(department, source_ref, line_number)
@@ -296,8 +351,12 @@ def _run_rows(
                 )
             )
             continue
+        promotion_id = _promotion_id(row)
         candidate = {
-            "id": _stable_id("run", department, run_id),
+            # the stable promotion id collapses re-appended duplicates from
+            # a crash between canonical append and promotion marker
+            "id": (_stable_id("run", department, "promotion", promotion_id)
+                   if promotion_id else _stable_id("run", department, run_id)),
             "department": department,
             "run_id": run_id,
             "graph_run_id": graph_run_id,
@@ -319,10 +378,21 @@ def _run_rows(
     return sorted(latest.values(), key=lambda row: row["id"])
 
 
-def _telemetry_rows(root, path, department, incidents):
+def _telemetry_rows(root, path, department, incidents, signer=None):
     out = []
     source_ref = _relative(root, path)
     for line_number, row in _read_jsonl(root, path, department, incidents):
+        if row.get("loopfactory.graph_run_id") is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
         reasons = row.get("gen_ai.response.finish_reasons")
         try:
             if reasons is not None and (
@@ -386,9 +456,14 @@ def _telemetry_rows(root, path, department, incidents):
                 )
             )
             continue
+        promotion_id = _promotion_id(row)
         out.append(
             {
-                "id": _stable_id("telemetry", department, source_ref, line_number),
+                "id": (_stable_id("telemetry", department, "promotion",
+                                  promotion_id)
+                       if promotion_id
+                       else _stable_id("telemetry", department, source_ref,
+                                       line_number)),
                 "department": safe_values["department"],
                 "run_id": safe_values["run_id"],
                 "graph_run_id": safe_values["graph_run_id"],
@@ -418,10 +493,23 @@ def _telemetry_rows(root, path, department, incidents):
     return out
 
 
-def _score_rows(root, path, department, incidents):
+def _score_rows(root, path, department, incidents, signer=None):
     out = []
     source_ref = _relative(root, path)
     for line_number, row in _read_jsonl(root, path, department, incidents):
+        target = row.get("target_ref")
+        claimed = target.get("graph_run_id") if isinstance(target, dict) else None
+        if claimed is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
         try:
             row = score_records.validate_score(row)
             graph_run_id = _identifier(
@@ -438,9 +526,14 @@ def _score_rows(root, path, department, incidents):
             continue
         target = row["target_ref"]
         value = row["gen_ai.evaluation.score.value"]
+        promotion_id = _promotion_id(row)
         out.append(
             {
-                "id": _stable_id("score", department, source_ref, line_number),
+                "id": (_stable_id("score", department, "promotion",
+                                  promotion_id)
+                       if promotion_id
+                       else _stable_id("score", department, source_ref,
+                                       line_number)),
                 "department": target.get("department") or department,
                 "run_id": target.get("run_id"),
                 "graph_run_id": graph_run_id,
@@ -600,9 +693,15 @@ def _insert_rows(connection: sqlite3.Connection, table: str, rows: Iterable[dict
         )
 
 
-def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, Any]:
+def rebuild(
+    root: str | Path,
+    db_path: str | Path | None = None,
+    signer=None,
+) -> dict[str, Any]:
     root = Path(root).resolve()
     db_path = Path(db_path or root / "estate" / "state" / "rollup.sqlite3")
+    if signer is None:
+        signer = _resolve_verifier()
     incidents: list[dict[str, Any]] = []
     rows: dict[str, list[dict[str, Any]]] = {entity: [] for entity in ENTITIES}
 
@@ -657,11 +756,11 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
                     )
         for run_path in (state_dir / "runs.jsonl", state_dir / "runs-v2.jsonl"):
             if _source_available(root, run_path, department, incidents):
-                rows["run"].extend(_run_rows(root, run_path, department, incidents))
+                rows["run"].extend(_run_rows(root, run_path, department, incidents, signer))
         if _source_available(root, state_dir / "telemetry.jsonl", department, incidents):
-            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents))
+            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents, signer))
         if _source_available(root, state_dir / "scores.jsonl", department, incidents):
-            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents))
+            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents, signer))
         for path in sorted(state_dir.rglob("*")):
             if path.is_symlink():
                 incidents.append(
@@ -712,6 +811,10 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
                 rows["receipt"].extend(_receipt_rows(root, path, "estate", incidents))
     rows["incident"].extend(incidents)
     rows["incident"] = list({row["id"]: row for row in rows["incident"]}.values())
+    # Promotion-id-keyed rows: a crash between canonical append and marker
+    # re-appends the same logical rows — collapse them to exactly one.
+    for entity in ("step_telemetry", "score"):
+        rows[entity] = list({row["id"]: row for row in rows[entity]}.values())
     deduped_runs: dict[str, dict[str, Any]] = {}
     for row in rows["run"]:
         prior = deduped_runs.get(row["id"])
