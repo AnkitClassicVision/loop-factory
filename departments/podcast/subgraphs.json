@@ -43,6 +43,10 @@
      "impl": "runtime/hopper_sensor.py"
     },
     {
+     "id": "N6",
+     "impl": "runtime/comms_reconcile_sensor.py"
+    },
+    {
      "id": "N9",
      "impl": "runtime/record.py"
     }

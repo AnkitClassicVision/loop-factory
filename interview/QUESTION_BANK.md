@@ -114,7 +114,16 @@ controller inputs.
   through the ladder (shadow → draft_only → gated_live → autonomous), and
   governance files stay human-only forever.
 
-## Q15 — Records & memory
+## Q15 — Outbound ask return paths
+
+For EVERY outbound ask class this department will perform, capture:
+- Return path: which named component reads the answers.
+- Return SLA in hours: how long a reply may sit unharvested before escalation.
+Recommend refusing to ship the ask class until both are declared and the return
+path has been executed successfully. An ask without a return path recently
+shipped and cost real replies.
+
+## Q16 — Records & memory
 
 - Local records are always on (runs, heartbeats, STATE, approval queue,
   briefs) under `departments/<name>/state/`.
@@ -124,7 +133,7 @@ controller inputs.
 - Retention: what must never be recorded at all (secrets, PHI, raw message
   bodies)?
 
-## Q16 — Readback
+## Q17 — Readback
 
 Present the concept map. Read the whole understanding back. Capture
 corrections verbatim; fold; repeat until clean; then request INTENT LOCK
