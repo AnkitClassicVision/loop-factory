@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,39 @@ def _quarantine(state_dir: Path, item_id: str, reasons: list[str]) -> None:
             "status": "blocked",
         },
     )
+
+
+def _record_rejected_attempt(
+    state_dir: Path,
+    *,
+    response: dict,
+    bundle: dict,
+    engine: str,
+    round_number: int,
+) -> None:
+    cta_url = response.get("cta_url")
+    urls = _cta_urls(response)
+    offer = bundle.get("offer")
+    offer_cta_url = offer.get("cta_url") if isinstance(offer, dict) else None
+    body = response.get("body")
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "engine": engine,
+        "round": round_number,
+        "cta_url_type": type(cta_url).__name__,
+        "cta_url_present": "cta_url" in response and cta_url is not None,
+        "url_count": len(urls),
+        "equals_offer": len(urls) == 1 and next(iter(urls)) == offer_cta_url,
+        "occurs_in_body": (
+            isinstance(body, str)
+            and isinstance(offer_cta_url, str)
+            and offer_cta_url in body
+        ),
+    }
+    path = state_dir / "rejected_attempts.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def _load_engines(path: Path) -> dict[str, dict[str, Any]]:
@@ -538,6 +572,7 @@ def _prompt(
         if surface.startswith("linkedin_")
         else f"The absolute hard cap is {hard_cap} characters."
     )
+    offer_cta_url = bundle.get("offer", {}).get("cta_url")
     revision = ""
     if prior_draft is not None:
         revision = (
@@ -562,6 +597,9 @@ Surface: {surface}
 Round: {round_number}
 Length: {preferred}
 Use exactly one official HTTP(S) CTA URL. Do not use an em dash.
+CTA CONTRACT: Set output cta_url to the exact offer.cta_url value from the
+SANITIZED BUNDLE: {offer_cta_url}
+Include that same URL verbatim in body. Emit NO other HTTP(S) URL anywhere.
 Do not use these words or phrases: leverage, seamless, holistic, delve,
 game-changer, unlock, revolutionize, transform your practice.
 Avoid time-anchored language such as today, this week, currently, or latest.
@@ -679,13 +717,24 @@ def main(argv: list[str] | None = None) -> int:
         envelope = _extract_json(stdout)
         result = envelope.get("result") if isinstance(envelope, dict) else None
         response = _extract_json(result) if isinstance(result, str) else envelope
-        draft = _normalize_draft(
-            response,
-            surface=args.surface,
-            engine=args.engine,
-            round_number=round_number,
-            bundle=bundle,
-        )
+        try:
+            draft = _normalize_draft(
+                response,
+                surface=args.surface,
+                engine=args.engine,
+                round_number=round_number,
+                bundle=bundle,
+            )
+        except GateBlocked:
+            if isinstance(response, dict):
+                _record_rejected_attempt(
+                    args.state_dir,
+                    response=response,
+                    bundle=bundle,
+                    engine=args.engine,
+                    round_number=round_number,
+                )
+            raise
         if engine_cfg.get("telemetry_contract"):
             draft.update({
                 "model": telemetry["model"], "usage": telemetry["usage"],
