@@ -170,7 +170,8 @@ def test_malformed_or_wrong_schema_timer_snapshot_counts_feed_health(tmp_path):
 
     assert receipt["malformed"] == 1
     assert rows[-1]["kind"] == "feed_health"
-    assert rows[-1]["data"] == {"malformed": 1}
+    assert rows[-1]["data"]["malformed"] == 1
+    assert rows[-1]["data"]["projection_status"] == "incomplete"
 
     timers_path.write_text(
         json.dumps({"schema": "timers-snapshot/v0", "captured_at": CAPTURED_AT, "timers": []}),
@@ -178,7 +179,19 @@ def test_malformed_or_wrong_schema_timer_snapshot_counts_feed_health(tmp_path):
     )
     rows, receipt, _ = _build(tmp_path, timers_path=timers_path)
     assert receipt["malformed"] == 1
-    assert rows[-1]["data"] == {"malformed": 1}
+    assert rows[-1]["data"]["malformed"] == 1
+    assert rows[-1]["data"]["projection_status"] == "incomplete"
+
+
+def test_estate_board_service_rebuilds_rollup_before_boardfeed():
+    service = (
+        Path(__file__).parents[1] / "templates" / "systemd" / "estate-board.service"
+    ).read_text(encoding="utf-8")
+
+    rollup_command = "ExecStart=-/usr/bin/python3 loopfactory.py rollup --root ."
+    boardfeed_command = "ExecStart=/usr/bin/python3 -m factory.boardfeed --repo-root ."
+    assert rollup_command in service
+    assert service.index(rollup_command) < service.index(boardfeed_command)
 
 
 def test_renderer_shows_all_loops_groups_units_status_dots_and_unknowns(tmp_path):

@@ -1,7 +1,22 @@
-"""Build the deterministic estate board feed from department-owned records.
+"""Build the deterministic estate board feed from the canonical rollup.
 
-The aggregator is deliberately pull-only: department state is opened only for
-reading, and the sole write is the atomically replaced estate feed.
+``estate/state/rollup.sqlite3`` is authoritative for every entity it covers:
+departments, runs, step telemetry, scores, incidents, approvals, and receipts.
+The board never reconstructs those entities from department records and never
+falls back to direct reads when the rollup is missing, incomplete, or stale.
+
+The only sanctioned direct-read exceptions are:
+
+* ``heartbeats.jsonl`` for live liveness, because heartbeats are intentionally
+  newer than the periodic rollup and only augment its department status;
+* ``estate/state/timers.json`` for the host timer snapshot, because timers are
+  not part of the rollup schema;
+* ``charter.yaml`` for display metadata such as autonomy mode and objective
+  setpoints, because governance metadata is not part of the reporting rollup.
+
+These exceptions may add live or descriptive context. They may not replace a
+canonical rollup entity. The sole writes are the atomically replaced estate
+feed and its deterministic history snapshot.
 """
 from __future__ import annotations
 
@@ -9,6 +24,8 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
+import stat
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -16,15 +33,56 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from factory.charter_loader import CharterError, load_charter
-from factory.runrecord import validate_record
-
-
 LOGGER = logging.getLogger(__name__)
 UNKNOWN = "unknown"
 ALLOWED_AUTH_CLASSES = frozenset({"oauth_cli", "service_oauth", "local_model"})
 OPEN_APPROVAL_STATUSES = frozenset({"pending_approval", "pending", "open", "queued"})
+CLOSED_INCIDENT_STATUSES = frozenset({"closed", "resolved", "dismissed", "cleared"})
 TIMER_SNAPSHOT_SCHEMA = "timers-snapshot/v1"
 TIMER_RESULTS = frozenset({"success", "failure", UNKNOWN})
+ROLLUP_ENTITIES = (
+    "department",
+    "run",
+    "step_telemetry",
+    "receipt",
+    "score",
+    "incident",
+    "approval",
+)
+ROLLUP_REQUIRED_COLUMNS = {
+    "department": {
+        "id", "epoch", "status", "last_cycle_at", "ok", "source_ref", "schema_version",
+    },
+    "run": {
+        "id", "department", "run_id", "current_step", "status", "ts", "epoch",
+        "source_ref", "schema_version",
+    },
+    "step_telemetry": {
+        "id", "department", "run_id", "step_id", "node", "ts", "operation_name",
+        "provider_name", "request_model", "response_model", "input_tokens",
+        "output_tokens", "finish_reasons_json", "duration_ms", "error_type",
+        "cost_usd", "auth_route", "engine", "estimated", "price_schema_version",
+        "price_effective_date", "telemetry_source", "source_ref", "schema_version",
+    },
+    "receipt": {
+        "id", "department", "run_id", "step_id", "node", "receipt_type", "status",
+        "ts", "verified", "source_ref", "schema_version",
+    },
+    "score": {
+        "id", "department", "run_id", "step_id", "node", "name", "value", "label",
+        "explanation", "source", "judge_model", "config_version", "ts", "source_ref",
+        "schema_version",
+    },
+    "incident": {
+        "id", "department", "code", "severity", "status", "ts", "source_ref",
+        "schema_version",
+    },
+    "approval": {
+        "id", "department", "decision_id", "status", "queued_at", "card_ref",
+        "source_ref", "schema_version",
+    },
+}
+DEFAULT_ROLLUP_MAX_AGE_SECONDS = 15 * 60
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -126,35 +184,6 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
     return rows, malformed
 
 
-def _load_runs(path: Path) -> tuple[list[dict[str, Any]], int, bool]:
-    existed = path.exists()
-    rows, malformed = _read_jsonl(path)
-    valid: list[dict[str, Any]] = []
-    for row in rows:
-        try:
-            record = validate_record(row)
-        except (KeyError, TypeError, ValueError):
-            malformed += 1
-            LOGGER.warning("invalid run-record row: %s", path)
-            continue
-        if _parse_ts(record.get("ts")) is None:
-            malformed += 1
-            LOGGER.warning("run-record row has invalid timestamp: %s", path)
-            continue
-        valid.append(record)
-    return valid, malformed, existed
-
-
-def _count(value: Any) -> int | str:
-    if isinstance(value, bool):
-        return UNKNOWN
-    if isinstance(value, int):
-        return value
-    if isinstance(value, list):
-        return len(value)
-    return UNKNOWN
-
-
 def _scalar(value: Any) -> Any:
     if value is None:
         return UNKNOWN
@@ -163,19 +192,155 @@ def _scalar(value: Any) -> Any:
     return UNKNOWN
 
 
-def _status_line(
-    department: str,
-    state: dict[str, Any] | None,
-    heartbeat: dict[str, Any] | None,
+def _rollup_file_state(
+    db_path: Path, now: datetime, max_age_seconds: int
 ) -> dict[str, Any]:
-    state = state or {}
+    """Describe canonical projection availability without opening unsafe files."""
+    if isinstance(max_age_seconds, bool) or max_age_seconds < 0:
+        raise ValueError("rollup_max_age_seconds must be a non-negative integer")
+    incomplete_path = db_path.with_name(db_path.name + ".incomplete")
+
+    def regular_mtime(path: Path) -> float | None:
+        try:
+            result = path.lstat()
+        except OSError:
+            return None
+        if path.is_symlink() or not stat.S_ISREG(result.st_mode):
+            return None
+        return result.st_mtime
+
+    db_mtime = regular_mtime(db_path)
+    incomplete_mtime = regular_mtime(incomplete_path)
+    if db_mtime is None:
+        return {
+            "status": "incomplete",
+            "reason": (
+                "rollup_rebuild_incomplete"
+                if incomplete_mtime is not None
+                else "rollup_missing"
+            ),
+            "age_s": UNKNOWN,
+            "updated_at": UNKNOWN,
+            "readable": False,
+        }
+
+    age_s = max(0, int(now.timestamp() - db_mtime))
+    updated_at = _iso(datetime.fromtimestamp(db_mtime, tz=timezone.utc))
+    if incomplete_mtime is not None and incomplete_mtime >= db_mtime:
+        status = "incomplete"
+        reason = "newer_incomplete_rebuild"
+    elif age_s > max_age_seconds:
+        status = "stale"
+        reason = "rollup_too_old"
+    else:
+        status = "fresh"
+        reason = "rollup_current"
+    return {
+        "status": status,
+        "reason": reason,
+        "age_s": age_s,
+        "updated_at": updated_at,
+        "readable": True,
+    }
+
+
+def _load_rollup_rows(db_path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Read the published rollup read-only and reject partial schemas."""
+    rows = {entity: [] for entity in ROLLUP_ENTITIES}
+    connection = sqlite3.connect(
+        f"file:{db_path.resolve()}?mode=ro", uri=True
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        missing = set(ROLLUP_ENTITIES) - tables
+        if missing:
+            raise ValueError(
+                "rollup is missing tables: " + ", ".join(sorted(missing))
+            )
+        for entity in ROLLUP_ENTITIES:
+            columns = {
+                row[1]
+                for row in connection.execute(f"PRAGMA table_info({entity})")
+            }
+            missing_columns = ROLLUP_REQUIRED_COLUMNS[entity] - columns
+            if missing_columns:
+                raise ValueError(
+                    f"rollup {entity} is missing columns: "
+                    + ", ".join(sorted(missing_columns))
+                )
+            entity_rows = [
+                dict(row)
+                for row in connection.execute(f"SELECT * FROM {entity} ORDER BY id")
+            ]
+            rows[entity] = entity_rows
+    finally:
+        connection.close()
+    return rows
+
+
+def _canonical_snapshot(
+    db_path: Path, now: datetime, max_age_seconds: int
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any], int]:
+    health = _rollup_file_state(db_path, now, max_age_seconds)
+    empty = {entity: [] for entity in ROLLUP_ENTITIES}
+    if not health["readable"]:
+        return empty, health, 0
+    try:
+        return _load_rollup_rows(db_path), health, 0
+    except (OSError, sqlite3.DatabaseError, ValueError) as exc:
+        LOGGER.warning("unreadable canonical rollup: %s", exc)
+        health.update(
+            {
+                "status": "incomplete",
+                "reason": "rollup_unreadable",
+                "readable": False,
+            }
+        )
+        return empty, health, 1
+
+
+def _latest_heartbeats(
+    department_dirs: Sequence[Path],
+) -> tuple[dict[str, dict[str, Any]], int]:
+    heartbeats: dict[str, dict[str, Any]] = {}
+    malformed = 0
+    for department_dir in department_dirs:
+        rows, count = _read_jsonl(
+            department_dir / "state" / "heartbeats.jsonl"
+        )
+        malformed += count
+        if rows:
+            heartbeats[department_dir.name] = rows[-1]
+    return heartbeats, malformed
+
+
+def _canonical_status_line(
+    department: str,
+    canonical: dict[str, Any] | None,
+    heartbeat: dict[str, Any] | None,
+    charter: dict[str, Any] | None,
+    open_incidents: int,
+) -> dict[str, Any]:
+    canonical = canonical or {}
     heartbeat = heartbeat or {}
-    status_ts = state.get("last_cycle_at")
+    status_ts = canonical.get("last_cycle_at")
     if _parse_ts(status_ts) is None:
         status_ts = heartbeat.get("ts")
     if _parse_ts(status_ts) is None:
         status_ts = UNKNOWN
-    findings = state.get("open_findings")
+    heartbeat_ok = heartbeat.get("ok")
+    canonical_ok = canonical.get("ok")
+    ok = heartbeat_ok if isinstance(heartbeat_ok, bool) else canonical_ok
+    if ok in (0, 1):
+        ok = bool(ok)
+    elif not isinstance(ok, bool):
+        ok = UNKNOWN
     return _line(
         kind="dept_status",
         ts=status_ts,
@@ -183,106 +348,96 @@ def _status_line(
         subject="status",
         event=False,
         data={
-            "autonomy_state": _scalar(state.get("autonomy_state")),
-            "epoch": _scalar(state.get("epoch")),
-            "last_cycle_at": _scalar(state.get("last_cycle_at")),
-            "ok": _scalar(heartbeat.get("ok")),
-            "open_findings": len(findings) if isinstance(findings, list) else UNKNOWN,
-            "escalations": _count(state.get("escalations", heartbeat.get("escalations"))),
+            "autonomy_state": _scalar((charter or {}).get("autonomy_state")),
+            "epoch": _scalar(canonical.get("epoch")),
+            "last_cycle_at": _scalar(canonical.get("last_cycle_at")),
+            "ok": ok,
+            "open_findings": open_incidents,
+            "escalations": UNKNOWN,
         },
     )
 
 
-def _state_andons(
-    department: str, state: dict[str, Any] | None, fallback_ts: str
+def _canonical_andons(
+    incidents: Iterable[dict[str, Any]], now: datetime
 ) -> list[dict[str, Any]]:
-    findings = (state or {}).get("open_findings")
-    if not isinstance(findings, list):
-        return []
     output: list[dict[str, Any]] = []
-    seen: defaultdict[str, int] = defaultdict(int)
-    for finding in findings:
-        if not isinstance(finding, dict):
+    for incident in incidents:
+        if incident.get("status") in CLOSED_INCIDENT_STATUSES:
             continue
-        code = str(finding.get("code", UNKNOWN))
-        subject = str(finding.get("fingerprint") or code)
-        ordinal = seen[subject]
-        seen[subject] += 1
-        if ordinal:
-            subject = f"{subject}-{ordinal}"
-        ts = finding.get("ts") or finding.get("observed_at") or fallback_ts
+        department = incident.get("department") or "estate"
+        ts = incident.get("ts")
         if _parse_ts(ts) is None:
-            ts = fallback_ts
+            ts = _iso(now)
         output.append(
             _line(
                 kind="andon",
                 ts=ts,
                 department=department,
-                subject=subject,
+                subject=str(incident["id"]),
                 event=True,
                 data={
-                    "severity": _scalar(finding.get("severity")),
-                    "code": code,
-                    "detail": _scalar(finding.get("detail")),
-                    "observed": _scalar(finding.get("observed")),
-                    "setpoint": _scalar(finding.get("setpoint")),
+                    "severity": _scalar(incident.get("severity")),
+                    "code": _scalar(incident.get("code")),
+                    "detail": UNKNOWN,
+                    "observed": UNKNOWN,
+                    "setpoint": UNKNOWN,
                 },
             )
         )
     return output
 
 
-def _run_andons(department: str, records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _telemetry_policy_andons(
+    telemetry: Iterable[dict[str, Any]], now: datetime
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
-    for record in records:
-        ts = _iso(_parse_ts(record["ts"]))  # validated by _load_runs
-        run_id = record["run_id"]
-        if record.get("status") == "blocked" and record.get("auth_class") == "blocked":
-            output.append(
-                _line(
-                    kind="andon",
-                    ts=ts,
-                    department=department,
-                    subject=f"AUTH-{run_id}",
-                    event=True,
-                    data={
-                        "severity": "breach",
-                        "code": "AUTH",
-                        "detail": "authentication lane blocked",
-                        "observed": "blocked",
-                        "setpoint": "authorized subscription lane",
-                        "run_id": run_id,
-                    },
-                )
+    seen: set[tuple[str, str, str]] = set()
+    for row in telemetry:
+        auth_route = row.get("auth_route")
+        if auth_route in ALLOWED_AUTH_CLASSES:
+            continue
+        code = "AUTH" if auth_route == "blocked" else "POLICY"
+        department = row.get("department") or "estate"
+        run_id = row.get("run_id") or row["id"]
+        key = (department, str(run_id), code)
+        if key in seen:
+            continue
+        seen.add(key)
+        ts = row.get("ts")
+        if _parse_ts(ts) is None:
+            ts = _iso(now)
+        output.append(
+            _line(
+                kind="andon",
+                ts=ts,
+                department=department,
+                subject=f"{code}-{run_id}",
+                event=True,
+                data={
+                    "severity": "breach",
+                    "code": code,
+                    "detail": (
+                        "authentication lane blocked"
+                        if code == "AUTH"
+                        else "metered model lane is forbidden"
+                    ),
+                    "observed": _scalar(auth_route),
+                    "setpoint": "subscription_oauth_only",
+                    "run_id": _scalar(row.get("run_id")),
+                },
             )
-        if record.get("metered_violation"):
-            output.append(
-                _line(
-                    kind="andon",
-                    ts=ts,
-                    department=department,
-                    subject=f"POLICY-{run_id}",
-                    event=True,
-                    data={
-                        "severity": "breach",
-                        "code": "POLICY",
-                        "detail": "metered model lane is forbidden",
-                        "observed": "metered_forbidden",
-                        "setpoint": "subscription_oauth_only",
-                        "run_id": run_id,
-                    },
-                )
-            )
+        )
     return output
 
 
-def _active_runs(
-    department: str, records: Iterable[dict[str, Any]], now: datetime
+def _canonical_active_runs(
+    records: Iterable[dict[str, Any]], now: datetime
 ) -> list[dict[str, Any]]:
     lower = now - timedelta(hours=24)
     output: list[dict[str, Any]] = []
     for record in records:
-        record_dt = _parse_ts(record["ts"])
+        record_dt = _parse_ts(record.get("ts"))
         if record_dt is None or not (lower <= record_dt <= now):
             continue
         ts = _iso(record_dt)
@@ -290,16 +445,16 @@ def _active_runs(
             _line(
                 kind="active_run",
                 ts=ts,
-                department=department,
+                department=record["department"],
                 subject=record["run_id"],
                 event=True,
                 data={
                     "run_id": record["run_id"],
-                    "node": record["node"],
-                    "status": record["status"],
-                    "attempt": record["attempt"],
-                    "engine": _scalar(record.get("engine")),
-                    "model": _scalar(record.get("model")),
+                    "node": _scalar(record.get("current_step")),
+                    "status": _scalar(record.get("status")),
+                    "attempt": UNKNOWN,
+                    "engine": UNKNOWN,
+                    "model": UNKNOWN,
                     "ts": ts,
                 },
             )
@@ -307,66 +462,89 @@ def _active_runs(
     return output
 
 
-def _sum_measurement(records: list[dict[str, Any]], parent: str, field: str) -> int | str:
-    values: list[int] = []
-    for record in records:
-        container = record.get(parent)
-        if container is None:
-            # A script node made zero model calls — that is a measured zero,
-            # not an unknown; it must not poison the department's sums.
-            continue
-        value = container.get(field) if isinstance(container, dict) else None
-        if isinstance(value, bool) or not isinstance(value, int):
-            return UNKNOWN
-        values.append(value)
+def _sum_canonical(rows: Iterable[dict[str, Any]], field: str) -> int | str:
+    values = [row.get(field) for row in rows]
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        return UNKNOWN
     return sum(values)
 
 
-def _daily_metrics(
+def _percent_pass(scores: Sequence[dict[str, Any]]) -> int | float | str:
+    if not scores:
+        return UNKNOWN
+    rate = 100 * sum(row.get("label") == "pass" for row in scores) / len(scores)
+    return int(rate) if rate.is_integer() else round(rate, 1)
+
+
+def _canonical_metrics(
     department: str,
-    records: list[dict[str, Any]],
+    runs: Sequence[dict[str, Any]],
+    telemetry: Sequence[dict[str, Any]],
+    scores: Sequence[dict[str, Any]],
+    receipts: Sequence[dict[str, Any]],
     now: datetime,
-    source_exists: bool,
+    source_available: bool,
 ) -> list[dict[str, Any]]:
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    daily = [record for record in records if start <= _parse_ts(record["ts"]) <= now]
-    # Script nodes carry auth_class None and MUST count as runs; only
-    # policy-violating records are excluded from stats (they become andons).
-    clean = [
-        record
-        for record in daily
-        if not record.get("metered_violation")
-        and (
-            record.get("auth_class") is None
-            or record.get("auth_class") in ALLOWED_AUTH_CLASSES
-        )
+    forbidden_run_ids = {
+        row.get("run_id")
+        for row in telemetry
+        if row.get("department") == department
+        and row.get("auth_route") not in ALLOWED_AUTH_CLASSES
+    }
+    daily_runs = [
+        row
+        for row in runs
+        if row.get("department") == department
+        and row.get("run_id") not in forbidden_run_ids
+        and (stamp := _parse_ts(row.get("ts"))) is not None
+        and start <= stamp <= now
+    ]
+    daily_telemetry = [
+        row
+        for row in telemetry
+        if row.get("department") == department
+        and row.get("auth_route") in ALLOWED_AUTH_CLASSES
+        and (stamp := _parse_ts(row.get("ts"))) is not None
+        and start <= stamp <= now
+    ]
+    daily_scores = [
+        row
+        for row in scores
+        if row.get("department") == department
+        and (stamp := _parse_ts(row.get("ts"))) is not None
+        and start <= stamp <= now
     ]
     period = start.date().isoformat()
     ts = _iso(now)
-    if source_exists:
-        summary_data: dict[str, Any] = {
-            "metric_type": "daily_rollup",
-            "period": period,
-            "runs": len(clean),
-            "ok": sum(record["status"] == "ok" for record in clean),
-            "error": sum(record["status"] == "error" for record in clean),
-            "blocked": sum(record["status"] == "blocked" for record in clean),
-            "tokens_in": _sum_measurement(clean, "usage", "input_tokens"),
-            "tokens_out": _sum_measurement(clean, "usage", "output_tokens"),
-            "model_calls": _sum_measurement(clean, "cost", "model_calls"),
-        }
-    else:
-        summary_data = {
-            "metric_type": "daily_rollup",
-            "period": period,
-            "runs": UNKNOWN,
-            "ok": UNKNOWN,
-            "error": UNKNOWN,
-            "blocked": UNKNOWN,
-            "tokens_in": UNKNOWN,
-            "tokens_out": UNKNOWN,
-            "model_calls": UNKNOWN,
-        }
+    summary = {
+        "metric_type": "daily_rollup",
+        "period": period,
+        "runs": len(daily_runs),
+        "ok": sum(row.get("status") == "ok" for row in daily_runs),
+        "error": sum(row.get("status") == "error" for row in daily_runs),
+        "blocked": sum(row.get("status") == "blocked" for row in daily_runs),
+        "tokens_in": _sum_canonical(daily_telemetry, "input_tokens"),
+        "tokens_out": _sum_canonical(daily_telemetry, "output_tokens"),
+        "model_calls": len(daily_telemetry),
+        "evaluator_pass_rate": _percent_pass(daily_scores),
+    }
+    if not source_available:
+        summary.update(
+            {
+                key: UNKNOWN
+                for key in (
+                    "runs",
+                    "ok",
+                    "error",
+                    "blocked",
+                    "tokens_in",
+                    "tokens_out",
+                    "model_calls",
+                    "evaluator_pass_rate",
+                )
+            }
+        )
     output = [
         _line(
             kind="metrics",
@@ -374,22 +552,28 @@ def _daily_metrics(
             department=department,
             subject=f"daily-{period}",
             event=False,
-            data=summary_data,
+            data=summary,
         )
     ]
 
-    groups: defaultdict[tuple[Any, Any, Any], list[dict[str, Any]]] = defaultdict(list)
-    for record in clean:
-        # Lane telemetry describes model-calling lanes only; script nodes
-        # (engine None) count in the rollup above but have no lane row.
-        if record.get("engine") is None:
-            continue
-        groups[(record.get("engine"), record.get("model"), record.get("auth_class"))].append(record)
-    for (engine, model, auth_class), lane_records in sorted(
-        groups.items(), key=lambda item: tuple("" if value is None else str(value) for value in item[0])
+    lanes: defaultdict[tuple[Any, Any, Any], list[dict[str, Any]]] = defaultdict(list)
+    for row in daily_telemetry:
+        lanes[
+            (
+                row.get("engine"),
+                row.get("response_model") or row.get("request_model"),
+                row.get("auth_route"),
+            )
+        ].append(row)
+    for (engine, model, auth_route), lane_rows in sorted(
+        lanes.items(),
+        key=lambda item: tuple(
+            "" if value is None else str(value) for value in item[0]
+        ),
     ):
         subject = "lane-" + "-".join(
-            str(value) if value is not None else UNKNOWN for value in (engine, model, auth_class)
+            str(value) if value is not None else UNKNOWN
+            for value in (engine, model, auth_route)
         )
         output.append(
             _line(
@@ -402,15 +586,105 @@ def _daily_metrics(
                     "metric_type": "lane_telemetry",
                     "lane": _scalar(engine),
                     "model": _scalar(model),
-                    "auth_class": _scalar(auth_class),
-                    "calls": _sum_measurement(lane_records, "cost", "model_calls"),
-                    "tokens_in": _sum_measurement(lane_records, "usage", "input_tokens"),
-                    "tokens_out": _sum_measurement(lane_records, "usage", "output_tokens"),
+                    "auth_class": _scalar(auth_route),
+                    "calls": len(lane_rows),
+                    "tokens_in": _sum_canonical(lane_rows, "input_tokens"),
+                    "tokens_out": _sum_canonical(lane_rows, "output_tokens"),
                     "period": period,
                 },
             )
         )
+
+    department_scores = [
+        row for row in scores if row.get("department") == department
+    ]
+    output.append(
+        _line(
+            kind="metrics",
+            ts=ts,
+            department=department,
+            subject="canonical-scores",
+            event=False,
+            data={
+                "group": "canonical scores",
+                "total": len(department_scores) if source_available else UNKNOWN,
+                "pass": (
+                    sum(row.get("label") == "pass" for row in department_scores)
+                    if source_available
+                    else UNKNOWN
+                ),
+                "fail": (
+                    sum(row.get("label") == "fail" for row in department_scores)
+                    if source_available
+                    else UNKNOWN
+                ),
+                "pass_rate": (
+                    _percent_pass(department_scores) if source_available else UNKNOWN
+                ),
+            },
+        )
+    )
+    department_receipts = [
+        row for row in receipts if row.get("department") == department
+    ]
+    output.append(
+        _line(
+            kind="metrics",
+            ts=ts,
+            department=department,
+            subject="canonical-receipts",
+            event=False,
+            data={
+                "group": "canonical receipts",
+                "total": len(department_receipts) if source_available else UNKNOWN,
+                "verified": (
+                    sum(row.get("verified") == 1 for row in department_receipts)
+                    if source_available
+                    else UNKNOWN
+                ),
+                "unverified": (
+                    sum(row.get("verified") != 1 for row in department_receipts)
+                    if source_available
+                    else UNKNOWN
+                ),
+            },
+        )
+    )
     return output
+
+
+def _canonical_approvals(
+    rows: Iterable[dict[str, Any]], now: datetime
+) -> tuple[list[dict[str, Any]], int]:
+    output: list[dict[str, Any]] = []
+    malformed = 0
+    for row in rows:
+        if row.get("status") not in OPEN_APPROVAL_STATUSES:
+            continue
+        queued_dt = _parse_ts(row.get("queued_at"))
+        if queued_dt is None:
+            malformed += 1
+            continue
+        queued_at = _iso(queued_dt)
+        subject = row.get("card_ref") or row.get("decision_id") or row["id"]
+        data = {
+            "status": row["status"],
+            "queued_at": queued_at,
+            "age_s": max(0, int((now - queued_dt).total_seconds())),
+        }
+        if row.get("card_ref") is not None:
+            data["card_ref"] = row["card_ref"]
+        output.append(
+            _line(
+                kind="approval",
+                ts=queued_at,
+                department=row.get("department") or "estate",
+                subject=str(subject),
+                event=True,
+                data=data,
+            )
+        )
+    return output, malformed
 
 
 def _objective_metrics(
@@ -449,40 +723,6 @@ def _objective_metrics(
             )
         )
     return output
-
-
-def _approvals(
-    department: str, rows: Iterable[dict[str, Any]], now: datetime
-) -> tuple[list[dict[str, Any]], int]:
-    output: list[dict[str, Any]] = []
-    malformed = 0
-    for index, row in enumerate(rows):
-        if row.get("status") not in OPEN_APPROVAL_STATUSES:
-            continue
-        queued_dt = _parse_ts(row.get("queued_at"))
-        if queued_dt is None:
-            malformed += 1
-            continue
-        queued_at = _iso(queued_dt)
-        subject = row.get("card_ref") or row.get("decision_id") or row.get("id") or f"row-{index}"
-        data = {
-            "status": row["status"],
-            "queued_at": queued_at,
-            "age_s": max(0, int((now - queued_dt).total_seconds())),
-        }
-        if row.get("card_ref") is not None:
-            data["card_ref"] = _scalar(row.get("card_ref"))
-        output.append(
-            _line(
-                kind="approval",
-                ts=queued_at,
-                department=department,
-                subject=str(subject),
-                event=True,
-                data=data,
-            )
-        )
-    return output, malformed
 
 
 def _load_charter(path: Path, department: str) -> tuple[dict[str, Any] | None, int]:
@@ -677,40 +917,85 @@ def build_feed(
     now: str | datetime | None = None,
     timers_path: str | Path | None = None,
     history_dir: str | Path | None = None,
+    rollup_path: str | Path | None = None,
+    rollup_max_age_seconds: int = DEFAULT_ROLLUP_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
-    """Aggregate department records, atomically write the feed, and return its receipt."""
+    """Render canonical rollup state plus sanctioned live metadata exceptions."""
     repo_root = Path(repo_root)
     output_path = Path(out) if out is not None else repo_root / "estate" / "state" / "board-feed.ndjson"
     now_dt = _now(now)
     feed: list[dict[str, Any]] = []
     malformed = 0
     department_dirs = _departments(repo_root, department)
+    canonical_path = (
+        Path(rollup_path)
+        if rollup_path is not None
+        else repo_root / "estate" / "state" / "rollup.sqlite3"
+    )
+    canonical, projection, count = _canonical_snapshot(
+        canonical_path, now_dt, rollup_max_age_seconds
+    )
+    malformed += count
+    if department is not None:
+        for entity, rows in canonical.items():
+            if entity == "department":
+                canonical[entity] = [row for row in rows if row.get("id") == department]
+            else:
+                canonical[entity] = [
+                    row for row in rows if row.get("department") == department
+                ]
 
-    for department_dir in department_dirs:
-        name = department_dir.name
-        state_dir = department_dir / "state"
-        state, count = _read_json(state_dir / "STATE.json")
-        malformed += count
-        heartbeat_rows, count = _read_jsonl(state_dir / "heartbeats.jsonl")
-        malformed += count
-        heartbeat = heartbeat_rows[-1] if heartbeat_rows else None
-        records, count, runs_exist = _load_runs(state_dir / "runs-v2.jsonl")
-        malformed += count
-        approval_rows, count = _read_jsonl(state_dir / "approval_queue.jsonl")
-        malformed += count
-        charter, count = _load_charter(department_dir / "charter.yaml", name)
-        malformed += count
+    directory_by_name = {path.name: path for path in department_dirs}
+    canonical_departments = {
+        row["id"]: row
+        for row in canonical["department"]
+        if row.get("id") != "estate"
+    }
+    names = sorted(canonical_departments)
+    heartbeat_dirs = [
+        directory_by_name[name] for name in names if name in directory_by_name
+    ]
+    heartbeats, count = _latest_heartbeats(heartbeat_dirs)
+    malformed += count
+    open_incidents: defaultdict[str, int] = defaultdict(int)
+    for incident in canonical["incident"]:
+        if incident.get("status") not in CLOSED_INCIDENT_STATUSES:
+            open_incidents[incident.get("department") or "estate"] += 1
 
-        status = _status_line(name, state, heartbeat)
-        feed.append(status)
-        feed.extend(_state_andons(name, state, status["ts"]))
-        feed.extend(_run_andons(name, records))
-        feed.extend(_active_runs(name, records, now_dt))
-        approvals, count = _approvals(name, approval_rows, now_dt)
-        malformed += count
-        feed.extend(approvals)
-        feed.extend(_daily_metrics(name, records, now_dt, runs_exist))
+    for name in names:
+        charter = None
+        department_dir = directory_by_name.get(name)
+        if department_dir is not None:
+            charter, count = _load_charter(department_dir / "charter.yaml", name)
+            malformed += count
+        feed.append(
+            _canonical_status_line(
+                name,
+                canonical_departments.get(name),
+                heartbeats.get(name),
+                charter,
+                open_incidents[name],
+            )
+        )
         feed.extend(_objective_metrics(name, charter, now_dt))
+        feed.extend(
+            _canonical_metrics(
+                name,
+                canonical["run"],
+                canonical["step_telemetry"],
+                canonical["score"],
+                canonical["receipt"],
+                now_dt,
+                projection["readable"],
+            )
+        )
+
+    feed.extend(_canonical_andons(canonical["incident"], now_dt))
+    feed.extend(_telemetry_policy_andons(canonical["step_telemetry"], now_dt))
+    feed.extend(_canonical_active_runs(canonical["run"], now_dt))
+    approvals, count = _canonical_approvals(canonical["approval"], now_dt)
+    malformed += count
+    feed.extend(approvals)
 
     timer_source = (
         Path(timers_path)
@@ -730,7 +1015,14 @@ def build_feed(
             department="estate",
             subject="aggregate",
             event=False,
-            data={"malformed": malformed},
+            data={
+                "malformed": malformed,
+                "projection_status": projection["status"],
+                "projection_reason": projection["reason"],
+                "rollup_age_s": projection["age_s"],
+                "rollup_max_age_s": rollup_max_age_seconds,
+                "rollup_updated_at": projection["updated_at"],
+            },
         )
     )
     content = "".join(
@@ -744,16 +1036,25 @@ def build_feed(
     )
     history_path = history_root / f"{now_dt.date().isoformat()}.json"
     history = _history_snapshot(feed, now_dt.date().isoformat())
-    _atomic_write(
-        history_path,
-        json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
-    )
+    if projection["status"] == "fresh":
+        _atomic_write(
+            history_path,
+            json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
+        )
+    elif not history_path.exists():
+        history["projection_status"] = projection["status"]
+        history["projection_reason"] = projection["reason"]
+        _atomic_write(
+            history_path,
+            json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
+        )
     return {
-        "departments": len(department_dirs),
+        "departments": len(names),
         "lines": len(feed),
         "loops": loops,
         "malformed": malformed,
         "history": str(history_path),
+        "projection_status": projection["status"],
     }
 
 
@@ -765,6 +1066,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--now", default=None)
     parser.add_argument("--timers-path", default=None)
     parser.add_argument("--history-dir", default=None)
+    parser.add_argument("--rollup-path", default=None)
+    parser.add_argument(
+        "--rollup-max-age-seconds",
+        type=int,
+        default=DEFAULT_ROLLUP_MAX_AGE_SECONDS,
+    )
     args = parser.parse_args(argv)
     try:
         receipt = build_feed(
@@ -774,6 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
             now=args.now,
             timers_path=args.timers_path,
             history_dir=args.history_dir,
+            rollup_path=args.rollup_path,
+            rollup_max_age_seconds=args.rollup_max_age_seconds,
         )
     except ValueError as exc:
         parser.error(str(exc))
