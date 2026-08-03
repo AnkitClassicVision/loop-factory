@@ -141,6 +141,10 @@
      "impl": "runtime/assemble_weekly_digest.py"
     },
     {
+     "id": "N5",
+     "impl": "runtime/objectives_sensor.py"
+    },
+    {
      "id": "N9",
      "impl": "runtime/record.py"
     }

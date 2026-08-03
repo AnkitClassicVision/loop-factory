@@ -248,7 +248,7 @@ if test -f "${STATE_DIR}/BREAKER_${SURFACE}"; then
   exit 2
 fi
 
-for node in inventory_backcatalog select_candidate assemble_context draft_post qa_post guards kernel_bridge dispatch delivery_verify record v2_record create_review_card harvest_review_asks linear_read_comments; do
+for node in inventory_backcatalog select_candidate assemble_context draft_post qa_post guards kernel_bridge dispatch delivery_verify objectives_sensor record v2_record create_review_card harvest_review_asks linear_read_comments; do
   require_node "${node}"
 done
 
@@ -572,6 +572,11 @@ run_step "N7-delivery-verify" "${VERIFY_OUT}" \
   python3 "${RUNTIME_DIR}/delivery_verify.py" \
   --state-dir "${STATE_DIR}" --receipt "${DISPATCH_OUT}" \
   --simulate-sink "${SIMULATE_SINK}" --out "${VERIFY_OUT}"
+
+OBJECTIVES_OUT="${RUN_DIR}/N5-objectives-sensor.json"
+run_step "N5-objectives-sensor" "${OBJECTIVES_OUT}" \
+  python3 "${RUNTIME_DIR}/objectives_sensor.py" \
+  --root "${REPO}" --out "${OBJECTIVES_OUT}"
 
 RECORD_OUT="${RUN_DIR}/N9-record.json"
 run_step "N9-record" "${RECORD_OUT}" \

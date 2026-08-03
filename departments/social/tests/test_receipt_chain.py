@@ -168,7 +168,8 @@ def test_full_happy_path_receipts_are_unchanged(shell_fixture):
         "S8-model-token.json", "N4-draft-r1-raw.json", "N4-draft-r1.json",
         "N5-qa-r1.json", "S4-S5-dispatch-token.json",
         "S6-kill-pre-dispatch.json", "S7-breaker-pre-dispatch.json",
-        "N6-dispatch.json", "N7-delivery-verification.json", "N9-record.json",
+        "N6-dispatch.json", "N7-delivery-verification.json",
+        "N5-objectives-sensor.json", "N9-record.json",
         "N10-review-card.json", "N11-review-harvest.json",
     }
     assert names == expected

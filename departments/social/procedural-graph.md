@@ -66,7 +66,8 @@ Delivery rule: while the posting class is shadow/draft_only, dispatch runs
 [T] daily trigger → S1(post identity join) → N1 pull_zernio_analytics (ALL posts,
   incl. podcast dept) → N2 pull_call_joins (calendar/HubSpot) → N3 compare_charter
   (setpoints, caps, faux-work, gaming signals) → N4 assemble_weekly_digest
-  (links to every published post; unwired-seam notice) → N9 record
+  (links to every published post; unwired-seam notice) → N5 objectives_sensor
+  (owner-ratified contracts + separate measure-first baselines) → N9 record
 ```
 
 | # | Node | type | impl | action_class / autonomy | QA check (executed) | model | Traces |
@@ -75,6 +76,7 @@ Delivery rule: while the posting class is shadow/draft_only, dispatch runs
 | N2 | pull_call_joins | Read | SCRIPT | internal_read / shadow | join independent of dept classifiers | none | C6 (Q4) |
 | N3 | compare_charter | Score | SCRIPT | internal_read / shadow | thresholds from charter, not code constants | none | C6, C9 |
 | N4 | assemble_weekly_digest | Transform | SCRIPT | internal_write / shadow | digest lists EVERY platform-verified post; sanitized (no bodies of DMs/comments) | none | C16, C18 (Q13, Q15) |
+| N5 | objectives_sensor | Score | SCRIPT | internal_write / shadow | objective values come only from readable persisted evidence; unknowns omitted, never zero-filled; measure-first metrics go only to baseline records | none | C6, C12, C13, C15, C16 (Q4, Q12, Q13) |
 | N9 | record | Record | SCRIPT | internal_write / shadow | runs row appended | none | factory law |
 
 ## SG-LEARN — learn-and-adapt proposal lane (flags only, never self-modifies)
