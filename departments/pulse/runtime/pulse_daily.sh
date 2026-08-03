@@ -1,35 +1,65 @@
 #!/usr/bin/env bash
-# GATED enable; SHADOW-only; standard loop-factory trigger.
-# Copy to departments/pulse/runtime/pulse_daily.sh, replace
-# pulse and /mnt/d_drive/repos/loop-factory, review the commands, then explicitly enable its
-# systemd timer (templates/systemd/). Never auto-enabled by the factory.
-set -euo pipefail
+# Hand-invoked, shadow-only SG-DIGEST cycle. No dispatch or network effects.
+set -uo pipefail
 
-REPO="/mnt/d_drive/repos/loop-factory"
-DEPARTMENT="pulse"
-STATE_DIR="${REPO}/departments/${DEPARTMENT}/state"
-QUEUE="${STATE_DIR}/approval_queue.jsonl"
-OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+DEPT_ROOT="departments/pulse"
+if [[ "${1:-}" == "--root" ]]; then
+  [[ -n "${2:-}" ]] || { echo "--root requires a path" >&2; exit 2; }
+  DEPT_ROOT="$2"
+  shift 2
+fi
+[[ $# -eq 0 ]] || { echo "unexpected arguments" >&2; exit 2; }
 
-mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
+STATE_DIR="${DEPT_ROOT}/state"
+mkdir -p "${STATE_DIR}"
+CYCLE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+EPOCH="$(date -u +%s)"
 
-# 1) Pull adapter (department-specific, read-only): write the normalized batch
-#    the worker loop expects. Replace with your department's pull node.
-# python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/pull_adapter.py" --output "${STATE_DIR}/batch.jsonl"
+append_run_record() {
+  local node="$1" status="$2" duration_ms="$3" artifact="$4"
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 -c '
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from factory.runrecord import append_record, build_record, new_run_id
+state_dir, node, status, duration_ms, artifact, cycle_id, epoch = sys.argv[1:]
+record = build_record(
+    schema="run-record/v2", rev=1, run_id=new_run_id(), department="pulse",
+    node=node, epoch=int(epoch), ts=datetime.now(timezone.utc).isoformat(),
+    attempt=1, round=None, release=None,
+    trigger={"kind": "manual", "id": cycle_id, "dedupe_key": cycle_id + node},
+    engine=None, model=None, auth_class=None, usage=None,
+    cost={"lane": "flat_subscription", "model_calls": 0},
+    duration_ms=int(duration_ms), status=status, errors=[], artifacts=[artifact],
+    receipts=[], evaluator=None, approval=None, external_actions_taken=0,
+)
+append_record(Path(state_dir), record)
+' "${STATE_DIR}" "$node" "$status" "$duration_ms" "$artifact" "$CYCLE_ID" "$EPOCH"
+}
 
-# 2) Worker loop (SHADOW: drafts and queues, never sends). Launched through the
-#    confinement launcher so the department holds no credentials.
-# python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/run_loop.py" --state-dir "${STATE_DIR}" --shadow
+run_node() {
+  local node="$1" script="$2" receipt="$3"
+  local start end duration status
+  start="$(date +%s%N)"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 "${SCRIPT_DIR}/${script}" --root "${DEPT_ROOT}"
+  local node_rc=$?
+  end="$(date +%s%N)"
+  duration="$(( (end - start) / 1000000 ))"
+  status="ok"
+  if [[ $node_rc -ne 0 || ! -f "$receipt" ]]; then
+    status="error"
+  fi
+  append_run_record "$node" "$status" "$duration" "$receipt" || exit $?
+  if [[ "$status" != "ok" ]]; then
+    [[ $node_rc -ne 0 ]] && exit "$node_rc"
+    exit 1
+  fi
+}
 
-# 3) Manager cycle (deterministic; charter is the source of truth).
-python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}"
-
-# 4) Publish pending approvals to the human-in-the-loop outbox.
-python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
-
-# 5) Regenerate the estate feed, estate board, and this department's board.
-python3 -m factory.timersense --out "${REPO}/estate/state/timers.json" --tolerate-missing
-python3 -m factory.boardfeed --repo-root "${REPO}"
-python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
-# Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
-# Legacy department flag replaced by tabs: --department "${DEPARTMENT}"
+run_node N1 intake_scan.py "${STATE_DIR}/intake.json"
+run_node N3 clarify_ask.py "${STATE_DIR}/asks.jsonl"
+run_node N2 digest_build.py "${STATE_DIR}/digest-$(date -u +%F).md"
+run_node N4 objectives_sensor.py "${STATE_DIR}/objectives_observed.json"
