@@ -57,7 +57,13 @@ def main():
     run(["git", "add", "-A"])
     changed = [p for p in run(["git", "diff", "--cached", "--name-only"]).stdout.split()
                if p not in HARNESS_FILES]
-    stray = [p for p in changed if p not in owned]
+
+    def is_owned(path: str) -> bool:
+        # An owned entry names either an exact file or a directory prefix
+        # (fixture dirs): "tests/fixtures/x" owns "tests/fixtures/x/a.json".
+        return any(path == o or path.startswith(o.rstrip("/") + "/") for o in owned)
+
+    stray = [p for p in changed if not is_owned(p)]
     if stray:
         fail(
             "these files were changed but are not in this lane's owned list: %s\n"
@@ -100,11 +106,19 @@ def main():
     # "record, never raise" prove their failure path via exit codes and
     # *_failed action assertions, not exceptions (prep-bridge false-red,
     # 2026-07-31 — the heuristic must not force exception-style APIs).
+    # Two signals count: failure-shaped assertions in added lines, and test
+    # NAMES that declare a negative case (test_negative_*, malformed, never_,
+    # etc.) — specs mandate named negatives, and assertion-vocabulary guessing
+    # produced two false-red rounds in one day (2026-07-31).
     negatives = re.findall(
         r"^\+.*(pytest\.raises|assert_blocked|\[.passed.\]\s*is\s*False|"
         r"passed.*is\s*False|must\s+(?:block|fail|raise|halt)|refus|"
         r"SystemExit|exit_?code|returncode|_failed\b|invalid_)",
         diff, re.M | re.I)
+    negatives += [t for t in added_tests if re.search(
+        r"negative|malformed|invalid|forged|tamper|poison|unknown|missing|"
+        r"unreadable|never|not_|rejects?_|blocks?_|refuses?_|fails?_|stalled",
+        t, re.I)]
     if not negatives:
         fail(
             "the new tests contain no negative case. Nothing in the diff raises, "

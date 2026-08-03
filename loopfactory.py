@@ -269,6 +269,23 @@ def main() -> int:
     p = sub.add_parser("check", help="factory self-test (compileall + pytest)")
     p.set_defaults(fn=cmd_check)
 
+    # Ultimate-department-creation gate commands (runbook Stages 3/7/8/11).
+    # Dispatched BEFORE parse_args: each module owns its own argparse via
+    # main(argv), and argparse.REMAINDER cannot carry leading optionals.
+    gates = {
+        "creation-contract": ("creation_contract", "Stage 3: check a department-creation-contract.yaml"),
+        "objectives": ("objectives_verify", "Stage 7: verify chartered objectives vs observations"),
+        "cadence": ("cadence", "Stage 8: check a cadence/alert contract + rendered units"),
+        "prove": ("prove", "Stage 11: run the post-integration proof drills"),
+    }
+    for name, (_m, help_text) in gates.items():
+        sub.add_parser(name, help=help_text, add_help=False)
+    if len(sys.argv) > 1 and sys.argv[1] in gates:
+        module = gates[sys.argv[1]][0]
+        # Package import, not _load(): file-based exec skips sys.modules
+        # registration, which py3.14 dataclasses require at class creation.
+        return importlib.import_module(f"factory.{module}").main(sys.argv[2:])
+
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     return args.fn(args)
