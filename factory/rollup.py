@@ -18,7 +18,7 @@ from factory import scores as score_records
 
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = "rollup/v1"
+SCHEMA_VERSION = "rollup/v2"  # v2: graph_run_id join columns (review R1)
 ENTITIES = (
     "department",
     "run",

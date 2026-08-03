@@ -3,17 +3,22 @@ from __future__ import annotations
 
 import copy
 import json
-import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from kernel import graph_context as _graph_context
 from kernel.jsonl_store import append_jsonl
 
 
 SCHEMA_VERSION = "score-record/v1"
-# Runner-injected correlation key (canonical name: kernel/capabilities.py).
-GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
+
+
+def _load_graph_context():
+    """The ambient runner-signed identity, or None outside the runner.
+    Malformed/expired/forged (where checkable) tokens raise — fail-closed."""
+    return _graph_context.load_context(now=time.time())
 SOURCES = frozenset({"script", "judge", "human"})
 FIELDS = frozenset(
     {
@@ -107,15 +112,13 @@ def build_score(
     target_ref: dict[str, Any],
     ts: str | None = None,
 ) -> dict[str, Any]:
-    # Inside a graph-runner node process the injected identity is the default;
-    # an explicitly supplied graph_run_id is left for append_score to gate.
-    env_graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
-    if (
-        isinstance(target_ref, dict)
-        and "graph_run_id" not in target_ref
-        and env_graph_run_id is not None
-    ):
-        target_ref = {**target_ref, "graph_run_id": env_graph_run_id}
+    # Inside a graph-runner node process the runner-signed identity is the
+    # default; an explicitly supplied graph_run_id is left for append_score
+    # to gate against the token.
+    if isinstance(target_ref, dict) and "graph_run_id" not in target_ref:
+        context = _load_graph_context()
+        if context is not None:
+            target_ref = {**target_ref, "graph_run_id": context["run_id"]}
     return validate_score(
         {
             "gen_ai.evaluation.name": name,
@@ -136,16 +139,19 @@ def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
     """Validate and append one score to ``state/scores.jsonl``.
 
     Fail-closed identity gate: inside a graph-runner node process (the runner
-    injects GRAPH_RUN_ID_ENV) a score whose target_ref is missing or carries a
-    different graph_run_id is refused, never silently appended.
+    injects a SIGNED graph context) a score whose target_ref is missing or
+    carries a different graph_run_id is refused, never silently appended.
+    target_ref.node is deliberately NOT matched against the token's node: it
+    names the SUBJECT of the score, and a judge node scoring another node's
+    output inside the same run is legitimate.
     """
+    context = _load_graph_context()
     validated = validate_score(record)
-    required = os.environ.get(GRAPH_RUN_ID_ENV) or None
-    if required is not None:
+    if context is not None:
         supplied = validated["target_ref"].get("graph_run_id")
-        if supplied != required:
+        if supplied != context["run_id"]:
             raise ValueError(
-                "target_ref.graph_run_id must match the runner-injected "
-                + GRAPH_RUN_ID_ENV
+                "target_ref.graph_run_id must match the runner-signed "
+                "graph context"
             )
     return append_jsonl(Path(state_dir) / "scores.jsonl", validated)

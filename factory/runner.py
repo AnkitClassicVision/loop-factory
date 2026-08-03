@@ -87,11 +87,15 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER_VERSION = "2.5.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
 # Correlation identity injected into every node process AFTER the capability
-# scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical names
-# in kernel/capabilities.py). Every record stream an emitter writes inside a
-# runner-executed node — runs-v2, telemetry, scores — carries this run_id.
-GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
-GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
+# scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical name
+# in kernel/capabilities.py). Identity travels ONLY as a runner-SIGNED token
+# (kernel/graph_context.py) — a plain env string was spoofable (review B1).
+# Every record stream an emitter writes inside a runner-executed node —
+# runs-v2, telemetry, scores — carries this run's identity from that token,
+# and the runner re-verifies every appended claim before a transition fires.
+GRAPH_CONTEXT_ENV = "OE_GRAPH_CONTEXT"
+# The streams whose appended rows the runner identity-verifies post-node.
+_IDENTITY_STREAMS = ("runs-v2.jsonl", "telemetry.jsonl", "scores.jsonl")
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
 
@@ -397,16 +401,15 @@ class _Run:
 
 
 def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
-                 graph_run_id: str, node_id: str) -> tuple:
+                 context_token: str) -> tuple:
     launch = _load("launch", "factory/launch.py")
     captured: dict = {}
 
     def _capture(command, env):
-        # Identity markers are injected AFTER the capability scrub, exactly
-        # like OE_DEPARTMENT — they are correlation keys, never credentials.
+        # The signed identity token is injected AFTER the capability scrub,
+        # exactly like OE_DEPARTMENT — a signed claim, never a credential.
         env = dict(env)
-        env[GRAPH_RUN_ID_ENV] = graph_run_id
-        env[GRAPH_NODE_ID_ENV] = node_id
+        env[GRAPH_CONTEXT_ENV] = context_token
         proc = subprocess.run(command, env=env, capture_output=True, text=True)
         captured["proc"] = proc
         return proc
@@ -420,25 +423,96 @@ def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
     return returncode, stdout, stderr
 
 
+def _stream_baseline(state_dir: Path) -> dict:
+    counts = {}
+    for name in _IDENTITY_STREAMS:
+        path = state_dir / name
+        counts[name] = (
+            len(path.read_text(encoding="utf-8").splitlines())
+            if path.exists() else 0)
+    return counts
+
+
+def _identity_violation(state_dir: Path, baseline: dict, *, run_id: str,
+                        node_id: str) -> str | None:
+    """Trusted-plane verification of appended identity claims (review B1).
+
+    The confined node cannot check an HMAC signature (no key by design), so
+    the runner — which minted the token — re-verifies here: every row a node
+    appended that claims THIS run's identity must attribute the CURRENT
+    node; an unreadable appended row is unverifiable and fails closed. Rows
+    claiming another run or carrying no graph identity are left alone
+    (concurrent runs and non-runner emitters legitimately share these
+    files); under one uid a direct file write can always mimic those, which
+    is the documented same-key limit — the sanctioned append path and this
+    run's own identity are what the runner can and does defend."""
+    for name in _IDENTITY_STREAMS:
+        path = state_dir / name
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        start = baseline.get(name, 0)
+        for offset, line in enumerate(lines[start:]):
+            if not line.strip():
+                continue
+            try:
+                row = _strict_loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError("row is not an object")
+            except ValueError as exc:
+                return (f"identity_unverifiable: {name} appended row "
+                        f"{start + offset + 1} is unreadable ({exc})")
+            if name == "scores.jsonl":
+                target = row.get("target_ref")
+                claimed = (target.get("graph_run_id")
+                           if isinstance(target, dict) else None)
+                claimed_node = None  # target node is the score's SUBJECT
+            elif name == "telemetry.jsonl":
+                claimed = row.get("loopfactory.graph_run_id")
+                claimed_node = row.get("loopfactory.node")
+            else:
+                claimed = row.get("graph_run_id")
+                claimed_node = row.get("node")
+            if claimed != run_id:
+                continue
+            if claimed_node is not None and claimed_node != node_id:
+                return (f"identity_forgery: {name} row claims run {run_id} "
+                        f"with node {claimed_node!r} during {node_id!r}")
+    return None
+
+
 def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
-                         env_base, sleep_fn) -> tuple:
+                         env_base, sleep_fn, signer, now_fn) -> tuple:
     """Run one node under its failure policy.
     Returns (output|None, failure|None, attempts_used)."""
     rungraph = _load("rungraph", "factory/rungraph.py")
+    graph_context = _load("graph_context", "kernel/graph_context.py")
     policy = node["failure_policy"]
     attempts = int(policy["max_retries"]) + 1
     script = (run.dept_dir / node["impl"]).resolve()
     if not script.is_relative_to(run.dept_dir.resolve()):
         return None, {"reason": "impl_escapes_department", "exit_code": None,
                       "attempt": 0}, 0
+    baseline = _stream_baseline(run.state_dir)
     failure = None
     attempt = 0
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             sleep_fn(float(policy["backoff_s"]))
+        try:
+            context_token = graph_context.issue_context(
+                signer=signer, now=now_fn(), department=dept_name,
+                run_id=run.run_id, node=node["id"], attempt=attempt)
+        except Exception as exc:
+            run.log("gate_failure", node_id=node["id"],
+                    why="signing_plane:graph_context",
+                    reason=f"{type(exc).__name__}: {exc}")
+            raise SigningPlaneBroken(str(exc)) from exc
+        run.log("node_context_issued", node_id=node["id"], attempt=attempt,
+                graph_context=context_token)
         returncode, stdout, stderr = _launch_node(
             dept_name, script, root=root, env_base=env_base,
-            graph_run_id=run.run_id, node_id=node["id"])
+            context_token=context_token)
         run.log("node_attempt", node_id=node["id"], attempt=attempt,
                 exit_code=returncode)
         if returncode != 0:
@@ -460,7 +534,19 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
             failure = {"reason": "output_contract: " + "; ".join(contract_fails),
                        "exit_code": 0, "attempt": attempt}
             continue
+        violation = _identity_violation(
+            run.state_dir, baseline, run_id=run.run_id, node_id=node["id"])
+        if violation is not None:
+            run.log("identity_violation", node_id=node["id"],
+                    reason=violation)
+            return None, {"reason": violation, "exit_code": 0,
+                          "attempt": attempt}, attempt
         return output, None, attempt
+    violation = _identity_violation(
+        run.state_dir, baseline, run_id=run.run_id, node_id=node["id"])
+    if violation is not None:
+        # the node already failed; the forgery still gets a durable finding
+        run.log("identity_violation", node_id=node["id"], reason=violation)
     return None, failure, attempt
 
 
@@ -1048,7 +1134,8 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
                 run.persist()
                 output, failure, attempts_used = _execute_with_policy(
                     run, node, dept_name=dept_dir.name, root=root,
-                    env_base=env_base, sleep_fn=sleep_fn)
+                    env_base=env_base, sleep_fn=sleep_fn, signer=signer,
+                    now_fn=now_fn)
                 # All token work happens INSIDE awaiting_receipt; the state
                 # exits only after every transition holds a validated token.
                 run.advance("awaiting_receipt")

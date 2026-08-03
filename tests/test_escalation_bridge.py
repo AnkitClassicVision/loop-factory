@@ -275,6 +275,111 @@ def test_predicate_failure_reaches_manager_and_outbox_exactly_once(tmp_path):
     assert len(packets) == 1
 
 
+def test_resolution_clears_both_ledgers_and_reopen_realarm(tmp_path):
+    """B2 regression: escalate -> resolve -> re-escalate the SAME run must
+    deliver a SECOND outbox item. Resolution is one coordinated operation
+    over BOTH ledgers (fingerprints first, then the graph sensor, so a crash
+    between the two re-alarms noisily instead of going silent)."""
+    dept = _make_dept(
+        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
+        _two_node_manifest())
+    result = _run(dept, tmp_path)
+    state_dir = dept / "state"
+    outbox = tmp_path / "outbox.jsonl"
+
+    def escalate_fn(issue, context=None):
+        hil.escalate("demo", issue, outbox, context=context)
+
+    def packets():
+        return [row for row in _read_jsonl(outbox)
+                if row.get("kind") == "escalation"
+                and "graph_run_escalated" in row.get("issue", "")]
+
+    manager.run_manager_cycle(
+        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
+    assert len(packets()) == 1
+
+    outcome = manager.resolve_graph_escalation(
+        state_dir, department="demo", run_id=result["run_id"])
+    assert outcome["resolved"] == result["run_id"]
+    # both ledgers carry a coordinated resolution marker
+    fp_rows = _read_jsonl(state_dir / "escalation_fingerprints.jsonl")
+    assert any(r.get("marker") == "resolved" for r in fp_rows)
+    esc_rows = _read_jsonl(state_dir / "graph_escalations.jsonl")
+    assert any(r.get("marker") == "resolved"
+               and r.get("run_id") == result["run_id"] for r in esc_rows)
+
+    # resolved: no finding, no delivery
+    report = manager.run_manager_cycle(
+        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
+    assert not any(f["code"] == "graph_run_escalated"
+                   for f in report["findings"])
+    assert len(packets()) == 1
+
+    # REOPEN the same run: the alarm must ring again, not dedup into silence
+    with (state_dir / "graph_escalations.jsonl").open(
+            "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "run_id": result["run_id"], "loop_id": "SG-RUN",
+            "state": "escalated", "termination_reason": "escalation_edge",
+            "marker": "open"}) + "\n")
+    report = manager.run_manager_cycle(
+        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
+    assert any(f["code"] == "graph_run_escalated" for f in report["findings"])
+    assert len(packets()) == 2
+
+
+def test_escalation_fingerprints_use_full_digest(tmp_path):
+    dept = _make_dept(
+        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
+        _two_node_manifest())
+    _run(dept, tmp_path)
+    state_dir = dept / "state"
+    manager.run_manager_cycle(
+        state_dir, escalate_fn=lambda issue, context=None: None,
+        department="demo", dept_dir=dept)
+    rows = _read_jsonl(state_dir / "escalation_fingerprints.jsonl")
+    assert rows and all(len(r["fingerprint"]) == 64 for r in rows)
+
+
+def test_more_than_twenty_open_escalations_all_surface(tmp_path):
+    """B3 regression: 25 open escalations -> 25 breach findings and 25 outbox
+    deliveries in one cycle; only the persisted STATE.json presentation is
+    bounded (20 entries, truncated flag, honest total)."""
+    state_dir = tmp_path / "departments" / "demo" / "state"
+    state_dir.mkdir(parents=True)
+    with (state_dir / "graph_escalations.jsonl").open(
+            "w", encoding="utf-8") as fh:
+        for index in range(25):
+            fh.write(json.dumps({
+                "run_id": f"SG-RUN-{index:03d}", "loop_id": "SG-RUN",
+                "state": "escalated", "termination_reason": "escalation_edge",
+                "marker": "open"}) + "\n")
+    outbox = tmp_path / "outbox.jsonl"
+
+    def escalate_fn(issue, context=None):
+        hil.escalate("demo", issue, outbox, context=context)
+
+    report = manager.run_manager_cycle(
+        state_dir, escalate_fn=escalate_fn, department="demo")
+    breaches = [f for f in report["findings"]
+                if f["code"] == "graph_run_escalated"]
+    assert len(breaches) == 25
+    assert {f["subject"] for f in breaches} \
+        == {f"SG-RUN-{index:03d}" for index in range(25)}
+    packets = [row for row in _read_jsonl(outbox)
+               if row.get("kind") == "escalation"
+               and "graph_run_escalated" in row.get("issue", "")]
+    assert len(packets) == 25
+    assert report["sensed"]["graph_escalation_count"] == 25
+    state_json = json.loads(
+        (state_dir / "STATE.json").read_text(encoding="utf-8"))
+    persisted = state_json["sensed"]
+    assert len(persisted["graph_escalations"]) == 20
+    assert persisted["graph_escalations_truncated"] is True
+    assert persisted["graph_escalation_count"] == 25
+
+
 def test_resolved_escalation_clears_the_finding(tmp_path):
     dept = _make_dept(
         tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},

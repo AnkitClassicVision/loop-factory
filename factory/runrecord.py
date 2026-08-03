@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import copy
 import fcntl
+import importlib.util
 import json
 import os
 import re
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -19,12 +21,32 @@ from typing import Any, Iterator
 
 
 SCHEMA = "run-record/v2"
-
-# Runner-injected correlation key (canonical name: kernel/capabilities.py).
-# When this env var is present the emitter is running inside a graph-runner
-# node process and every appended record MUST carry the matching graph_run_id.
-GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
 _GRAPH_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
+
+
+def _graph_context():
+    """Load kernel/graph_context.py whether or not the repo root is on
+    sys.path (department emitters import this module both ways)."""
+    try:
+        from kernel import graph_context
+        return graph_context
+    except ImportError:
+        name = "runrecord_graph_context"
+        if name in sys.modules:
+            return sys.modules[name]
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parents[1] / "kernel"
+            / "graph_context.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+
+def _load_graph_context():
+    """The ambient runner-signed identity, or None outside the runner.
+    Malformed/expired/forged (where checkable) tokens raise — fail-closed."""
+    return _graph_context().load_context(now=time.time())
 
 _REQUIRED_FIELDS = frozenset(
     {
@@ -235,22 +257,27 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
 def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
     """Validate and append one fsynced JSON line under an exclusive lock.
 
-    Fail-closed identity gate: inside a graph-runner node process (the runner
-    injects GRAPH_RUN_ID_ENV) a record without the matching graph_run_id would
-    fragment the execution's identity, so it is refused, never silently
-    appended.
+    Fail-closed identity gate: inside a graph-runner node process the runner
+    injects a SIGNED context token (kernel/graph_context.py). Identity comes
+    only from that token's payload — a record whose graph_run_id is missing
+    or different, or whose node attribution differs from the token's node,
+    is refused, never silently appended. A malformed, expired, or (wherever
+    the kernel key is resolvable) forged token refuses before validation.
     """
+    context = _load_graph_context()
     validated = validate_record(record)
-    required = os.environ.get(GRAPH_RUN_ID_ENV)
-    if required:
+    if context is not None:
         supplied = validated.get("graph_run_id")
         if supplied is None:
             _fail("graph_run_id",
                   "is required when running under the graph runner "
-                  f"({GRAPH_RUN_ID_ENV} is set)")
-        if supplied != required:
+                  "(a signed graph context is present)")
+        if supplied != context["run_id"]:
             _fail("graph_run_id",
-                  f"does not match the runner-injected {GRAPH_RUN_ID_ENV}")
+                  "does not match the runner-signed graph context")
+        if validated.get("node") != context["node"]:
+            _fail("node",
+                  "does not match the runner-signed graph context node")
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "runs-v2.jsonl"
@@ -317,7 +344,8 @@ def emit_record(
 ) -> Path:
     """Build and append one v2 record with generated identity and timestamp."""
     if graph_run_id is None:
-        graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
+        context = _load_graph_context()
+        graph_run_id = context["run_id"] if context is not None else None
     optional = {} if graph_run_id is None else {"graph_run_id": graph_run_id}
     record = build_record(
         schema=SCHEMA,

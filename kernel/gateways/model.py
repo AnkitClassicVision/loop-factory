@@ -2,12 +2,12 @@ import sys, pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import receipts
+import graph_context
 from kernel.jsonl_store import append_jsonl
 
 import hashlib
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -32,10 +32,6 @@ def model_binding(prompt, sanitized=True) -> dict:
 
 
 SCHEMA_VERSION = "step-telemetry/v1"
-# Runner-injected correlation identity (canonical names:
-# kernel/capabilities.py). Present only inside a graph-runner node process.
-GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
-GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
 AUTH_ROUTES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
 )
@@ -240,25 +236,30 @@ def call_model(
         safe_run_id = _optional_identifier(run_id, "run_id")
         safe_step_id = _optional_identifier(step_id, "step_id")
         safe_node = _optional_identifier(node, "node")
-        # Graph-runner identity: inside a runner-executed node the injected
-        # env value is authoritative — a caller-supplied mismatch refuses the
-        # call BEFORE the provider is invoked (fail-closed, never silent null).
+        # Graph-runner identity: inside a runner-executed node the SIGNED
+        # context token is authoritative — identity comes only from its
+        # payload, and a caller-supplied mismatch (run OR node attribution)
+        # refuses the call BEFORE the provider is invoked (fail-closed,
+        # never silent null). A malformed/expired/forged-where-checkable
+        # token raises ContextInvalid here, also pre-invocation.
         safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
-        env_graph_run_id = _optional_identifier(
-            os.environ.get(GRAPH_RUN_ID_ENV) or None, GRAPH_RUN_ID_ENV
-        )
-        if env_graph_run_id is not None:
-            if safe_graph_run_id is not None and safe_graph_run_id != env_graph_run_id:
-                safe_graph_run_id = env_graph_run_id
+        context = graph_context.load_context(now=time.time())
+        if context is not None:
+            if (
+                safe_graph_run_id is not None
+                and safe_graph_run_id != context["run_id"]
+            ):
+                safe_graph_run_id = context["run_id"]
                 raise ValueError(
-                    "graph_run_id does not match the runner-injected "
-                    + GRAPH_RUN_ID_ENV
+                    "graph_run_id does not match the runner-signed "
+                    "graph context"
                 )
-            safe_graph_run_id = env_graph_run_id
-        if safe_node is None:
-            safe_node = _optional_identifier(
-                os.environ.get(GRAPH_NODE_ID_ENV) or None, GRAPH_NODE_ID_ENV
-            )
+            safe_graph_run_id = context["run_id"]
+            if safe_node is not None and safe_node != context["node"]:
+                raise ValueError(
+                    "node does not match the runner-signed graph context"
+                )
+            safe_node = context["node"]
         safe_auth_route = _optional_identifier(auth_route, "auth_route")
         if safe_auth_route not in AUTH_ROUTES:
             safe_auth_route = "blocked"
