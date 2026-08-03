@@ -22,6 +22,14 @@ mission: >-
   separately-promoted send classes; cold email is excluded forever outside an
   explicit ankit_manual_exception.
 
+# Capability declarations (owner-authored pattern from the podcast charter:
+# XDG_RUNTIME_DIR is granted per-department, never globally). This implements
+# the signed mission's sensing scope (F1-A/D3: timer liveness of
+# hsd-daily-operator, obe-fix-consumer via systemd user units). Read-only
+# probing; mutating unit actions stay behind the heal allowlist and shadow.
+capabilities:
+  - systemd_user_probe
+
 autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
 
 setpoints:
