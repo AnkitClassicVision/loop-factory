@@ -36,7 +36,10 @@
     },
     {
      "id": "N4",
-     "impl": "runtime/escalate_outbox.py"
+     "impl": "runtime/escalate_outbox.py",
+     "emits_ask": true,
+     "return_path": "runtime/comms_reconcile_sensor.py",
+     "return_sla_hours": 48
     },
     {
      "id": "N5",
@@ -44,7 +47,8 @@
     },
     {
      "id": "N6",
-     "impl": "runtime/comms_reconcile_sensor.py"
+     "impl": "runtime/comms_reconcile_sensor.py",
+     "execution": "daily_shared_chain_before_compare_and_escalation"
     },
     {
      "id": "N9",
@@ -102,15 +106,8 @@
     },
     {
      "id": "N1",
-     "impl": "runtime/pipeline_sensor.py"
-    },
-    {
-     "id": "N2",
-     "impl": "runtime/compare_charter.py"
-    },
-    {
-     "id": "N9",
-     "impl": "runtime/record.py"
+     "impl": "runtime/pipeline_sensor.py",
+     "execution": "daily_shared_chain_before_other_sensors_and_one_shared_compare"
     }
    ]
   },
@@ -135,15 +132,8 @@
    "nodes": [
     {
      "id": "N1",
-     "impl": "runtime/publish_verifier.py"
-    },
-    {
-     "id": "N2",
-     "impl": "runtime/compare_charter.py"
-    },
-    {
-     "id": "N9",
-     "impl": "runtime/record.py"
+     "impl": "runtime/publish_verifier.py",
+     "execution": "daily_shared_chain_before_one_shared_compare"
     }
    ]
   },
@@ -171,15 +161,8 @@
     },
     {
      "id": "N1",
-     "impl": "runtime/manifest_sensor.py"
-    },
-    {
-     "id": "N2",
-     "impl": "runtime/compare_charter.py"
-    },
-    {
-     "id": "N9",
-     "impl": "runtime/record.py"
+     "impl": "runtime/manifest_sensor.py",
+     "execution": "daily_shared_chain_before_hopper_sensor_and_one_shared_compare"
     }
    ]
   },
@@ -226,6 +209,6 @@
   "runtime/estate.json": "sensed-inventory data consumed by SG-WATCHDOG N1 (sense_estate.py); configuration, not behavior",
   "runtime/playbooks.json": "versioned heal allowlist data consumed by SG-HEAL N1 (heal_select.py); owner-reviewed data, not behavior",
   "runtime/podcast_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one",
-  "runtime/rotate_observations.py": "standalone maintenance CLI for the observation store (dedup + rotation, receipt-emitting, dry-run honest); NOT in the daily chain yet \u2014 becomes a graph node when the v2 build wires it (wayfinder tickets 15/18, 2026-08-02)"
+  "runtime/rotate_observations.py": "daily post-consumer maintenance step for the observation store (dedup + rotation, receipt-emitting, dry-run honest); invoked after the heal phase and before board regeneration"
  }
 }

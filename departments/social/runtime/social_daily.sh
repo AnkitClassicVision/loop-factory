@@ -15,8 +15,8 @@ OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
 SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
 BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
 OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
-DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-claude_subscription codex_oauth glm_oauth}"
-QA_ENGINE="${SOCIAL_QA_ENGINE:-codex_oauth}"
+DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-codex_oauth glm_oauth claude_subscription}"
+QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
 ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
 ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-600}"
 QA_RETRY_BACKOFF_SECONDS="${SOCIAL_QA_RETRY_BACKOFF_SECONDS:-1}"
@@ -90,6 +90,63 @@ raise SystemExit(0 if valid else 1)
 PY
 }
 
+graph_node_id() {
+  case "$1" in
+    N1-*) echo "N1" ;;
+    N2-*) echo "N2" ;;
+    N3-*) echo "N3" ;;
+    N4-*) echo "N4" ;;
+    N5-*) echo "N5" ;;
+    N6-*) echo "N6" ;;
+    N7-*) echo "N7" ;;
+    N9-*) echo "N9" ;;
+    N10-*) echo "N10" ;;
+    N11-*) echo "N11" ;;
+    S1-*) echo "S1" ;;
+    S2-*) echo "S2" ;;
+    S3-*) echo "S3" ;;
+    S4-S5-*) echo "S4" ;;
+    S6-*) echo "S6" ;;
+    S7-*) echo "S7" ;;
+    S8-*) echo "S8" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+append_v2_stage() {
+  local node="$1"
+  local receipt="$2"
+  local graph_node
+  graph_node="$(graph_node_id "${node}")"
+  local rc
+  if python3 - "${STATE_DIR}" "${receipt}" "${RUN_ID}" "${graph_node}" <<'PY'
+import sys
+from pathlib import Path
+
+from departments.social.runtime.v2_record import ReceiptValidationError, append_stage_record
+
+try:
+    append_stage_record(
+        Path(sys.argv[1]), Path(sys.argv[2]), run_id=sys.argv[3], node=sys.argv[4]
+    )
+except ReceiptValidationError:
+    raise SystemExit(3)
+PY
+  then
+    return
+  else
+    rc=$?
+  fi
+  if test "${rc}" -eq 3; then
+    incident_receipt_failure "${node}" "${receipt}" "invalid_receipt"
+    echo "invalid receipt: ${node}: ${receipt}" >&2
+  else
+    incident_receipt_failure "${node}" "${receipt}" "v2_append_failed"
+    echo "v2 append failed: ${node}: ${receipt}" >&2
+  fi
+  exit 2
+}
+
 qa_has_only_engine_unavailable() {
   local receipt="$1"
   python3 - "${receipt}" <<'PY'
@@ -136,15 +193,16 @@ run_step() {
     echo "missing receipt: ${node}: ${receipt}" >&2
     exit 2
   fi
-  if ! receipt_is_valid_json "${receipt}"; then
-    incident_receipt_failure "${node}" "${receipt}" "invalid_receipt"
-    echo "invalid receipt: ${node}: ${receipt}" >&2
-    exit 2
-  fi
   if test "${rc}" -ne 0; then
+    if ! receipt_is_valid_json "${receipt}"; then
+      incident_receipt_failure "${node}" "${receipt}" "invalid_receipt"
+      echo "invalid receipt: ${node}: ${receipt}" >&2
+      exit 2
+    fi
     echo "step blocked: ${node}: exit ${rc}" >&2
     exit "${rc}"
   fi
+  append_v2_stage "${node}" "${receipt}"
 }
 
 run_qa_round() {
@@ -190,7 +248,7 @@ if test -f "${STATE_DIR}/BREAKER_${SURFACE}"; then
   exit 2
 fi
 
-for node in inventory_backcatalog select_candidate assemble_context draft_post qa_post guards kernel_bridge dispatch delivery_verify record; do
+for node in inventory_backcatalog select_candidate assemble_context draft_post qa_post guards kernel_bridge dispatch delivery_verify objectives_sensor record v2_record create_review_card harvest_review_asks linear_read_comments; do
   require_node "${node}"
 done
 
@@ -208,6 +266,7 @@ run_draft_with_fallback() {
     DRAFT_ENGINE="${engine}"
     if timeout 150s "$@" --engine "${engine}"; then
       if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
+        append_v2_stage "${node}" "${receipt}"
         return 0
       fi
     fi
@@ -219,6 +278,7 @@ run_draft_with_fallback() {
     DRAFT_ENGINE="${skipped_qa}"
     if timeout 150s "$@" --engine "${skipped_qa}"; then
       if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
+        append_v2_stage "${node}" "${receipt}"
         return 0
       fi
     fi
@@ -499,6 +559,11 @@ sys.stdout.write(
 PY
 )"
 if test "${DISPATCH_STATUS}" = "yielded"; then
+  RECORD_OUT="${RUN_DIR}/N9-record.json"
+  run_step "N9-record" "${RECORD_OUT}" \
+    python3 "${RUNTIME_DIR}/record.py" --node "SG-REPUBLISH" \
+    --state-dir "${STATE_DIR}" --payload "$(cat "${DISPATCH_OUT}")" \
+    --shadow --out "${RECORD_OUT}"
   exit 0
 fi
 
@@ -508,6 +573,11 @@ run_step "N7-delivery-verify" "${VERIFY_OUT}" \
   --state-dir "${STATE_DIR}" --receipt "${DISPATCH_OUT}" \
   --simulate-sink "${SIMULATE_SINK}" --out "${VERIFY_OUT}"
 
+OBJECTIVES_OUT="${RUN_DIR}/N5-objectives-sensor.json"
+run_step "N5-objectives-sensor" "${OBJECTIVES_OUT}" \
+  python3 "${RUNTIME_DIR}/objectives_sensor.py" \
+  --root "${REPO}" --out "${OBJECTIVES_OUT}"
+
 RECORD_OUT="${RUN_DIR}/N9-record.json"
 run_step "N9-record" "${RECORD_OUT}" \
   python3 "${RUNTIME_DIR}/record.py" --node "SG-REPUBLISH" \
@@ -515,7 +585,21 @@ run_step "N9-record" "${RECORD_OUT}" \
   --shadow --out "${RECORD_OUT}"
 
 CARD_OUT="${RUN_DIR}/N10-review-card.json"
-python3 "${RUNTIME_DIR}/create_review_card.py" \
+run_step "N10-review-card" "${CARD_OUT}" \
+  python3 "${RUNTIME_DIR}/create_review_card.py" \
   --draft "${DRAFT_OUT}" --candidate "${CANDIDATE_OUT}" \
   --run-id "${RUN_ID}" --ledger "${STATE_DIR}/card_ledger.jsonl" \
-  --out "${CARD_OUT}" 2>&1 || echo "review card creation failed (non-blocking)" >&2
+  --out "${CARD_OUT}"
+
+HARVEST_OUT="${RUN_DIR}/N11-review-harvest.json"
+HARVEST_FIXTURE_ARGS=()
+if test -n "${SOCIAL_LINEAR_COMMENTS_FIXTURE:-}"; then
+  HARVEST_FIXTURE_ARGS=(--fixture "${SOCIAL_LINEAR_COMMENTS_FIXTURE}")
+fi
+run_step "N11-review-harvest" "${HARVEST_OUT}" \
+  python3 "${RUNTIME_DIR}/harvest_review_asks.py" \
+  --ledger "${STATE_DIR}/card_ledger.jsonl" \
+  --outbox "${STATE_DIR}/decisions_outbox.jsonl" \
+  --reader "${RUNTIME_DIR}/linear_read_comments.py" \
+  --return-sla-hours 48 --out "${HARVEST_OUT}" \
+  "${HARVEST_FIXTURE_ARGS[@]}"

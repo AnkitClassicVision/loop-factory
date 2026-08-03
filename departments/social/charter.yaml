@@ -75,6 +75,30 @@ setpoints:
     - {metric: podcast_dept_post_engagement, target: TBD_MEASURE_IN_SHADOW}   # C20 sensing scope
     - {metric: platform_verified_delivery_pct, target: 100}                   # C15 gate 1
     - {metric: quarantine_backlog_items, target: TBD_MEASURE_IN_SHADOW}
+  objectives:   # owner-dictated (Ankit, 2026-08-03, measure-first decision):
+    # hard contracts ONLY for already-decided values; discovery calls,
+    # engagement, and webinar registrations stay sensor-only until two weeks
+    # of shadow baselines, then the owner ratifies numbers from data.
+    platform_verified_delivery_pct:
+      label: "Platform-verified delivery"
+      setpoint: 100
+      minimum: 100
+      target: 100
+      unit: "%"
+    posting_volume_week:
+      label: "Posts this week (ceiling, all surfaces)"
+      setpoint: 100
+      minimum: 0
+      target: 100
+      maximum: 100
+      unit: " posts"
+    quarantine_backlog_aged:
+      label: "Quarantine items aged over 7 days"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " items"
 
 thresholds:
   weekly_touch_ceiling: 100        # = posts_per_week ceiling (Q4)

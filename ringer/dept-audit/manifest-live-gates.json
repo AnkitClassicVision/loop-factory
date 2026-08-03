@@ -1,0 +1,27 @@
+{
+  "run_name": "department-audit",
+  "workdir": "/home/ankit114/ringer-work/dept-audit-live",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "podcast-gates",
+      "engine": "local-shell",
+      "task_type": "code-review",
+      "timeout_s": 600,
+      "spec": "OUT=$PWD/gate-report.md; cd /mnt/d_drive/repos/loop-factory && { echo '# podcast — read-only gates against LIVE state'; echo '## validate'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py validate --name podcast 2>&1; echo \"exit_code=$?\"; echo '## objectives'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py objectives --name podcast 2>&1; echo \"exit_code=$?\"; echo '## qa'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py qa --name podcast 2>&1; echo \"exit_code=$?\"; } > \"$OUT\"; echo wrote \"$OUT\"",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode gates --report gate-report.md --out /home/ankit114/ringer-work/dept-audit-live/podcast-gates.md",
+      "expect_files": ["gate-report.md"],
+      "verified": "podcast measured by the live read-only gates: validate, strict objectives, release qa — exit codes recorded, breaches surfaced not hidden"
+    },
+    {
+      "key": "social-gates",
+      "engine": "local-shell",
+      "task_type": "code-review",
+      "timeout_s": 600,
+      "spec": "OUT=$PWD/gate-report.md; cd /mnt/d_drive/repos/loop-factory && { echo '# social — read-only gates against LIVE state'; echo '## validate'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py validate --name social 2>&1; echo \"exit_code=$?\"; echo '## objectives'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py objectives --name social 2>&1; echo \"exit_code=$?\"; echo '## qa'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py qa --name social 2>&1; echo \"exit_code=$?\"; } > \"$OUT\"; echo wrote \"$OUT\"",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode gates --report gate-report.md --out /home/ankit114/ringer-work/dept-audit-live/social-gates.md",
+      "expect_files": ["gate-report.md"],
+      "verified": "social measured by the live read-only gates: validate, strict objectives, release qa — exit codes recorded, breaches surfaced not hidden"
+    }
+  ]
+}

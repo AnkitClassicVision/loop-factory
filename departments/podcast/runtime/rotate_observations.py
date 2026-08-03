@@ -6,9 +6,18 @@ import json
 import logging
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from factory import runrecord
 
 
 LOGGER = logging.getLogger(__name__)
@@ -128,11 +137,47 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    started = time.perf_counter()
     try:
         receipt = rotate(args.state_dir, args.max_lines, args.dry_run)
     except (RuntimeError, ValueError) as exc:
+        runrecord.emit_record(
+            args.state_dir,
+            department="podcast",
+            node="rotate_observations",
+            status="error",
+            release=runrecord.read_release(args.state_dir.parent),
+            trigger=None,
+            cost={"lane": "flat_subscription", "model_calls": 0},
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=[type(exc).__name__],
+            artifacts=[],
+            external_actions_taken=0,
+        )
         LOGGER.error("%s", exc)
         return 1
+    runrecord.emit_record(
+        args.state_dir,
+        department="podcast",
+        node="rotate_observations",
+        status="ok",
+        release=runrecord.read_release(args.state_dir.parent),
+        trigger={
+            "kind": "time",
+            "id": "podcast-daily",
+            "dedupe_key": (
+                f"{datetime.now(timezone.utc).date().isoformat()}-rotate_observations"
+            ),
+        },
+        cost={"lane": "flat_subscription", "model_calls": 0},
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        artifacts=[{
+            "kind": "stdout_receipt",
+            "node": "rotate_observations",
+            "receipt": receipt,
+        }],
+        external_actions_taken=0,
+    )
     print(json.dumps(receipt, separators=(",", ":")))
     return 0
 

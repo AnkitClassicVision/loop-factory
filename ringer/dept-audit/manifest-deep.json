@@ -1,0 +1,49 @@
+{
+  "run_name": "department-audit",
+  "workdir": "/home/ankit114/ringer-work/dept-audit-deep",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "podcast-prove",
+      "engine": "local-shell",
+      "task_type": "code-review",
+      "timeout_s": 900,
+      "spec": "{ echo '# podcast — prove drills in an ISOLATED WORKTREE sandbox (tracked state only; live state untouched)'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py prove --name podcast --allow-unsupported 2>&1; echo \"exit_code=$?\"; } > prove-report.md; echo wrote prove-report.md",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode prove --report prove-report.md --out /home/ankit114/ringer-work/dept-audit-deep/podcast-prove.md",
+      "expect_files": ["prove-report.md"],
+      "verified": "podcast run through the Stage 11 proof drills in a sandbox worktree — real drill outcomes recorded, unsupported drills named"
+    },
+    {
+      "key": "social-prove",
+      "engine": "local-shell",
+      "task_type": "code-review",
+      "timeout_s": 900,
+      "spec": "{ echo '# social — prove drills in an ISOLATED WORKTREE sandbox (tracked state only; live state untouched)'; PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py prove --name social --allow-unsupported 2>&1; echo \"exit_code=$?\"; } > prove-report.md; echo wrote prove-report.md",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode prove --report prove-report.md --out /home/ankit114/ringer-work/dept-audit-deep/social-prove.md",
+      "expect_files": ["prove-report.md"],
+      "verified": "social run through the Stage 11 proof drills in a sandbox worktree — real drill outcomes recorded, unsupported drills named"
+    },
+    {
+      "key": "podcast-review",
+      "engine": "codex",
+      "task_type": "code-review",
+      "timeout_s": 3600,
+      "spec": "You are a READ-ONLY auditor. Your current working directory IS a git worktree of the loop-factory repo. You fix NOTHING; your only output is ./report.md in this directory. Do NOT git commit/branch/push/stash; do NOT modify, create, or delete any repo file. No MCP, no network, no skills; do not ask for approval — nobody is watching. NEVER read *.env/*secret*/*token*/*key*/*credential* files; NEVER execute department runtime scripts against live services (reading code and running pure-python fixture snippets in /tmp is fine). MISSION: audit the PODCAST department against the ratified standard in runbooks/ultimate-department-creation.md. READ FIRST: that runbook, departments/podcast/charter.yaml, departments/podcast/procedural-graph.md + subgraphs.json, departments/podcast/runtime/ (all of it), factory/runrecord.py (the v2 record contract), factory/objectives_verify.py, factory/graphs.py (emits_ask lint). AUDIT DIMENSIONS — for each give a verdict ('clean' with what you checked, or findings): (1) v2 run records — does the runtime append records validating against factory/runrecord.py, or legacy/no records? (2) objectives sensors — the charter declares objectives incl. hopper_interviews_ready, state_drift, unledgered_inbound; which have a real observation adapter writing objectives_observed.json and which are unmeasured? (3) outbound ask classes — does every path that asks a human/guest for something declare AND execute a return path per the comms_loop_invariant in the charter? cite the runtime sites. (4) fail-closed gating — where copy is drafted or actions proposed, is there an executed gate that blocks on failure, or do failures pass silently? (5) receipt-gated steps — do runtime stages prove completion before the next step runs, per charter execution.step_receipts? (6) cadence contract — does a cadence.yaml exist for the Stage 8 gate (none is a finding)? (7) map-runtime honesty — do subgraphs.json impls match what runtime files actually do (spot-check 3 nodes)? FORMAT: ./report.md, <=1500 words: one section per dimension; each finding as: a short title line, then 'Evidence:' (exact file path + line refs), 'Impact:', 'Fix:' (smallest change), 'Priority:' (P1/P2/P3), 'Confidence:' (high/med/low). End with a table: dimension | verdict | worst finding priority. Cite ONLY paths that exist; invented evidence fails the executed check.",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode review --report report.md --out /home/ankit114/ringer-work/dept-audit-deep/podcast-review.md",
+      "expect_files": ["report.md"],
+      "verified": "podcast audited read-only across 7 standard dimensions with file-cited findings — worktree proven untouched by the check"
+    },
+    {
+      "key": "social-review",
+      "engine": "codex",
+      "task_type": "code-review",
+      "timeout_s": 3600,
+      "spec": "You are a READ-ONLY auditor. Your current working directory IS a git worktree of the loop-factory repo. You fix NOTHING; your only output is ./report.md in this directory. Do NOT git commit/branch/push/stash; do NOT modify, create, or delete any repo file. No MCP, no network, no skills; do not ask for approval — nobody is watching. NEVER read *.env/*secret*/*token*/*key*/*credential* files; NEVER execute department runtime scripts against live services (reading code and running pure-python fixture snippets in /tmp is fine). MISSION: audit the SOCIAL department against the ratified standard in runbooks/ultimate-department-creation.md. CONTEXT YOU MUST WEIGH: social has an external-publish funnel (SG-REPUBLISH) with the full guard chain — the highest-blast-radius surface in this repo — and the estate has flagged its manager dead since 2026-07-28 (stale heartbeat). READ FIRST: the runbook, departments/social/charter.yaml, departments/social/procedural-graph.md + subgraphs.json, departments/social/runtime/ (all of it, incl. social_daily.sh), departments/social/knowledge/concept-map.md, factory/runrecord.py, factory/objectives_verify.py, factory/graphs.py. AUDIT DIMENSIONS — for each give a verdict ('clean' with what you checked, or findings): (1) v2 run records — does the runtime append records validating against factory/runrecord.py? (2) objectives sensors — which charter objectives have real observation adapters and which are unmeasured? (3) outbound ask classes AND the publish path — does every ask declare+execute a return path; does the publish funnel prove its guard chain executes in order (S1,S2,S3,S5,S4 + S6/S7 health) rather than merely being listed in the map? (4) fail-closed gating — do guard/gate failures BLOCK, or are there allow-on-failure paths (grep for silent excepts, default-allow branches)? (5) receipt-gated steps in social_daily.sh — does each stage prove completion before the next? (6) manager liveness — why might the manager have been dead since 2026-07-28: find the wiring (timer/entry point) that should cycle it and what is missing or broken; (7) cadence contract — does one exist for the Stage 8 gate (none is a finding)? FORMAT: ./report.md, <=1500 words: one section per dimension; each finding as: a short title line, then 'Evidence:' (exact file path + line refs), 'Impact:', 'Fix:' (smallest change), 'Priority:' (P1/P2/P3), 'Confidence:' (high/med/low). End with a table: dimension | verdict | worst finding priority. Cite ONLY paths that exist; invented evidence fails the executed check.",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/dept-audit/checks/audit_check.py --mode review --report report.md --out /home/ankit114/ringer-work/dept-audit-deep/social-review.md",
+      "expect_files": ["report.md"],
+      "verified": "social audited read-only across 7 standard dimensions incl. publish guard-chain execution and the dead-manager root cause — worktree proven untouched"
+    }
+  ]
+}

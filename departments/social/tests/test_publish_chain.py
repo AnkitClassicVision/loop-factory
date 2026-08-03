@@ -168,6 +168,28 @@ def _fake_qa_sequence_engine(path: Path, responses: list[object]) -> tuple[Path,
     return path, count_path
 
 
+def _stub_review_card_python(bin_dir: Path) -> None:
+    wrapper = bin_dir / "python3"
+    wrapper.write_text(
+        f"""#!{sys.executable}
+import json
+import os
+import sys
+from pathlib import Path
+
+real = {sys.executable!r}
+args = sys.argv[1:]
+if args and Path(args[0]).name == "create_review_card.py":
+    out = Path(args[args.index("--out") + 1])
+    out.write_text(json.dumps({{"status": "card_created", "identifier": "ANK-FIXTURE"}}) + "\\n")
+    raise SystemExit(0)
+os.execv(real, [real, *args])
+""",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+
 def test_shadow_dispatch_uses_kernel_simulates_zero_and_never_calls_zernio(
     tmp_path, monkeypatch
 ):
@@ -409,10 +431,13 @@ def test_daily_driver_runs_real_end_to_end_in_shadow(tmp_path, monkeypatch):
         marker,
     )
     fake_zernio.rename(fake_bin / "zernio")
+    _stub_review_card_python(fake_bin)
 
     monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", "obviously-fake-test-key")
     monkeypatch.setenv("SOCIAL_STATE_DIR", str(state))
     monkeypatch.setenv("SOCIAL_ENGINES_FILE", str(engines_file))
+    monkeypatch.setenv("SOCIAL_DRAFT_ENGINES", "codex_oauth")
+    monkeypatch.setenv("SOCIAL_QA_ENGINE", "claude_subscription")
     monkeypatch.setenv(
         "PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", "")
     )
@@ -464,8 +489,11 @@ def test_daily_driver_runs_real_end_to_end_in_shadow(tmp_path, monkeypatch):
         for line in (state / "runs.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert len(run_rows) == 1
-    assert run_rows[0]["node"] == "SG-REPUBLISH"
+    assert [row["node"] for row in run_rows] == [
+        "draft_post",
+        "qa_post",
+        "SG-REPUBLISH",
+    ]
 
 
 def _run_real_daily_with_qa_responses(
@@ -510,9 +538,12 @@ def _run_real_daily_with_qa_responses(
         tmp_path / "zernio-called",
     )
     fake_zernio.rename(fake_bin / "zernio")
+    _stub_review_card_python(fake_bin)
     monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", "obviously-fake-test-key")
     monkeypatch.setenv("SOCIAL_STATE_DIR", str(state))
     monkeypatch.setenv("SOCIAL_ENGINES_FILE", str(engines_file))
+    monkeypatch.setenv("SOCIAL_DRAFT_ENGINES", "codex_oauth")
+    monkeypatch.setenv("SOCIAL_QA_ENGINE", "claude_subscription")
     monkeypatch.setenv("SOCIAL_QA_RETRY_BACKOFF_SECONDS", "0")
     monkeypatch.setenv(
         "PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", "")

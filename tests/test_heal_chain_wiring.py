@@ -69,20 +69,39 @@ def _assert_one_valid_record(state_dir: Path, node: str, status: str = "ok") -> 
 def test_daily_script_launcher_wraps_heal_lane_in_order_after_manager_chain():
     lines = _script_lines()
     escalate = _line_index(lines, "runtime/escalate_outbox.py")
+    hopper = _line_index(lines, "runtime/hopper_sensor.py")
+    comms = _line_index(lines, "runtime/comms_reconcile_sensor.py")
+    compare = _line_index(lines, "runtime/compare_charter.py")
     manager = _line_index(lines, "factory/manager.py")
     approvals = _line_index(lines, "factory/human_in_the_loop.py")
     select = _line_index(lines, "runtime/heal_select.py")
     apply = _line_index(lines, "runtime/heal_apply.py")
     verify = _line_index(lines, "runtime/heal_verify.py")
 
-    assert escalate < manager < approvals < select < apply < verify
+    # The heal lane now lives in a run_heal_phase() function defined above the
+    # chain, so EXECUTION order is proven via its call site, and step order is
+    # proven within the function body.
+    heal_call = max(i for i, l in enumerate(lines) if l.strip() == "run_heal_phase")
+    assert escalate < manager < approvals < heal_call
+    assert hopper < comms < compare < escalate
+    assert 'comms_receipt="$(' in "\n".join(lines)
+    assert 'validate_json_object <<<"${comms_receipt}"' in lines
+    assert select < apply < verify
+    # Audit fix round 1 (2026-08-03): heal steps are FAIL-CLOSED per incident.
+    # The old pin asserted `|| true` on every heal invocation — enshrining the
+    # allow-on-failure defect the audit flagged. The contract is now: no
+    # suppression on the heal commands; a nonzero step appends a
+    # manager-visible failure receipt and halts that incident's lane.
     for index in (select, apply, verify):
         assert 'factory/launch.py" --department "${DEPARTMENT}" -- python3' in lines[index]
         assert "--state-dir \"${STATE_DIR}\"" in lines[index]
         assert "--fingerprint \"${fingerprint}\"" in lines[index]
         assert "--shadow" in lines[index]
-        assert "|| true" in lines[index]
+        assert "|| true" not in lines[index]
     assert "--playbook \"${playbook}\"" in lines[apply]
+    script = "\n".join(lines)
+    assert "append_heal_failure" in script
+    assert "heal_failures.jsonl" in script
     assert "--playbook \"${playbook}\"" in lines[verify]
 
 

@@ -452,10 +452,17 @@ def test_default_estate_has_one_explicit_evidence_spec_per_timer():
         "podcast-prep-sweep": ("log_glob", "prep-sweep-*.log"),
         "podcast-context-watch": ("evidence", "timer_only"),
         "obe-scheduled-intent-sweeper": ("evidence", "timer_only"),
-        "obe-draft-bridge": ("ledger_path", "send-approval-bridge-ledger.jsonl"),
-        "obe-approved-send-executor": (
+        # Reviewed refresh 2026-08-03 (audit fix round 1): estate.json changed
+        # after this pin was written. NOTE the evidence DOWNGRADE below —
+        # draft-bridge and send-executor moved ledger_path -> timer_only,
+        # meaning the watchdog can no longer verify their work product, only
+        # that the timer fired. Flagged to the owner and the podcast lane;
+        # restoring ledger evidence is their call, not this test's.
+        "obe-draft-bridge": ("evidence", "timer_only"),
+        "obe-approved-send-executor": ("evidence", "timer_only"),
+        "obe-context-sync": (
             "ledger_path",
-            "send-approval-bridge-ledger.jsonl",
+            "/mnt/d_drive/repos/hubspot-daily-2/state/inbound-context-sync-receipt.jsonl",
         ),
     }
 

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from factory import runrecord
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_STATE_DIR = REPO_ROOT / "departments" / "podcast" / "state"
@@ -107,6 +109,7 @@ def write_record(
     shadow: bool = True,
     now: str | None = None,
     lock_timeout: float = 3.0,
+    emit_v2: bool = False,
 ) -> dict[str, Any]:
     """Record one node run: runs.jsonl, STATE.json, then heartbeat.
 
@@ -168,7 +171,27 @@ def write_record(
             )
             handle.flush()
             os.fsync(handle.fileno())
-        return receipt
+    if emit_v2:
+        # Compatibility sidecar for the standalone N9 stage. Library callers
+        # already emit their own node-specific v2 row after this legacy write.
+        # A v2 append failure deliberately escapes and fails the stage.
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="record",
+            status="ok",
+            epoch=epoch,
+            release=runrecord.read_release(state_dir.parent),
+            trigger=None,
+            cost={"lane": "flat_subscription", "model_calls": 0},
+            artifacts=[{
+                "kind": "legacy_receipt",
+                "path": str(state_dir / "runs.jsonl"),
+                "epoch": epoch,
+            }],
+            external_actions_taken=0,
+        )
+    return receipt
 
 
 def _parse_payload(value: str) -> Any:
@@ -198,6 +221,7 @@ def main() -> None:
         _parse_payload(args.payload),
         intended_epoch=args.intended_epoch,
         shadow=args.shadow,
+        emit_v2=True,
     )
     print(json.dumps(receipt, sort_keys=True))
 

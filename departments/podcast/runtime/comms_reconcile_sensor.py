@@ -3,8 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from factory import runrecord
 
 
 ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
@@ -90,13 +99,59 @@ def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> 
     return reconcile(tracker, ledger)
 
 
+def run_stage(
+    tracker_path: Path,
+    ledger_path: Path,
+    state_dir: Path,
+    sla_hours: int | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Reconcile and fail closed unless its inline receipt reaches v2 storage."""
+    started = time.perf_counter()
+    result = run(tracker_path, ledger_path, sla_hours)
+    codes = [str(row.get("code", "unknown")) for row in result["findings"]]
+    unreadable = "input_unreadable" in codes
+    runrecord.emit_record(
+        state_dir,
+        department="podcast",
+        node="comms_reconcile_sensor",
+        status="blocked" if unreadable else "ok",
+        release=runrecord.read_release(Path(state_dir).parent),
+        trigger={
+            "kind": "time",
+            "id": "podcast-daily",
+            "dedupe_key": (
+                f"{datetime.now(timezone.utc).date().isoformat()}-comms_reconcile_sensor"
+            ),
+        },
+        cost={"lane": "flat_subscription", "model_calls": 0},
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        errors=codes if unreadable else [],
+        artifacts=[{
+            "kind": "stdout_receipt",
+            "node": "comms_reconcile_sensor",
+            "finding_codes": codes,
+        }],
+        external_actions_taken=0,
+    )
+    return result
+
+
 def main() -> None:
+    repo = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
     parser.add_argument("--tracker", type=Path, required=True)
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--sla-hours", type=int)
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=repo / "departments/podcast/state",
+    )
     args = parser.parse_args()
-    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
+    print(json.dumps(
+        run_stage(args.tracker, args.ledger, args.state_dir, args.sla_hours),
+        sort_keys=True,
+    ))
 
 
 if __name__ == "__main__":

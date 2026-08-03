@@ -1,0 +1,50 @@
+department: social
+triggers:
+  # departments/social/runtime/systemd/loop-factory-social-manager.timer:10-11
+  - kind: time
+    spec:
+      on_calendar: "*:15/30"
+      persistent: true
+      catch_up: coalesce
+  # departments/social/runtime/systemd/loop-factory-social-manager.service:18-21 runs the manager objective comparison.
+  - kind: goal
+    spec:
+      source_path: departments/social/state/objectives.jsonl
+      cursor_policy:
+        first_run: eof
+  # departments/social/runtime/social_daily.sh:25,29-55 appends runtime incident candidates.
+  - kind: event
+    spec:
+      source_path: departments/social/state/incident_candidates.json
+      cursor_policy:
+        first_run: eof
+concurrency:
+  max_concurrent: 1  # DEFAULT pending owner review
+  overlap_policy: skip  # DEFAULT pending owner review
+alerting:
+  classification_table:
+    - code: objective_breach
+      route: human
+    - code: release_drift
+      route: proposal
+    # departments/social/runtime/social_daily.sh:134-140,227,423-461
+    - code: missing_receipt
+      route: human
+    - code: invalid_receipt
+      route: human
+    - code: all_draft_engines_failed
+      route: human
+    - code: engine_unavailable
+      route: human
+    - code: qa_non_convergence
+      route: human
+  dedupe_window_minutes: 60  # DEFAULT pending owner review
+  digest:
+    cap_per_day: 1  # DEFAULT pending owner review; charter declares weekly batching but no numeric ping ceiling.
+    cooldown_minutes: 360  # DEFAULT pending owner review
+escalation:
+  owner: ankit  # departments/social/charter.yaml:185-188
+  sla_hours: 24  # departments/social/charter.yaml:185-189
+activation:
+  enabled_by_default: false
+

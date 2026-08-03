@@ -1,0 +1,111 @@
+department: podcast
+triggers:
+  # departments/podcast/runtime/systemd/podcast-daily-department.timer:8-9
+  - kind: time
+    spec:
+      on_calendar: "*-*-* 07:00:00"
+      persistent: true
+      catch_up: coalesce
+  # departments/podcast/runtime/pipeline_sensor.py:172-181 identifies the daily run and its receipt stream.
+  - kind: goal
+    spec:
+      source_path: departments/podcast/state/runs.jsonl
+      cursor_policy:
+        first_run: eof
+  # departments/podcast/runtime/compare_charter.py:210-245 emits incident candidates from sensed breaches.
+  - kind: event
+    spec:
+      source_path: departments/podcast/state/incident_candidates.json
+      cursor_policy:
+        first_run: eof
+concurrency:
+  max_concurrent: 1  # DEFAULT pending owner review
+  overlap_policy: skip  # DEFAULT pending owner review
+alerting:
+  classification_table:
+    - code: objective_breach
+      route: human
+    - code: release_drift
+      route: proposal
+    # departments/podcast/runtime/compare_charter.py:32-64,116-127
+    - code: dag_receipt_violation
+      route: human
+    - code: timer_failed
+      route: human
+    - code: receipt_stale
+      route: human
+    - code: log_error
+      route: human
+    - code: channel_failed
+      route: human
+    - code: vps_service_failed
+      route: human
+    - code: timer_unknown
+      route: human
+    - code: ledger_blind
+      route: human
+    - code: ledger_failed
+      route: human
+    - code: receipt_unknown
+      route: human
+    - code: log_unknown
+      route: human
+    - code: channel_unknown
+      route: human
+    - code: vps_unknown
+      route: human
+    - code: timer_warning
+      route: proposal
+    - code: receipt_warning
+      route: proposal
+    - code: log_warning
+      route: proposal
+    - code: channel_warning
+      route: proposal
+    - code: vps_warning
+      route: proposal
+    - code: pipeline_below_target
+      route: human
+    - code: pipeline_warn
+      route: proposal
+    - code: pipeline_unknown
+      route: human
+    - code: publish_missing
+      route: human
+    - code: publish_unknown
+      route: human
+    - code: manifest_incomplete
+      route: human
+    - code: manifest_gap
+      route: proposal
+    - code: manifest_unknown
+      route: human
+    - code: receipt_hollow
+      route: human
+    - code: evidence_missing
+      route: human
+    # departments/podcast/runtime/dag_supervisor.py:63-166,219-228
+    - code: schema_mismatch
+      route: human
+    - code: dag_hash_mismatch
+      route: human
+    - code: stale_projection
+      route: human
+    - code: silent_skip
+      route: human
+    - code: invalid_skip_artifact
+      route: human
+    - code: unreadable_episode
+      route: human
+    - code: projection_missing
+      route: human
+  dedupe_window_minutes: 60  # DEFAULT pending owner review
+  digest:
+    # departments/podcast/charter.yaml:45-47: five pings/day, then batch into digest.
+    cap_per_day: 5
+    cooldown_minutes: 360  # DEFAULT pending owner review
+escalation:
+  owner: ankit  # departments/podcast/charter.yaml:13
+  sla_hours: 24  # departments/podcast/charter.yaml:167-173
+activation:
+  enabled_by_default: false

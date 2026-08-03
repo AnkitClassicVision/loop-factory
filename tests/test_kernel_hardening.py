@@ -4,6 +4,7 @@ Each test is a failing scenario the reviewer described; they must all pass after
 the hardening. Source: kernel-v1 GLM security review, 2026-07-21.
 """
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,59 @@ def test_p1n1_torn_ledger_line_does_not_brick_startup(tmp_path):
     ls2 = _svc(tmp_path)
     with pytest.raises(LS.dispatch.GatewayDenied):
         ls2.send("x@y.co", "s", "b", issued["receipt"], slot=issued["slot"], sink=tmp_path / "s2.jsonl")
+
+
+def test_nonce_ledger_torn_final_line_is_tolerated_and_logged(tmp_path, caplog):
+    consumed = tmp_path / "n.consumed.jsonl"
+    consumed.write_bytes(b'{"nonce":"durable"}\n{"nonce":"torn')
+
+    with caplog.at_level("WARNING"):
+        ls = _svc(tmp_path)
+
+    assert "durable" in ls.seen_nonces
+    assert "provably torn final nonce-ledger row" in caplog.text
+    assert f"{consumed}:2" in caplog.text
+
+
+def test_nonce_ledger_malformed_middle_row_refuses_with_file_and_line(tmp_path):
+    consumed = tmp_path / "n.consumed.jsonl"
+    consumed.write_text(
+        '{"nonce":"first"}\nnot-json\n{"nonce":"last"}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LS.LockServiceDown) as caught:
+        _svc(tmp_path)
+
+    assert f"{consumed}:2" in str(caught.value)
+
+
+def test_nonce_ledger_complete_json_garbage_final_row_refuses(tmp_path):
+    consumed = tmp_path / "n.consumed.jsonl"
+    consumed.write_text(
+        '{"nonce":"first"}\n{"garbage":true}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(LS.LockServiceDown) as caught:
+        _svc(tmp_path)
+
+    assert f"{consumed}:2" in str(caught.value)
+
+
+def test_nonce_ledger_clean_consume_reload_round_trip_is_unchanged(tmp_path):
+    ls = _svc(tmp_path)
+    issued = ls.request_send("x@y.co", "s", "b", person="p1", org="o1")
+    ls.send(
+        "x@y.co", "s", "b", issued["receipt"],
+        slot=issued["slot"], sink=tmp_path / "s.jsonl",
+    )
+    consumed = tmp_path / "n.consumed.jsonl"
+    expected_bytes = (json.dumps({"nonce": issued["nonce"]}) + "\n").encode()
+
+    assert consumed.read_bytes() == expected_bytes
+    restarted = _svc(tmp_path)
+    assert issued["nonce"] in restarted.seen_nonces
+    assert consumed.read_bytes() == expected_bytes
 
 
 # --- P1 #5: credential env is an allowlist -------------------------------- #

@@ -6,17 +6,114 @@
 # auto-enabled by the factory. Shadow-only by design: a live flag is never used.
 set -euo pipefail
 
-REPO="/mnt/d_drive/repos/loop-factory"
+REPO="${PODCAST_REPO_ROOT:-/mnt/d_drive/repos/loop-factory}"
 DEPARTMENT="podcast"
 # Sensors import factory.* as a package; PYTHONPATH is on the kernel env
 # allowlist, so the confined launcher passes it through.
 export PYTHONPATH="${REPO}"
-STATE_DIR="${REPO}/departments/${DEPARTMENT}/state"
+STATE_DIR="${PODCAST_STATE_DIR:-${REPO}/departments/${DEPARTMENT}/state}"
 SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
 mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
+
+append_heal_failure() {
+    local fingerprint="$1" stage="$2" exit_code="$3" detail="$4" playbook="${5:-}"
+    python3 - "${STATE_DIR}/heal_failures.jsonl" "${fingerprint}" "${playbook}" "${stage}" "${exit_code}" "${detail}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, fingerprint, playbook, stage, exit_code, detail = sys.argv[1:]
+row = {
+    "ts": datetime.now(timezone.utc).isoformat(),
+    "fingerprint": fingerprint,
+    "playbook": playbook,
+    "mode": "proposed",
+    "commands": [],
+    "result": "failed",
+    "detail": f"orchestrator {stage} failure: {detail}",
+    "stage": stage,
+    "exit_code": int(exit_code),
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(row, sort_keys=True) + "\n")
+PY
+}
+
+json_object_field() {
+    local field="$1"
+    python3 -c 'import json, sys; row=json.load(sys.stdin); assert isinstance(row, dict); value=row[sys.argv[1]]; assert isinstance(value, str) and value; print(value)' "${field}"
+}
+
+validate_json_object() {
+    python3 -c 'import json, sys; assert isinstance(json.load(sys.stdin), dict)'
+}
+
+run_heal_phase() {
+    local incident_list fingerprint selection playbook output rc
+    rc=0
+    incident_list="$(
+        python3 -c 'import json, sys; incidents = json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(incidents, dict); print("\n".join(sorted(key for key, incident in incidents.items() if isinstance(incident, dict) and incident.get("state") in {"open", "department_defect"})))' "${STATE_DIR}/incidents.json"
+    )" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        echo "incident-list load failed with rc=${rc}" >&2
+        return "${rc}"
+    fi
+
+    while IFS= read -r fingerprint; do
+        [ -n "${fingerprint}" ] || continue
+        rc=0
+        selection="$(
+            python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_select.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --shadow
+        )" || rc=$?
+        if [ "${rc}" -ne 0 ]; then
+            append_heal_failure "${fingerprint}" "heal_select" "${rc}" "process exited nonzero"
+            continue
+        fi
+        # Empty stdout is the selector's recorded-refusal contract.
+        if [ -z "${selection}" ]; then
+            continue
+        fi
+        rc=0
+        playbook="$(json_object_field id <<<"${selection}")" || rc=$?
+        if [ "${rc}" -ne 0 ]; then
+            append_heal_failure "${fingerprint}" "heal_select_parse" "${rc}" "stdout was not a selection object"
+            continue
+        fi
+
+        rc=0
+        output="$(
+            python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_apply.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow
+        )" || rc=$?
+        if [ "${rc}" -ne 0 ]; then
+            append_heal_failure "${fingerprint}" "heal_apply" "${rc}" "process exited nonzero" "${playbook}"
+            continue
+        fi
+        if ! validate_json_object <<<"${output}"; then
+            append_heal_failure "${fingerprint}" "heal_apply_parse" 1 "stdout was not a receipt object" "${playbook}"
+            continue
+        fi
+
+        rc=0
+        output="$(
+            python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_verify.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow
+        )" || rc=$?
+        if [ "${rc}" -ne 0 ]; then
+            append_heal_failure "${fingerprint}" "heal_verify" "${rc}" "process exited nonzero" "${playbook}"
+            continue
+        fi
+        if ! validate_json_object <<<"${output}"; then
+            append_heal_failure "${fingerprint}" "heal_verify_parse" 1 "stdout was not a receipt object" "${playbook}"
+        fi
+    done <<<"${incident_list}"
+}
+
+if [ "${1:-}" = "--heal-phase-only" ]; then
+    run_heal_phase
+    exit $?
+fi
 
 # 1) Watchdog chain (SHADOW). Each node runs through the confinement launcher
 #    (factory/launch.py) so the department holds no credentials, and stays in
@@ -26,6 +123,12 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+# The escalation answer-return reader is receipt-gated: nonzero, empty, or
+# non-object stdout stops the chain before compare/dedup can advance.
+comms_receipt="$(
+    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/comms_reconcile_sensor.py" --tracker "${SOURCES}/referral_touch_tracker.json" --ledger "${SOURCES}/referral_ledger.json" --sla-hours 48 --state-dir "${STATE_DIR}"
+)"
+validate_json_object <<<"${comms_receipt}"
 # DAG supervisor (map node N1): validates the pipeline's hashed projection
 # receipt. The PIPELINE exports the file on its own timer (podcast repo,
 # podcast-dag-projection.timer); this department only reads it — supervisory
@@ -52,22 +155,7 @@ python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --departm
 # 4) Propose allowlisted heals for every open incident (SHADOW). Heal failures
 #    do not abort the daily chain because the manager senses their run records
 #    and heal receipts and drives the heal ladder or human escalation.
-while IFS= read -r fingerprint; do
-    selection="$(
-        python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_select.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --shadow || true
-    )"
-    if [ -z "${selection}" ]; then
-        continue
-    fi
-    playbook="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<<"${selection}" || true)"
-    if [ -z "${playbook}" ]; then
-        continue
-    fi
-    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_apply.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow || true
-    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/heal_verify.py" --state-dir "${STATE_DIR}" --fingerprint "${fingerprint}" --playbook "${playbook}" --shadow || true
-done < <(
-    python3 -c 'import json, sys; incidents = json.load(open(sys.argv[1], encoding="utf-8")); print("\n".join(sorted(key for key, incident in incidents.items() if isinstance(incident, dict) and incident.get("state") in {"open", "department_defect"})))' "${STATE_DIR}/incidents.json" || true
-)
+run_heal_phase
 
 # 5) Bound retained observation evidence after the daily consumers finish.
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/rotate_observations.py" --state-dir "${STATE_DIR}" --max-lines 5000
