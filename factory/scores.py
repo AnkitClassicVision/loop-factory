@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from kernel.jsonl_store import append_jsonl
 
 
 SCHEMA_VERSION = "score-record/v1"
+# Runner-injected correlation key (canonical name: kernel/capabilities.py).
+GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
 SOURCES = frozenset({"script", "judge", "human"})
 FIELDS = frozenset(
     {
@@ -27,6 +30,8 @@ FIELDS = frozenset(
     }
 )
 TARGET_FIELDS = frozenset({"run_id", "step_id", "node", "department"})
+# Additive, backward-compatible: pre-existing emitters omit it entirely.
+OPTIONAL_TARGET_FIELDS = frozenset({"graph_run_id"})
 
 
 def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
@@ -67,12 +72,22 @@ def validate_score(record: dict[str, Any]) -> dict[str, Any]:
     if record["source"] == "judge" and record["judge_model"] is None:
         raise ValueError("judge_model is required when source is judge")
     target = record["target_ref"]
-    if not isinstance(target, dict) or set(target) != TARGET_FIELDS:
-        raise ValueError("target_ref must contain run_id, step_id, node, department")
+    if (
+        not isinstance(target, dict)
+        or not TARGET_FIELDS <= set(target)
+        or set(target) - TARGET_FIELDS - OPTIONAL_TARGET_FIELDS
+    ):
+        raise ValueError(
+            "target_ref must contain run_id, step_id, node, department "
+            "(graph_run_id optional)"
+        )
     for field in ("node", "department"):
         _require_text(f"target_ref.{field}", target[field])
     for field in ("run_id", "step_id"):
         _require_text(f"target_ref.{field}", target[field], nullable=True)
+    if "graph_run_id" in target:
+        _require_text("target_ref.graph_run_id", target["graph_run_id"],
+                      nullable=True)
     try:
         json.dumps(record, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -92,6 +107,15 @@ def build_score(
     target_ref: dict[str, Any],
     ts: str | None = None,
 ) -> dict[str, Any]:
+    # Inside a graph-runner node process the injected identity is the default;
+    # an explicitly supplied graph_run_id is left for append_score to gate.
+    env_graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
+    if (
+        isinstance(target_ref, dict)
+        and "graph_run_id" not in target_ref
+        and env_graph_run_id is not None
+    ):
+        target_ref = {**target_ref, "graph_run_id": env_graph_run_id}
     return validate_score(
         {
             "gen_ai.evaluation.name": name,
@@ -109,5 +133,19 @@ def build_score(
 
 
 def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
-    """Validate and append one score to ``state/scores.jsonl``."""
-    return append_jsonl(Path(state_dir) / "scores.jsonl", validate_score(record))
+    """Validate and append one score to ``state/scores.jsonl``.
+
+    Fail-closed identity gate: inside a graph-runner node process (the runner
+    injects GRAPH_RUN_ID_ENV) a score whose target_ref is missing or carries a
+    different graph_run_id is refused, never silently appended.
+    """
+    validated = validate_score(record)
+    required = os.environ.get(GRAPH_RUN_ID_ENV) or None
+    if required is not None:
+        supplied = validated["target_ref"].get("graph_run_id")
+        if supplied != required:
+            raise ValueError(
+                "target_ref.graph_run_id must match the runner-injected "
+                + GRAPH_RUN_ID_ENV
+            )
+    return append_jsonl(Path(state_dir) / "scores.jsonl", validated)

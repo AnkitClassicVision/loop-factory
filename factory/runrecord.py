@@ -10,6 +10,7 @@ import copy
 import fcntl
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,6 +19,12 @@ from typing import Any, Iterator
 
 
 SCHEMA = "run-record/v2"
+
+# Runner-injected correlation key (canonical name: kernel/capabilities.py).
+# When this env var is present the emitter is running inside a graph-runner
+# node process and every appended record MUST carry the matching graph_run_id.
+GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
+_GRAPH_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
 
 _REQUIRED_FIELDS = frozenset(
     {
@@ -48,6 +55,9 @@ _REQUIRED_FIELDS = frozenset(
     }
 )
 _DERIVED_FIELDS = frozenset({"metered_violation"})
+# Additive, backward-compatible fields: absent in pre-existing records and in
+# emitters that run outside the graph runner.
+_OPTIONAL_FIELDS = frozenset({"graph_run_id"})
 _AUTH_CLASSES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "blocked", None}
 )
@@ -136,15 +146,22 @@ def _validate_cost(value: Any) -> bool:
     return value["lane"] == "metered_forbidden"
 
 
+def _validate_graph_run_id(value: Any) -> None:
+    if not isinstance(value, str) or _GRAPH_RUN_ID.fullmatch(value) is None:
+        _fail("graph_run_id", "must be a safe identifier string")
+
+
 def build_record(**fields: Any) -> dict[str, Any]:
     """Validate fields against the locked v2 contract and return a copy."""
     actual = set(fields)
     missing = _REQUIRED_FIELDS - actual
     if missing:
         _fail(sorted(missing)[0], "is required")
-    unknown = actual - _REQUIRED_FIELDS
+    unknown = actual - _REQUIRED_FIELDS - _OPTIONAL_FIELDS
     if unknown:
         _fail(sorted(unknown)[0], "is not allowed")
+    if "graph_run_id" in fields:
+        _validate_graph_run_id(fields["graph_run_id"])
 
     if fields["schema"] != SCHEMA:
         _fail("schema", f"must equal {SCHEMA!r}")
@@ -193,12 +210,16 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
     """Validate a complete record, including its derived violation marker."""
     if not isinstance(record, dict):
         _fail("record", "must be dict")
-    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS
+    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS - _OPTIONAL_FIELDS
     if unknown:
         _fail(sorted(unknown)[0], "is not allowed")
 
     supplied_violation = record.get("metered_violation")
-    base_fields = {key: record[key] for key in record if key in _REQUIRED_FIELDS}
+    base_fields = {
+        key: record[key]
+        for key in record
+        if key in _REQUIRED_FIELDS or key in _OPTIONAL_FIELDS
+    }
     validated = build_record(**base_fields)
     expected_violation = validated.get("metered_violation")
     if "metered_violation" in record:
@@ -212,8 +233,24 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
-    """Validate and append one fsynced JSON line under an exclusive lock."""
+    """Validate and append one fsynced JSON line under an exclusive lock.
+
+    Fail-closed identity gate: inside a graph-runner node process (the runner
+    injects GRAPH_RUN_ID_ENV) a record without the matching graph_run_id would
+    fragment the execution's identity, so it is refused, never silently
+    appended.
+    """
     validated = validate_record(record)
+    required = os.environ.get(GRAPH_RUN_ID_ENV)
+    if required:
+        supplied = validated.get("graph_run_id")
+        if supplied is None:
+            _fail("graph_run_id",
+                  "is required when running under the graph runner "
+                  f"({GRAPH_RUN_ID_ENV} is set)")
+        if supplied != required:
+            _fail("graph_run_id",
+                  f"does not match the runner-injected {GRAPH_RUN_ID_ENV}")
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "runs-v2.jsonl"
@@ -276,8 +313,12 @@ def emit_record(
     evaluator: dict[str, Any] | None = None,
     approval: dict[str, Any] | None = None,
     external_actions_taken: int = 0,
+    graph_run_id: str | None = None,
 ) -> Path:
     """Build and append one v2 record with generated identity and timestamp."""
+    if graph_run_id is None:
+        graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
+    optional = {} if graph_run_id is None else {"graph_run_id": graph_run_id}
     record = build_record(
         schema=SCHEMA,
         rev=2,
@@ -303,6 +344,7 @@ def emit_record(
         evaluator=evaluator,
         approval=approval,
         external_actions_taken=external_actions_taken,
+        **optional,
     )
     return append_record(state_dir, record)
 

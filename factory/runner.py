@@ -84,8 +84,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER_VERSION = "2.4.0"
+RUNNER_VERSION = "2.5.0"
 RUN_STATE_SCHEMA = "graph-run-v1"
+# Correlation identity injected into every node process AFTER the capability
+# scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical names
+# in kernel/capabilities.py). Every record stream an emitter writes inside a
+# runner-executed node — runs-v2, telemetry, scores — carries this run_id.
+GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
+GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
 
@@ -372,7 +378,8 @@ class _Run:
 
     def log(self, event: str, **fields) -> None:
         row = {"ts": _now_iso(self.now_fn), "event": event,
-               "run_id": self.run_id, "loop_id": self.loop_id, **fields}
+               "run_id": self.run_id, "graph_run_id": self.run_id,
+               "loop_id": self.loop_id, **fields}
         with records_lock(self.state_dir):
             _append_jsonl(self.state_dir / "runs.jsonl", row)
 
@@ -389,11 +396,17 @@ class _Run:
             self.log(event, state=new_state, **fields)
 
 
-def _launch_node(dept_name: str, script: Path, *, root: Path, env_base) -> tuple:
+def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
+                 graph_run_id: str, node_id: str) -> tuple:
     launch = _load("launch", "factory/launch.py")
     captured: dict = {}
 
     def _capture(command, env):
+        # Identity markers are injected AFTER the capability scrub, exactly
+        # like OE_DEPARTMENT — they are correlation keys, never credentials.
+        env = dict(env)
+        env[GRAPH_RUN_ID_ENV] = graph_run_id
+        env[GRAPH_NODE_ID_ENV] = node_id
         proc = subprocess.run(command, env=env, capture_output=True, text=True)
         captured["proc"] = proc
         return proc
@@ -424,7 +437,8 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
         if attempt > 1:
             sleep_fn(float(policy["backoff_s"]))
         returncode, stdout, stderr = _launch_node(
-            dept_name, script, root=root, env_base=env_base)
+            dept_name, script, root=root, env_base=env_base,
+            graph_run_id=run.run_id, node_id=node["id"])
         run.log("node_attempt", node_id=node["id"], attempt=attempt,
                 exit_code=returncode)
         if returncode != 0:
@@ -650,6 +664,9 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
             env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
             receipt_ttl_s=receipt_ttl_s, crash_hook=crash_hook)
 
+        if final_state in ("escalated", "killed"):
+            _bridge_escalation(run, final_state)
+
         try:
             _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
                                now_fn=now_fn)
@@ -678,6 +695,33 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
                 "resumed": resumed_from is not None}
     finally:
         run_lock.close()
+
+
+def _bridge_escalation(run: _Run, final_state: str) -> None:
+    """Runner->manager escalation bridge (report + escalate only, no new
+    authority). A terminal escalated/killed run appends one durable,
+    manager-readable record to department state; factory/manager.py senses it
+    on the next cycle, raises a breach finding, and delivers it to the
+    human-in-the-loop outbox. A record failure here propagates — records are
+    hard rule 5; an escalation that cannot be recorded must never look
+    handled. Duplicate rows from a crash-resume window are harmless: the
+    manager replays them keyed by run_id and the outbox delivery is
+    fingerprint-deduplicated."""
+    row = {
+        "ts": _now_iso(run.now_fn),
+        "event": "graph_run_escalation",
+        "department": run.dept_dir.name,
+        "loop_id": run.loop_id,
+        "run_id": run.run_id,
+        "graph_run_id": run.run_id,
+        "state": final_state,
+        "termination_reason": run.record.get("termination_reason"),
+        "marker": "open",
+    }
+    with records_lock(run.state_dir):
+        _append_jsonl(run.state_dir / "graph_escalations.jsonl", row)
+    run.log("escalation_bridged", state=final_state,
+            termination_reason=row["termination_reason"])
 
 
 def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,

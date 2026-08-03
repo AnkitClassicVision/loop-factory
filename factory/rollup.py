@@ -43,11 +43,12 @@ CREATE TABLE department (
 );
 CREATE TABLE run (
   id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT NOT NULL,
-  current_step TEXT, status TEXT, ts TEXT, epoch INTEGER, source_ref TEXT,
-  schema_version TEXT NOT NULL
+  graph_run_id TEXT, current_step TEXT, status TEXT, ts TEXT, epoch INTEGER,
+  source_ref TEXT, schema_version TEXT NOT NULL
 );
 CREATE TABLE step_telemetry (
-  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, step_id TEXT, node TEXT,
+  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, graph_run_id TEXT,
+  step_id TEXT, node TEXT,
   ts TEXT, operation_name TEXT, provider_name TEXT, request_model TEXT,
   response_model TEXT, input_tokens INTEGER, output_tokens INTEGER,
   finish_reasons_json TEXT, duration_ms INTEGER, error_type TEXT,
@@ -61,7 +62,8 @@ CREATE TABLE receipt (
   schema_version TEXT NOT NULL
 );
 CREATE TABLE score (
-  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, step_id TEXT,
+  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, graph_run_id TEXT,
+  step_id TEXT,
   node TEXT NOT NULL, name TEXT NOT NULL, value REAL NOT NULL, label TEXT NOT NULL,
   explanation TEXT NOT NULL, source TEXT NOT NULL, judge_model TEXT,
   config_version TEXT NOT NULL, ts TEXT NOT NULL, source_ref TEXT,
@@ -76,8 +78,11 @@ CREATE TABLE approval (
   queued_at TEXT, card_ref TEXT, source_ref TEXT, schema_version TEXT NOT NULL
 );
 CREATE INDEX run_by_status_ts ON run(status, ts);
+CREATE INDEX run_by_graph_run ON run(graph_run_id);
 CREATE INDEX telemetry_by_department_ts ON step_telemetry(department, ts);
+CREATE INDEX telemetry_by_graph_run ON step_telemetry(graph_run_id);
 CREATE INDEX score_by_department_label ON score(department, label);
+CREATE INDEX score_by_graph_run ON score(graph_run_id);
 CREATE INDEX incident_by_status ON incident(status);
 CREATE INDEX approval_by_status_age ON approval(status, queued_at);
 """
@@ -278,6 +283,7 @@ def _run_rows(
             status = "active" if node and node != "manager_tick" else "unknown"
         try:
             run_id = _identifier(run_id, "run_id", nullable=False)
+            graph_run_id = _identifier(row.get("graph_run_id"), "graph_run_id")
             node = _identifier(node, "node")
             ts = _identifier(ts, "timestamp")
             status = _identifier(status, "status", nullable=False)
@@ -294,6 +300,7 @@ def _run_rows(
             "id": _stable_id("run", department, run_id),
             "department": department,
             "run_id": run_id,
+            "graph_run_id": graph_run_id,
             "current_step": node,
             "status": status,
             "ts": ts,
@@ -338,6 +345,9 @@ def _telemetry_rows(root, path, department, incidents):
                     nullable=False,
                 ),
                 "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
+                "graph_run_id": _identifier(
+                    row.get("loopfactory.graph_run_id"), "graph_run_id"
+                ),
                 "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
                 "node": _identifier(row.get("loopfactory.node"), "node"),
                 "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
@@ -381,6 +391,7 @@ def _telemetry_rows(root, path, department, incidents):
                 "id": _stable_id("telemetry", department, source_ref, line_number),
                 "department": safe_values["department"],
                 "run_id": safe_values["run_id"],
+                "graph_run_id": safe_values["graph_run_id"],
                 "step_id": safe_values["step_id"],
                 "node": safe_values["node"],
                 "ts": safe_values["ts"],
@@ -413,6 +424,9 @@ def _score_rows(root, path, department, incidents):
     for line_number, row in _read_jsonl(root, path, department, incidents):
         try:
             row = score_records.validate_score(row)
+            graph_run_id = _identifier(
+                row["target_ref"].get("graph_run_id"), "graph_run_id"
+            )
         except ValueError as exc:
             incidents.append(
                 _incident(
@@ -429,6 +443,7 @@ def _score_rows(root, path, department, incidents):
                 "id": _stable_id("score", department, source_ref, line_number),
                 "department": target.get("department") or department,
                 "run_id": target.get("run_id"),
+                "graph_run_id": graph_run_id,
                 "step_id": target.get("step_id"),
                 "node": target.get("node") or "unknown",
                 "name": row.get("gen_ai.evaluation.name") or "unknown",
@@ -735,6 +750,40 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
     }
 
 
+def graph_run_bundle(db_path: str | Path, graph_run_id: str) -> dict[str, list]:
+    """Return every rollup row correlated to ONE graph execution.
+
+    The graph runner's run_id is the correlation key: its own runs.jsonl rows
+    carry it as run_id (and graph_run_id), while runs-v2 wrapper summaries,
+    step telemetry, and scores reference it as graph_run_id.
+    """
+    graph_run_id = _identifier(graph_run_id, "graph_run_id", nullable=False)
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        bundle = {
+            "run": [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM run WHERE run_id = ? OR graph_run_id = ? "
+                    "ORDER BY id",
+                    (graph_run_id, graph_run_id),
+                )
+            ],
+        }
+        for entity in ("step_telemetry", "score"):
+            bundle[entity] = [
+                dict(row)
+                for row in connection.execute(
+                    f"SELECT * FROM {entity} WHERE graph_run_id = ? ORDER BY id",
+                    (graph_run_id,),
+                )
+            ]
+    finally:
+        connection.close()
+    return bundle
+
+
 def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]:
     db_path = Path(db_path)
     if db_path.name.endswith(".incomplete"):
@@ -749,7 +798,8 @@ def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]
             columns = "*"
             if entity == "score":
                 columns = (
-                    "id,department,run_id,step_id,node,name,value,label,source,"
+                    "id,department,run_id,graph_run_id,step_id,node,name,value,"
+                    "label,source,"
                     "judge_model,config_version,ts,source_ref,schema_version"
                 )
             records = [

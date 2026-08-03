@@ -7,6 +7,7 @@ from kernel.jsonl_store import append_jsonl
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
 
 
 SCHEMA_VERSION = "step-telemetry/v1"
+# Runner-injected correlation identity (canonical names:
+# kernel/capabilities.py). Present only inside a graph-runner node process.
+GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
+GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
 AUTH_ROUTES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
 )
@@ -185,6 +190,7 @@ def call_model(
     telemetry_path=None,
     department=None,
     run_id=None,
+    graph_run_id=None,
     step_id=None,
     node=None,
     operation_name="chat",
@@ -215,6 +221,7 @@ def call_model(
     safe_engine = None
     safe_department = None
     safe_run_id = None
+    safe_graph_run_id = None
     safe_step_id = None
     safe_node = None
     safe_auth_route = "blocked"
@@ -233,6 +240,25 @@ def call_model(
         safe_run_id = _optional_identifier(run_id, "run_id")
         safe_step_id = _optional_identifier(step_id, "step_id")
         safe_node = _optional_identifier(node, "node")
+        # Graph-runner identity: inside a runner-executed node the injected
+        # env value is authoritative — a caller-supplied mismatch refuses the
+        # call BEFORE the provider is invoked (fail-closed, never silent null).
+        safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
+        env_graph_run_id = _optional_identifier(
+            os.environ.get(GRAPH_RUN_ID_ENV) or None, GRAPH_RUN_ID_ENV
+        )
+        if env_graph_run_id is not None:
+            if safe_graph_run_id is not None and safe_graph_run_id != env_graph_run_id:
+                safe_graph_run_id = env_graph_run_id
+                raise ValueError(
+                    "graph_run_id does not match the runner-injected "
+                    + GRAPH_RUN_ID_ENV
+                )
+            safe_graph_run_id = env_graph_run_id
+        if safe_node is None:
+            safe_node = _optional_identifier(
+                os.environ.get(GRAPH_NODE_ID_ENV) or None, GRAPH_NODE_ID_ENV
+            )
         safe_auth_route = _optional_identifier(auth_route, "auth_route")
         if safe_auth_route not in AUTH_ROUTES:
             safe_auth_route = "blocked"
@@ -352,6 +378,7 @@ def call_model(
         "loopfactory.price.effective_date": price_effective_date,
         "loopfactory.department": safe_department,
         "loopfactory.run_id": safe_run_id,
+        "loopfactory.graph_run_id": safe_graph_run_id,
         "loopfactory.step_id": safe_step_id,
         "loopfactory.node": safe_node,
         "loopfactory.telemetry.source": (

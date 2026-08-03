@@ -214,6 +214,50 @@ def sense(
     }
 
 
+def sense_graph_escalations(state_dir) -> dict[str, Any]:
+    """Read-only, model-free replay of the runner->manager escalation bridge.
+
+    factory/runner.py appends one row per terminal escalated/killed graph run
+    to state/graph_escalations.jsonl. Rows are replayed keyed by run_id: an
+    'open' row (re)raises the escalation, a 'resolved' marker clears it, so
+    duplicate bridge rows from a crash-resume window collapse to one. A
+    stream that exists but cannot be parsed, or a row without a run_id, is
+    unverifiable and surfaces as its own breach (deny-by-default) — an
+    escalation must never vanish because its record is broken.
+    """
+    path = Path(state_dir) / "graph_escalations.jsonl"
+    active: dict[str, dict[str, Any]] = {}
+    unreadable = False
+    if path.exists():
+        try:
+            rows = _load_jsonl(path)
+        except (ValueError, OSError):
+            rows = []
+            unreadable = True
+        for row in rows:
+            run_id = row.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                unreadable = True
+                continue
+            marker = row.get("marker") or row.get("status")
+            if marker == "resolved" or row.get("resolved") is True:
+                active.pop(run_id, None)
+            else:
+                active[run_id] = {
+                    "run_id": run_id,
+                    "loop_id": row.get("loop_id"),
+                    "state": row.get("state"),
+                    "termination_reason": row.get("termination_reason"),
+                }
+    escalations = sorted(active.values(), key=lambda row: row["run_id"])
+    return {
+        "graph_escalations": escalations[:20],  # bounded for STATE.json
+        "graph_escalation_count": len(escalations),
+        "graph_escalations_truncated": len(escalations) > 20,
+        "graph_escalations_unreadable": unreadable,
+    }
+
+
 def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
     """Read-only, model-free release-drift snapshot (graphs.check_drift).
 
@@ -399,6 +443,29 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         findings.append(
             _finding("drift_unverifiable", "warn",
                      f"release drift not verifiable: {sensed['drift_skipped_reason']}",
+                     observed=None, setpoint=None)
+        )
+
+    # breach: a graph run terminated escalated/killed — the runner bridged it
+    # here and it stays open until a human resolves it. subject=run_id keeps
+    # the outbox delivery fingerprint unique per run.
+    for escalation in sensed.get("graph_escalations") or []:
+        finding = _finding(
+            "graph_run_escalated", "breach",
+            f"graph run {escalation.get('run_id')} "
+            f"({escalation.get('loop_id')}) terminated "
+            f"{escalation.get('state')}: "
+            f"{escalation.get('termination_reason')} — awaiting a human",
+            observed=1, setpoint=0)
+        finding["subject"] = escalation.get("run_id")
+        findings.append(finding)
+
+    # breach: the escalation bridge stream is unverifiable (fail-closed)
+    if sensed.get("graph_escalations_unreadable"):
+        findings.append(
+            _finding("graph_escalations_unreadable", "breach",
+                     "graph escalation records exist but could not be parsed "
+                     "— runner escalations are unverifiable (deny-by-default)",
                      observed=None, setpoint=None)
         )
 
@@ -797,6 +864,11 @@ def run_manager_cycle(
     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
     if dept_dir is not None:
         sensed.update(sense_drift(dept_dir, release_root))
+    # Like drift, the runner->manager escalation bridge is watched on every
+    # tick regardless of a department's custom sense_fn shape — a terminal
+    # escalated/killed graph run must never depend on the worker's telemetry
+    # contract to reach a human.
+    sensed.update(sense_graph_escalations(state_dir))
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(
