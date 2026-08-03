@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, shutil, subprocess
+import json, os, shutil, subprocess, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -64,13 +64,81 @@ def test_queue_ager_counts_old_not_fresh(tmp_path):
 
 def test_escalate_once_per_fingerprint(tmp_path):
     write_json(state(tmp_path)/"lane_sense.json",{"observations":[{"subject":"x","status":"unknown","reasons":["evidence_absent"]}]})
-    first=escalate_node.run(tmp_path);second=escalate_node.run(tmp_path)
-    assert first["new_escalations"]==1 and second["new_escalations"]==0
+    first=escalate_node.run(tmp_path);second=escalate_node.run(tmp_path);third=escalate_node.run(tmp_path)
+    assert first["new_escalations"]==0 and second["new_escalations"]==1 and third["new_escalations"]==0
     assert len((state(tmp_path)/"asks.jsonl").read_text().splitlines())==1
 
 def test_objectives_absent_when_upstream_missing(tmp_path):
     result=objectives_sensor.run(tmp_path)
-    assert all(row["status"]=="absent" for row in result["objectives"].values())
+    assert result["values"]=={}
+
+def objective_charter(tmp_path):
+    path=tmp_path/"fixture-charter.yaml"
+    path.write_text("""department: fixture
+owner: fixture-owner
+autonomy_state: shadow
+immutable_safety_invariants:
+  heal_may_not_modify: [autonomy_state]
+setpoints:
+  objectives:
+    outreach_state_drift: {label: State drift, unit: count, minimum: 0, setpoint: 0, target: 0, maximum: 10}
+    send_class_integrity: {label: Send integrity, unit: count, minimum: 0, setpoint: 0, target: 0, maximum: 10}
+    approval_queue_aged: {label: Aged approvals, unit: count, minimum: 0, setpoint: 0, target: 0, maximum: 10}
+""",encoding="utf-8")
+    return path
+
+def run_objective_gate(tmp_path, *extra):
+    return subprocess.run([sys.executable,"-m","factory.objectives_verify","--name","fixture","--charter",str(objective_charter(tmp_path)),"--objectives-file",str(state(tmp_path)/"objectives_observed.json"),*extra],cwd=REPO,capture_output=True,text=True)
+
+def test_objectives_real_gate_green(tmp_path):
+    write_json(state(tmp_path)/"state_reconcile.json",{"outreach_state_drift":0});write_json(state(tmp_path)/"gate_monitor.json",{"send_class_integrity":0});write_json(state(tmp_path)/"queue_ager.json",{"approval_queue_aged":0})
+    objectives_sensor.run(tmp_path);result=run_objective_gate(tmp_path)
+    assert result.returncode==0 and "OBJECTIVES_VERIFY_OK fixture" in result.stdout and "WHY" not in result.stdout
+
+def test_objectives_real_gate_all_absent_allowed_unknown(tmp_path):
+    objectives_sensor.run(tmp_path);result=run_objective_gate(tmp_path,"--allow-unknown")
+    assert result.returncode==0 and result.stdout.count("UNKNOWN ")==3 and "WHY" not in result.stdout
+
+def test_objectives_real_gate_breach_reports_why(tmp_path):
+    write_json(state(tmp_path)/"state_reconcile.json",{"outreach_state_drift":11});objectives_sensor.run(tmp_path);result=run_objective_gate(tmp_path,"--allow-unknown")
+    assert result.returncode==1 and "WHY outreach_state_drift observed: 11 exceeds maximum 10" in result.stdout
+
+def test_objectives_values_is_always_object(tmp_path):
+    result=objectives_sensor.run(tmp_path)
+    assert isinstance(result["values"],dict) and isinstance(json.loads((state(tmp_path)/"objectives_observed.json").read_text())["values"],dict)
+
+def test_objectives_observed_excludes_baselines(tmp_path):
+    result=objectives_sensor.run(tmp_path)
+    assert "baselines" not in result and "objectives" not in result and (state(tmp_path)/"objective_baselines.jsonl").is_file()
+
+def lane_failure(subject, path="proof.jsonl", reason="evidence_absent"):
+    return {"subject":subject,"status":"unknown","reasons":[reason],"metrics":{"evidence_path":path}}
+
+def test_first_run_missing_evidence_baselines_without_escalation(tmp_path):
+    write_json(state(tmp_path)/"lane_sense.json",{"observations":[lane_failure("lane-a","a.jsonl")]})
+    result=escalate_node.run(tmp_path)
+    rows=[json.loads(line) for line in (state(tmp_path)/"first_run_baseline.jsonl").read_text().splitlines()]
+    assert result["new_escalations"]==0 and any(r.get("lane")=="lane-a" and r.get("status")=="failing" for r in rows) and not (state(tmp_path)/"asks.jsonl").exists()
+
+def test_second_still_failing_ask_has_context(tmp_path):
+    write_json(state(tmp_path)/"lane_sense.json",{"observations":[lane_failure("lane-a","a.jsonl")]});escalate_node.run(tmp_path);result=escalate_node.run(tmp_path)
+    ask=json.loads((state(tmp_path)/"asks.jsonl").read_text().splitlines()[0]);draft=json.loads((state(tmp_path)/"outbox"/f"{ask['ask_id']}.json").read_text())
+    assert result["new_escalations"]==1
+    for row in (ask,draft):assert row["lane"]=="lane-a" and row["failure_class"]=="evidence_absent" and row["evidence_path"]=="a.jsonl" and row["observed_condition"]=="evidence_absent"
+
+def test_healthy_to_failed_transition_escalates_once(tmp_path):
+    write_json(state(tmp_path)/"lane_sense.json",{"observations":[{"subject":"lane-a","status":"ok","reasons":[],"metrics":{"evidence_path":"a.jsonl"}}]});assert escalate_node.run(tmp_path)["new_escalations"]==0
+    write_json(state(tmp_path)/"lane_sense.json",{"observations":[lane_failure("lane-a","a.jsonl")]})
+    assert escalate_node.run(tmp_path)["new_escalations"]==1 and escalate_node.run(tmp_path)["new_escalations"]==0
+
+def test_transition_ceiling_five_plus_digest_and_rerun_idempotent(tmp_path):
+    observations=[lane_failure(f"lane-{i}",f"proof-{i}.jsonl") for i in range(12)];write_json(state(tmp_path)/"lane_sense.json",{"observations":observations})
+    assert escalate_node.run(tmp_path)["new_escalations"]==0
+    second=escalate_node.run(tmp_path);asks=[json.loads(line) for line in (state(tmp_path)/"asks.jsonl").read_text().splitlines()]
+    assert second["new_escalations"]==6 and len(asks)==6 and sum(a["failure_class"]!="transition_digest" for a in asks)==5
+    digest=next(a for a in asks if a["failure_class"]=="transition_digest");draft=json.loads((state(tmp_path)/"outbox"/f"{digest['ask_id']}.json").read_text())
+    assert len(draft["failure"]["findings"])==7 and len((state(tmp_path)/"escalation_fingerprints.jsonl").read_text().splitlines())==12
+    assert escalate_node.run(tmp_path)["new_escalations"]==0 and len((state(tmp_path)/"asks.jsonl").read_text().splitlines())==6
 
 def test_all_emitted_v2_records_validate(tmp_path):
     target=state(tmp_path);artifact=target/"proof.json";write_json(artifact,{"ok":True})

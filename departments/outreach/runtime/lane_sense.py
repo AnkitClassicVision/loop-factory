@@ -49,6 +49,8 @@ def run(root: Path, estate_path: Path, now: datetime | None = None,
                 reasons.append(f"timer_probe_unknown:{type(exc).__name__}")
         evidence = item.get("evidence")
         pattern = item.get("log_glob") or item.get("receipt_glob") or item.get("ledger_path") or item.get("evidence_path")
+        if pattern:
+            metrics["evidence_path"] = str(pattern)
         if evidence != "timer_only":
             matches = [Path(p) for p in glob.glob(str(pattern or "")) if Path(p).is_file()]
             if not matches:
