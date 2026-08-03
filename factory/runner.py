@@ -891,7 +891,7 @@ def _log_refusal(state_dir: Path, reason: str, now_fn) -> None:
 def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
               subgraph_id: str | None = None, root=None, env_base=None,
               now_fn=time.time, sleep_fn=time.sleep,
-              receipt_ttl_s=None, crash_hook=None) -> dict:
+              receipt_ttl_s=None, crash_hook=None, export_hook=None) -> dict:
     """Execute one pinned graph run.
     Returns {"run_id", "state", "duplicate", "resumed"}."""
     receipts = _load("kreceipts", "kernel/receipts.py")
@@ -1087,7 +1087,7 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
 
         try:
             _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
-                               now_fn=now_fn)
+                               now_fn=now_fn, export_hook=export_hook)
         except Exception as exc:
             # R5-C4: a signing failure must not leave the PRIOR signed
             # projection in place as if it were current. Quarantine it
@@ -1549,37 +1549,67 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
 # --------------------------------------------------------------------------- #
 
 def _export_projection(dept_dir: Path, state_dir: Path, subgraph: dict,
-                       loaded: dict, signer, *, now_fn) -> None:
+                       loaded: dict, signer, *, now_fn,
+                       export_hook=None) -> None:
+    """Export the department's SIGNED execution projection.
+
+    The WHOLE transaction — scan, build, sign, atomic write — runs under the
+    department records fence (review F2-RACE). The projection is a single
+    shared, whole-department artifact, while each run holds only its OWN
+    per-run lock, so a scan performed outside the fence can be overtaken: a
+    slower run would publish a copy that predates a faster run's completion
+    and silently erase that run's authoritative backing — which, since
+    factory/rollup.py now derives graph-run rows from this file, quarantines
+    the erased run's records as graph_identity_unbacked.
+
+    Serializing the existing whole-file export was chosen over switching to
+    append-only or per-run projections: the projection's signature covers
+    the entire canonical body (structure AND every run's transition
+    history), and dag_supervisor-style auditors already verify exactly that
+    one artifact, so per-run files would fragment a verification surface
+    that PR #11 deliberately made whole, and an append-only log would need
+    its own compaction and last-writer rules to answer "what is the current
+    projection". Holding the fence across scan+sign costs one HMAC per run
+    export and gives the property outright: whichever run writes last also
+    scanned last, so the published projection always covers every run
+    persisted before it — and run_state persistence takes the same fence,
+    so a run that has not yet appeared is a run that has not yet committed.
+    """
     projection = _load("projection", "factory/projection.py")
     rungraph = _load("rungraph", "factory/rungraph.py")
-    runs = []
-    runs_root = state_dir / "graph_runs"
-    if runs_root.is_dir():
-        for state_path in sorted(runs_root.glob("*/run_state.json")):
-            try:
-                record = _strict_loads(state_path.read_text(encoding="utf-8"))
-            except ValueError:
-                continue
-            if record.get("loop_id") != subgraph["id"]:
-                continue
-            runs.append({"run_id": record.get("run_id"),
-                         "state": record.get("state"),
-                         "termination_reason": record.get("termination_reason"),
-                         "transitions": record.get("transitions", [])})
-    factory_version = loaded["manifest"].get("factory_version") or {
-        "graph_schema_version": rungraph.GRAPH_SCHEMA_VERSION,
-        "runner_version": RUNNER_VERSION,
-        "telemetry_schema_version": projection.TELEMETRY_SCHEMA_VERSION,
-        "template_set_hash": "unrecorded",
-    }
-    body = projection.build_projection(
-        department=dept_dir.name, graph_id=subgraph["id"],
-        graph_hash=loaded["graph_hash"], release_hash=loaded["release_hash"],
-        factory_version=factory_version,
-        nodes=subgraph.get("nodes", []), edges=subgraph.get("edges", []),
-        runs=runs, generated_at=_now_iso(now_fn))
-    signed = projection.sign_projection(body, signer)
     with records_lock(state_dir):
+        runs = []
+        runs_root = state_dir / "graph_runs"
+        if runs_root.is_dir():
+            for state_path in sorted(runs_root.glob("*/run_state.json")):
+                try:
+                    record = _strict_loads(
+                        state_path.read_text(encoding="utf-8"))
+                except ValueError:
+                    continue
+                if record.get("loop_id") != subgraph["id"]:
+                    continue
+                runs.append(
+                    {"run_id": record.get("run_id"),
+                     "state": record.get("state"),
+                     "termination_reason": record.get("termination_reason"),
+                     "transitions": record.get("transitions", [])})
+        factory_version = loaded["manifest"].get("factory_version") or {
+            "graph_schema_version": rungraph.GRAPH_SCHEMA_VERSION,
+            "runner_version": RUNNER_VERSION,
+            "telemetry_schema_version": projection.TELEMETRY_SCHEMA_VERSION,
+            "template_set_hash": "unrecorded",
+        }
+        body = projection.build_projection(
+            department=dept_dir.name, graph_id=subgraph["id"],
+            graph_hash=loaded["graph_hash"],
+            release_hash=loaded["release_hash"],
+            factory_version=factory_version,
+            nodes=subgraph.get("nodes", []), edges=subgraph.get("edges", []),
+            runs=runs, generated_at=_now_iso(now_fn))
+        signed = projection.sign_projection(body, signer)
+        if export_hook is not None:
+            export_hook()  # test seam: fires INSIDE the fence
         _atomic_write_json(state_dir / "receipts" / "execution-projection.json",
                            signed)
 

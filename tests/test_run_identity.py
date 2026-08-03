@@ -892,6 +892,67 @@ def test_graph_rows_backed_by_verified_projection_are_ingested(tmp_path):
             rollup.graph_run_bundle(result["database"], gid)["run"]] == [gid]
 
 
+def test_concurrent_projection_exports_preserve_every_run(tmp_path):
+    """F2-RACE regression: two distinct runs of one department hold separate
+    per-run locks, so the SHARED signed projection must be written under one
+    serialized transaction — scan, build, sign, and write together.
+
+    The exact interleaving is forced: run A scans and builds, pauses inside
+    its export, run B runs to completion and exports, then A resumes and
+    writes. Without a fence around the whole transaction, A's stale copy
+    erases B's authoritative backing and B's rows quarantine as
+    graph_identity_unbacked. Both runs must survive."""
+    import threading
+
+    dept = _make_dept(
+        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    outcome = {}
+
+    def run_b():
+        outcome["b"] = RUN.run_graph(
+            dept, trigger_fingerprint="race-B", signer=SIGNER, root=tmp_path,
+            sleep_fn=lambda s: None)
+
+    thread = threading.Thread(target=run_b)
+    fired = []
+
+    def export_hook():
+        # A has scanned, built, and signed; B now races to complete.
+        if fired:
+            return
+        fired.append(True)
+        thread.start()
+        # Unserialized, B finishes here and A then overwrites it (the probe).
+        # Serialized, B blocks on the department fence and this join times
+        # out — A finishes its transaction and B proceeds afterwards.
+        thread.join(timeout=2.0)
+
+    first = RUN.run_graph(
+        dept, trigger_fingerprint="race-A", signer=SIGNER, root=tmp_path,
+        sleep_fn=lambda s: None, export_hook=export_hook)
+    thread.join(timeout=30.0)
+    assert not thread.is_alive()
+    second = outcome["b"]
+    assert first["state"] == "done" and second["state"] == "done"
+    assert first["run_id"] != second["run_id"]
+
+    projection = json.loads(
+        (dept / "state" / "receipts" / "execution-projection.json")
+        .read_text(encoding="utf-8"))
+    assert PJ.verify_projection(projection, SIGNER) == []
+    assert {run["run_id"] for run in projection["runs"]} == {
+        first["run_id"], second["run_id"]}
+
+    (dept / "state" / "STATE.json").write_text(
+        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
+    built = rollup.rebuild(tmp_path, signer=SIGNER)
+    for run_id in (first["run_id"], second["run_id"]):
+        bundle = rollup.graph_run_bundle(built["database"], run_id)
+        assert bundle["run"], f"{run_id} lost its authoritative backing"
+    assert "graph_identity_unbacked" not in _incident_codes(built["database"])
+
+
 def test_tampered_projection_quarantines_graph_rows(tmp_path):
     state = _rollup_state(tmp_path)
     gid = "SG-RUN-" + "8" * 8
