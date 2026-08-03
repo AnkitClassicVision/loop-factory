@@ -1,0 +1,35 @@
+department: intake
+triggers:
+  - kind: time
+    spec:
+      on_calendar: "*:05/30"
+      persistent: false
+      catch_up: skip
+  - kind: goal
+    spec:
+      source_path: departments/intake/state/objectives.jsonl
+      cursor_policy:
+        first_run: eof
+  - kind: event
+    spec:
+      source_path: departments/intake/state/outbox.jsonl
+      cursor_policy:
+        first_run: eof
+concurrency:
+  max_concurrent: 1
+  overlap_policy: skip
+alerting:
+  classification_table:
+    - code: objective_breach
+      route: human
+    - code: release_drift
+      route: proposal
+  dedupe_window_minutes: 60
+  digest:
+    cap_per_day: 1
+    cooldown_minutes: 360
+escalation:
+  owner: operations-owner
+  sla_hours: 4
+activation:
+  enabled_by_default: false
