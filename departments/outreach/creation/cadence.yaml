@@ -1,0 +1,40 @@
+# outreach — Stage 8 cadence/alert contract
+# Trigger cadence: 30-minute sense cycle at :20/:50 (offset from the podcast
+# department's :05/:35 and the social manager's :15/:45 so factory cycles
+# stagger). # DEFAULT pending owner review — no owner-dictated number exists.
+department: outreach
+triggers:
+  - kind: time
+    spec:
+      on_calendar: "*:20/30"
+      persistent: false
+      catch_up: skip
+  - kind: event
+    spec:
+      source_path: departments/outreach/state/outbox
+      cursor_policy:
+        first_run: eof
+concurrency:
+  max_concurrent: 1
+  overlap_policy: skip
+alerting:
+  classification_table:
+    - code: objective_breach
+      route: human
+    - code: send_class_violation
+      route: human
+    - code: gate_bypass_detected
+      route: human
+    - code: lane_stall
+      route: proposal
+    - code: release_drift
+      route: proposal
+  dedupe_window_minutes: 60
+  digest:
+    cap_per_day: 5          # podcast precedent: ping ceiling then digest
+    cooldown_minutes: 360
+escalation:
+  owner: ankit
+  sla_hours: 48
+activation:
+  enabled_by_default: false

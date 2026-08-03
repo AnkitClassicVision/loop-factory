@@ -1,0 +1,56 @@
+# outreach — Stage 3 Creation Contract
+destination:
+  statement: "One governed department over the HSD + sales outreach estates: sense, reconcile, voice-gated drafting, approval queue, heal, escalate — with pre-declared send classes for post-burn-in promotion."
+  binary_exit_test: "python3 loopfactory.py prove --name outreach exits 0 on the assembled department; board shows it with a charter panel; a test escalation reaches the owner outbox; every shadow record shows external_actions_taken=0."
+  proof_department: outreach
+proof_loop: outreach-daily-cycle
+owner: ankit
+factory_version_target: "v2"
+privacy_external_effect_boundary: "Shadow-first; zero autonomous sends until per-class owner promotion; no cold email outside ankit_manual_exception ever; no PHI; CRM writes only within the already-approved phased classes; cross-repo evidence read-only via configured paths; no ambient credentials."
+
+canonical_authorities:
+  transition: kernel.transition
+  run_identity: factory.records
+  telemetry: factory.records
+  eval_policy: charter.eval_policy
+  eval_evidence: factory.evaluation
+  board_projection: factory.board
+  healing: factory.manager
+  escalation: kernel.outbox
+
+f1_answers:
+  - question_id: F1-A-SENSING-AUTHORITY
+    answer: "SPLIT: podcast keeps its four existing obe-* guest-outreach watches; outreach owns hsd-daily-operator, obe-fix-consumer, and the entire open-engine sales estate. One unit, one watcher; boundary table is the registry of record."
+    source: departments/outreach/creation/tickets/D1-authority-split.md
+  - question_id: F1-B-SEND-CLASSES
+    answer: "Three pre-declared: approved_draft_execution, warm_reply_followup, reactivation_nudge — each separately promotable after 14 clean shadow days + 100% voice-gate pass, owner-signed; cold email forever excluded outside ankit_manual_exception."
+    source: departments/outreach/creation/tickets/D2-send-classes.md
+  - question_id: F1-C-OBJECTIVES
+    answer: "Hard zeros: outreach_state_drift, send_class_integrity, approval_queue_aged (>48h). Measure-first sensors: voice_gate_pass_rate, reply/harvest rates — numbers ratified after two shadow weeks."
+    source: departments/outreach/creation/map.md
+  - question_id: F1-D-LANES-EVIDENCE
+    answer: "Lane inventory and read-only evidence sources per recon; HubSpot system of record; voice gate consumed via receipts fail-closed."
+    source: departments/outreach/creation/tickets/D3-lane-inventory.md
+open_questions:
+  - question_id: F1-RATE-SETPOINTS-AFTER-BASELINE
+    blocking: false
+
+proof_matrix:
+  - stage: contract-validation
+    gate: "loopfactory.py creation-contract check exits zero on this file."
+  - stage: governance-validation
+    gate: "loopfactory.py validate --name outreach exits zero."
+  - stage: objectives
+    gate: "loopfactory.py objectives --name outreach exits zero on fixture observations; live absent values honest."
+  - stage: cadence
+    gate: "loopfactory.py cadence check exits zero; rendered units never enabled."
+  - stage: runtime-build
+    gate: "Ringer build unit checks execute green; node QA on fixtures."
+  - stage: shadow-proof
+    gate: "loopfactory.py prove --name outreach exits zero; records show external_actions_taken=0."
+
+decision_sources:
+  - departments/outreach/creation/map.md
+  - departments/outreach/creation/tickets/D1-authority-split.md
+  - departments/outreach/creation/tickets/D2-send-classes.md
+  - departments/outreach/creation/tickets/D3-lane-inventory.md
