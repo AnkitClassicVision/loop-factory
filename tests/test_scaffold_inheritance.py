@@ -120,4 +120,5 @@ def test_scaffolded_empty_tree_builds_board_feed(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "estate/state/board-feed.ndjson").is_file()
-    assert '"departments":1' in completed.stdout
+    assert '"departments":0' in completed.stdout
+    assert '"projection_status":"incomplete"' in completed.stdout
