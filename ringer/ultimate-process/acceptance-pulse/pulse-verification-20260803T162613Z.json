@@ -1,0 +1,65 @@
+{
+  "allow_unsupported": false,
+  "department": "pulse",
+  "drills": [
+    {
+      "evidence": "same_run_id=True; duplicate=True; executions=1",
+      "name": "duplicate-trigger dedupe",
+      "pass": true
+    },
+    {
+      "evidence": "unsupported: no Stage 11 auth fixture contract exists",
+      "name": "auth block",
+      "pass": false
+    },
+    {
+      "evidence": "record_error=True; advanced=False",
+      "name": "record-write failure blocks advancement",
+      "pass": true
+    },
+    {
+      "evidence": "unsupported: no bounded worker-kill fixture is exposed by the scaffold",
+      "name": "worker kill",
+      "pass": false
+    },
+    {
+      "evidence": "unsupported: the scaffold has an eval registry but no executable evaluator fixture",
+      "name": "evaluator rejection",
+      "pass": false
+    },
+    {
+      "evidence": "OBJECTIVE_BELOW_MIN rows=1",
+      "name": "objective breach surfaces",
+      "pass": true
+    },
+    {
+      "evidence": "escalated=True; outbox_rows=1",
+      "name": "escalation delivery",
+      "pass": true
+    },
+    {
+      "evidence": "written=2; rebuilt=2; identities_preserved=True",
+      "name": "receipt rebuild",
+      "pass": true
+    },
+    {
+      "evidence": "unsupported: no canonical Stage 11 board-truth assertion is defined",
+      "name": "board truth",
+      "pass": false
+    },
+    {
+      "evidence": "unsupported: no non-mutating drift injection API exists",
+      "name": "drift",
+      "pass": false
+    },
+    {
+      "evidence": "records=1; external_actions_taken=[0]",
+      "name": "zero-external-effects",
+      "pass": true
+    }
+  ],
+  "generated_at": "2026-08-03T16:26:13.836491+00:00",
+  "pass": false,
+  "pinned_release": "unpinned",
+  "schema": "proof-bundle/v1"
+}
