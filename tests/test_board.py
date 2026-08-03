@@ -33,6 +33,42 @@ def _render(tmp_path, rows, **kwargs):
     return render_board(feed, out, **kwargs)
 
 
+def _write_charter(tmp_path, department="alpha", *, mission="Keep the loop honest.", malformed=False):
+    root = tmp_path / "departments"
+    path = root / department / "charter.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if malformed:
+        path.write_text("department: [broken\n", encoding="utf-8")
+    else:
+        path.write_text(
+            f'''department: {department}
+owner: fixture-owner
+status: intent_locked
+intent_lock:
+  date: "2026-08-03"
+autonomy_state: shadow
+mission: "{mission}"
+setpoints:
+  objectives:
+    quality:
+      label: Quality checked
+      setpoint: hold quality
+      minimum: 2
+      target: 5
+      maximum: 8
+      unit: items
+escalation:
+  human_gates: [publish]
+never: [invent evidence]
+kill_if: [repeated floor breach]
+immutable_safety_invariants:
+  heal_may_not_modify: [autonomy_state]
+''',
+            encoding="utf-8",
+        )
+    return root
+
+
 def _full_rows():
     return [
         _row("status", "dept_status", ok=True, epoch=42, autonomy_state="shadow"),
@@ -279,3 +315,72 @@ def test_output_is_self_contained_without_external_assets(tmp_path):
     assert "<script" not in page
     assert "<img" not in page
     assert "url(http" not in page
+
+
+def test_charter_panel_renders_mission_objectives_and_never(tmp_path):
+    departments = _write_charter(tmp_path)
+    page = _render(tmp_path, [_row("status", "dept_status", ok=True)], departments_dir=departments, registry_dir=tmp_path / "registry.d")
+
+    assert "Keep the loop honest." in page
+    assert "Quality checked" in page
+    assert "hold quality" in page
+    assert "invent evidence" in page
+
+
+def test_charter_panel_escapes_hostile_field(tmp_path):
+    departments = _write_charter(tmp_path, mission="&lt;script&gt;alert(1)&lt;/script&gt;")
+    charter = departments / "alpha" / "charter.yaml"
+    charter.write_text(charter.read_text(encoding="utf-8").replace("&lt;", "<").replace("&gt;", ">"), encoding="utf-8")
+    page = _render(tmp_path, [_row("status", "dept_status")], departments_dir=departments, registry_dir=tmp_path / "registry.d")
+
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    assert "<script>alert(1)</script>" not in page
+
+
+def test_missing_charter_renders_unavailable_panel(tmp_path):
+    page = _render(tmp_path, [_row("status", "dept_status")], departments_dir=tmp_path / "departments", registry_dir=tmp_path / "registry.d")
+
+    assert "alpha" in page
+    assert "charter unavailable: charter not found:" in page
+
+
+def test_malformed_charter_renders_reason_and_board_continues(tmp_path):
+    departments = _write_charter(tmp_path, malformed=True)
+    page = _render(tmp_path, _full_rows(), departments_dir=departments, registry_dir=tmp_path / "registry.d")
+
+    assert "charter unavailable: charter is not valid YAML:" in page
+    assert "1 · Metrics" in page
+    assert "4 · Loop-specific" in page
+
+
+def test_department_board_has_its_own_charter_only(tmp_path):
+    departments = _write_charter(tmp_path, "alpha")
+    _write_charter(tmp_path, "beta", mission="Beta mission")
+    rows = [_row("a", "dept_status", department="alpha"), _row("b", "dept_status", department="beta")]
+    page = _render(tmp_path, rows, department="alpha", departments_dir=departments, registry_dir=tmp_path / "registry.d")
+
+    assert 'class="charter-panel" data-department="alpha"' in page
+    assert 'class="charter-panel" data-department="beta"' not in page
+    assert "Beta mission" not in page
+
+
+def test_charter_panel_preserves_existing_sections(tmp_path):
+    departments = _write_charter(tmp_path)
+    page = _render(tmp_path, _full_rows(), departments_dir=departments, registry_dir=tmp_path / "registry.d")
+
+    assert 'aria-label="Charters"' in page
+    for heading in ("1 · Metrics", "2 · Main actions", "3 · Activity", "4 · Loop-specific"):
+        assert heading in page
+
+
+def test_registry_department_gets_unavailable_charter_panel(tmp_path):
+    registry = tmp_path / "registry.d"
+    registry.mkdir()
+    (registry / "registered.yaml").write_text(
+        "entries:\n  - id: registered\n    owner: fixture\n    surface: department\n    schedule: fixture\n    health_check: fixture\n    heartbeat_path: fixture\n    kill_switch: fixture\n",
+        encoding="utf-8",
+    )
+    page = _render(tmp_path, [], departments_dir=tmp_path / "departments", registry_dir=registry)
+
+    assert 'data-department="registered"' in page
+    assert "charter unavailable:" in page

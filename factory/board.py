@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from factory.charter_loader import CharterError, load_charter
+from factory.estate_registry import RegistryError, load_registry
+
 
 ALLOWED_AUTH_CLASSES = {"oauth_cli", "service_oauth", "local_model"}
 UNKNOWN = "unknown"
@@ -78,8 +81,9 @@ svg.lc{display:block;width:100%;max-width:480px;height:auto;overflow:visible}.lc
 .telemetry-alert{margin:.6rem 0}.funnel{margin-top:1.5rem}.funnel .cap{font-size:.8rem;color:var(--muted);margin-bottom:.8rem}.funnel .cap b{color:var(--ink)}
 .f-row{display:grid;grid-template-columns:10.5rem 1fr;gap:1rem;align-items:center;padding:.28rem 0}.f-lbl{font-size:.85rem;color:var(--muted)}.f-track{display:flex;align-items:center;gap:.6rem}.f-bar{height:1.05rem;border-radius:2px;background:var(--green-soft);min-width:6px}.f-bar.hot{background:var(--green)}.f-bar.final{background:var(--ink)}.f-count{font-size:.85rem;font-weight:600;white-space:nowrap}
 .generic-group{margin-top:1.4rem;max-width:52rem}.generic-group h3{font-size:.88rem;margin-bottom:.35rem}.kv{display:grid;grid-template-columns:minmax(8rem,15rem) 1fr;gap:.4rem 1rem;padding:.35rem 0;border-bottom:1px dashed var(--rule);font-size:.85rem}.kv dt{color:var(--muted)}.kv dd{overflow-wrap:anywhere}
+.charter-panel{margin-top:1.5rem;padding-bottom:1.5rem;border-bottom:1px dashed var(--rule)}.charter-panel:last-child{border-bottom:0;padding-bottom:0}.charter-meta{font-size:.82rem;color:var(--muted);margin:.25rem 0 .8rem}.charter-mission{max-width:62rem}.charter-table{width:100%;border-collapse:collapse;margin-top:.8rem;font-size:.82rem}.charter-table th,.charter-table td{text-align:left;padding:.4rem .65rem .4rem 0;border-bottom:1px dashed var(--rule);vertical-align:top}.charter-table th{color:var(--muted);font-weight:600}.charter-lists{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.8rem;margin-top:1rem}.charter-lists ul{padding-left:1.1rem}.charter-lists li{margin:.25rem 0;overflow-wrap:anywhere}.charter-unavailable{color:var(--red)}
 footer{margin-top:3.5rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.78rem;color:var(--muted)}footer code{font:.75rem ui-monospace,monospace}
-@media(max-width:900px){section{margin-top:2.3rem}.objgrid,.actions,.split{grid-template-columns:1fr;gap:1.8rem}.obj .goalline{min-height:0}.f-row{grid-template-columns:8.5rem 1fr}.t-row,.loop-row{grid-template-columns:1fr;gap:.3rem}.t-row .route{justify-self:start}.disabled-tag{justify-self:start}}
+@media(max-width:900px){section{margin-top:2.3rem}.objgrid,.actions,.split,.charter-lists{grid-template-columns:1fr;gap:1.8rem}.obj .goalline{min-height:0}.f-row{grid-template-columns:8.5rem 1fr}.t-row,.loop-row{grid-template-columns:1fr;gap:.3rem}.t-row .route{justify-self:start}.disabled-tag{justify-self:start}.charter-table{display:block;overflow-x:auto}}
 """
 
 
@@ -715,6 +719,10 @@ def _tab_manifest(records: Sequence[dict[str, Any]]) -> list[tuple[str, str]]:
         for row in records
         if row["kind"] in TAB_DEPARTMENT_KINDS or row["kind"] == "loop_status"
     }
+    return _tab_manifest_for_names(names)
+
+
+def _tab_manifest_for_names(names: Iterable[str]) -> list[tuple[str, str]]:
     used: set[str] = set()
     tabs: list[tuple[str, str]] = []
     for name in sorted(names, key=lambda value: (value.casefold(), value)):
@@ -741,6 +749,73 @@ def _render_tabs(tabs: Sequence[tuple[str, str]], current_tab: str | None) -> st
     return f'<nav class="tabs" aria-label="Board tabs">{"".join(links)}</nav>'
 
 
+def _registry_departments(registry_dir: str | Path) -> set[str]:
+    try:
+        return {str(entry["id"]) for entry in load_registry(registry_dir)}
+    except RegistryError:
+        # Feed departments remain renderable when the registry itself is broken.
+        return set()
+
+
+def _charter_item(value: Any) -> str:
+    if isinstance(value, dict):
+        return "; ".join(f"{key}: {item}" for key, item in value.items())
+    return str(value)
+
+
+def _render_charter_panel(department: str, departments_dir: str | Path) -> str:
+    path = Path(departments_dir) / department / "charter.yaml"
+    try:
+        charter = load_charter(path, expect_department=department)
+    except (CharterError, OSError, UnicodeError) as exc:
+        return (
+            f'<div class="charter-panel" data-department="{_esc(department)}">'
+            f'<h3 class="dept-h">{_esc(department)}</h3>'
+            f'<p class="charter-unavailable">charter unavailable: {_esc(exc)}</p></div>'
+        )
+
+    intent_lock = charter.get("intent_lock") or {}
+    lock_status = charter.get("status", UNKNOWN)
+    lock_date = intent_lock.get("date", UNKNOWN) if isinstance(intent_lock, dict) else UNKNOWN
+    objectives = (charter.get("setpoints") or {}).get("objectives") or {}
+    columns = [
+        key for key in ("label", "setpoint", "minimum", "target", "maximum", "unit")
+        if any(isinstance(value, dict) and key in value for value in objectives.values())
+    ] if isinstance(objectives, dict) else []
+    objective_rows = ""
+    if columns:
+        headings = "".join(f"<th>{_esc(column)}</th>" for column in columns)
+        rows = []
+        for objective_id, objective in objectives.items():
+            if not isinstance(objective, dict):
+                continue
+            cells = "".join(f"<td>{_value(objective[column]) if column in objective else ''}</td>" for column in columns)
+            rows.append(f'<tr data-objective="{_esc(objective_id)}">{cells}</tr>')
+        if rows:
+            objective_rows = f'<h4 class="subhead">Objectives</h4><table class="charter-table"><thead><tr>{headings}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+
+    lists = (
+        ("Human gates", (charter.get("escalation") or {}).get("human_gates") or []),
+        ("Never", charter.get("never") or []),
+        ("Kill if", charter.get("kill_if") or []),
+    )
+    list_html = []
+    for label, values in lists:
+        items = values if isinstance(values, list) else [values]
+        rendered = "".join(f"<li>{_esc(_charter_item(item))}</li>" for item in items)
+        list_html.append(f'<div><h4 class="subhead">{_esc(label)}</h4><ul>{rendered}</ul></div>')
+    return f'''<div class="charter-panel" data-department="{_esc(department)}">
+<h3 class="dept-h">{_esc(department)}</h3>
+<p class="charter-meta">autonomy {_esc(charter.get("autonomy_state", UNKNOWN))} · intent lock {_esc(lock_status)} · {_esc(lock_date)}</p>
+<p class="charter-mission">{_esc(charter.get("mission", UNKNOWN))}</p>
+{objective_rows}<div class="charter-lists">{"".join(list_html)}</div></div>'''
+
+
+def _render_charters(departments: Sequence[str], departments_dir: str | Path) -> str:
+    panels = "".join(_render_charter_panel(name, departments_dir) for name in departments)
+    return f'<div class="charters" aria-label="Charters"><div class="zone-h"><h2>Charters</h2><span class="note">human-owned department contracts</span></div><hr class="zone-rule">{panels}</div>'
+
+
 def render_html(
     records: Sequence[dict[str, Any]],
     *,
@@ -750,6 +825,8 @@ def render_html(
     tabs: Sequence[tuple[str, str]] | None = None,
     current_tab: str | None = None,
     history: str | Path | Sequence[dict[str, Any]] | None = None,
+    charter_departments: Sequence[str] | None = None,
+    departments_dir: str | Path = "departments",
 ) -> str:
     """Render already-validated records into a deterministic HTML document."""
     health_rows = [row for row in records if row["kind"] == "feed_health"]
@@ -773,6 +850,7 @@ def render_html(
     selected = [row for row in records if department is None or row["department"] == department]
     selected.sort(key=_record_key)
     departments = sorted({row["department"] for row in selected})
+    panel_departments = sorted(set(charter_departments if charter_departments is not None else departments))
     generated_dt = max((_parse_ts(row.get("ts")) for row in selected), default=None, key=lambda value: value or datetime.min.replace(tzinfo=timezone.utc))
     generated = generated_dt.isoformat().replace("+00:00", "Z") if generated_dt else UNKNOWN
     statuses = _latest_by_department(row for row in selected if row["kind"] == "dept_status")
@@ -843,6 +921,7 @@ def render_html(
 {projection_warning}
 {_render_tabs(tabs, current_tab) if tabs is not None else ""}
 {_render_status_summary(departments, statuses)}{empty_notice}
+{_render_charters(panel_departments, departments_dir)}
 <section aria-label="Metrics"><div class="zone-h"><h2>1 · Metrics</h2><span class="note">objectives and daily measures</span></div><hr class="zone-rule">
   <div class="objgrid">{objective_html}</div>{_render_metric_stats(daily)}
 </section>
@@ -861,10 +940,12 @@ def render_html(
 """
 
 
-def render_board(feed_path: str | Path, out_path: str | Path, *, department: str | None = None, title: str | None = None) -> str:
+def render_board(feed_path: str | Path, out_path: str | Path, *, department: str | None = None, title: str | None = None, departments_dir: str | Path = "departments", registry_dir: str | Path = "estate/registry.d") -> str:
     """Render ``feed_path`` to ``out_path`` and return the generated HTML."""
     records, malformed = read_feed(feed_path)
-    rendered = render_html(records, malformed_count=malformed, department=department, title=title)
+    discovered = {row["department"] for row in records} | _registry_departments(registry_dir)
+    panel_departments = [department] if department is not None else sorted(discovered)
+    rendered = render_html(records, malformed_count=malformed, department=department, title=title, charter_departments=panel_departments, departments_dir=departments_dir)
     output = Path(out_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(rendered, encoding="utf-8")
@@ -877,10 +958,13 @@ def render_site(
     *,
     title: str | None = None,
     history_dir: str | Path | None = None,
+    departments_dir: str | Path = "departments",
+    registry_dir: str | Path = "estate/registry.d",
 ) -> dict[str, str]:
     """Render an estate index and one portable, linked page per feed tab."""
     records, malformed = read_feed(feed_path)
-    tabs = _tab_manifest(records)
+    discovered = {row["department"] for row in records} | _registry_departments(registry_dir)
+    tabs = _tab_manifest_for_names(discovered)
     history = _load_history(
         history_dir if history_dir is not None else Path(feed_path).parent / "history"
     )
@@ -894,6 +978,8 @@ def render_site(
         title=title,
         tabs=tabs,
         history=history,
+        charter_departments=sorted(discovered),
+        departments_dir=departments_dir,
     )
     for name, filename in tabs:
         rendered[filename] = render_html(
@@ -904,6 +990,8 @@ def render_site(
             tabs=tabs,
             current_tab=name,
             history=history,
+            charter_departments=[name],
+            departments_dir=departments_dir,
         )
     for filename, page in rendered.items():
         (output_dir / filename).write_text(page, encoding="utf-8")
