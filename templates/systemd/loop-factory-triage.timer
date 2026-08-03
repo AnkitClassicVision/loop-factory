@@ -1,0 +1,12 @@
+# Loop Factory escalation triage timer. Installed DISABLED by convention; the
+# owner enables it deliberately after review. Offset from other half-hourly
+# timers; Persistent=false prevents replay-like catch-up after downtime.
+[Unit]
+Description=Triage Loop Factory escalations at :05 and :35
+
+[Timer]
+OnCalendar=*:5/30
+Persistent=false
+
+[Install]
+WantedBy=timers.target
