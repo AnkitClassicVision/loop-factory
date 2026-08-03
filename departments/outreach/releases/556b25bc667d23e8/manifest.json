@@ -1,0 +1,68 @@
+{
+  "hash": "556b25bc667d23e8",
+  "source_ref": "2c77cefc02dda37cb4cfb9c9d96820528bcea6bd",
+  "factory_version": {
+    "graph_schema_version": 2,
+    "runner_version": "2.5.0",
+    "telemetry_schema_version": 1,
+    "template_set_hash": "91af9f62bf0a7990"
+  },
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "a95ba1b212437e00542bb5b84747b29655f2a8cdbc151b29dd51811afa644292"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "a4a028e9235d005c7f6e883eb85ea1a0b8b2bfa30f63fee4834043412c246a5f"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "91db2398b2a4557d2600666470b10daa8edd6e1ce1b19ed3a8e325ecd9c373f5"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "d273f2f4fba15e77679355f02f5a69a6c7fdebb9f496f9d4f3e87cabaf98425d"
+    },
+    {
+      "path": "runtime/common.py",
+      "sha256": "4b0dbc8766789899221a1cacbb36288f242d15debfe31582da5017092f50ad0c"
+    },
+    {
+      "path": "runtime/escalate.py",
+      "sha256": "d2f0f9fb26b5628bb17d5fa75f5f590b96ed6f789ca8ece4a59963487313b9b3"
+    },
+    {
+      "path": "runtime/estate.json",
+      "sha256": "6270e2e1e195e2c0498d0d681826ba5e706d0a7038c3ed11442abd96a57a352f"
+    },
+    {
+      "path": "runtime/gate_monitor.py",
+      "sha256": "bbf415d220a91cbb8521854a866b23450326063de2f74500ebdf528828b538c0"
+    },
+    {
+      "path": "runtime/lane_sense.py",
+      "sha256": "786204c2017bef1220658078cbe411b1cb83693716f2ed97054eb5a996294c31"
+    },
+    {
+      "path": "runtime/objectives_sensor.py",
+      "sha256": "f37b362fdd1321d3034c21d59944e8d3b92249a0f5d58502fcc7da5479c6cd87"
+    },
+    {
+      "path": "runtime/outreach_daily.sh",
+      "sha256": "9d52e0fd2552f38298fee22d8c7fc3dcb86b0a04435d2eaf2cb9c8f84dbb4b0c"
+    },
+    {
+      "path": "runtime/queue_ager.py",
+      "sha256": "1fc069ace8061b4d0041c48e93164916681d4741a7723dad911682978254d1ae"
+    },
+    {
+      "path": "runtime/state_reconcile.py",
+      "sha256": "09fdb89f4bbbfd90ccf7b5dd3c6f79d1843f7eef41efe9ee4048c922450c7689"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "ce4b986f6eb86b284923148f0593edd26182afca51c45c6c59d6323c8d9c1579"
+    }
+  ]
+}
