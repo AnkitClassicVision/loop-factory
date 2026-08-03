@@ -49,13 +49,13 @@ def shell_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     python_wrapper = bin_dir / "python3"
     python_wrapper.write_text(
         f"""#!{os.sys.executable}
-import json, os, subprocess, sys
+import json, os, sys
 from pathlib import Path
 
 real = {str(Path(os.sys.executable))!r}
 args = sys.argv[1:]
 if not args or args[0] == '-' or args[0].endswith('/record.py'):
-    raise SystemExit(subprocess.call([real, *args]))
+    os.execv(real, [real, *args])
 
 script = Path(args[0]).name
 def option(name):
@@ -169,6 +169,6 @@ def test_full_happy_path_receipts_are_unchanged(shell_fixture):
         "N5-qa-r1.json", "S4-S5-dispatch-token.json",
         "S6-kill-pre-dispatch.json", "S7-breaker-pre-dispatch.json",
         "N6-dispatch.json", "N7-delivery-verification.json", "N9-record.json",
-        "N10-review-card.json",
+        "N10-review-card.json", "N11-review-harvest.json",
     }
     assert names == expected

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def _get_key() -> str:
@@ -48,25 +49,49 @@ def _gql(key: str, query: str, variables=None):
     return data["data"]
 
 
+def read_fixture(path: Path, issue: str) -> list[dict]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(value, dict):
+        value = value.get(issue, [])
+    if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
+        raise ValueError("comments fixture must be a list or issue-to-list mapping")
+    return value
+
+
 def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--issue", required=True)
+    parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument(
+        "--shadow", action="store_true",
+        help="deny network access; return an empty list unless --fixture is supplied",
+    )
     args = parser.parse_args()
 
-    key = _get_key()
-    data = _gql(
-        key,
-        """query($id: String!) {
-            issue(id: $id) {
-                comments { nodes { body createdAt user { name } } }
-            }
-        }""",
-        {"id": args.issue},
-    )
-    comments = data["issue"]["comments"]["nodes"]
-    json.dump(comments, sys.stdout, indent=2)
+    if args.fixture:
+        comments = read_fixture(args.fixture, args.issue)
+    elif args.shadow:
+        comments = []
+    else:
+        key = _get_key()
+        data = _gql(
+            key,
+            """query($id: String!) {
+                issue(id: $id) {
+                    comments { nodes { body createdAt user { name } } }
+                }
+            }""",
+            {"id": args.issue},
+        )
+        comments = data["issue"]["comments"]["nodes"]
+    rendered = json.dumps(comments, indent=2) + "\n"
+    if args.out:
+        args.out.write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
     return 0
 
 

@@ -173,7 +173,7 @@ def _stub_review_card_python(bin_dir: Path) -> None:
     wrapper.write_text(
         f"""#!{sys.executable}
 import json
-import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -183,7 +183,7 @@ if args and Path(args[0]).name == "create_review_card.py":
     out = Path(args[args.index("--out") + 1])
     out.write_text(json.dumps({{"status": "card_created", "identifier": "ANK-FIXTURE"}}) + "\\n")
     raise SystemExit(0)
-raise SystemExit(subprocess.call([real, *args]))
+os.execv(real, [real, *args])
 """,
         encoding="utf-8",
     )

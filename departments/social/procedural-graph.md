@@ -42,7 +42,8 @@ Delivery rule: while the posting class is shadow/draft_only, dispatch runs
   → N5 qa_post (cross-model; ENUMERATES defects → ≤2 edit rounds → quarantine)
   → S5(cap check, all authors) → S4 → N6 dispatch (kernel→Zernio; simulate in shadow)
   → N7 delivery_verify (platform-confirmed post ID — never scheduler's claim)
-  → N9 record
+  → N9 record → N10 review_card (external ask)
+  → N11 harvest_review_asks (Linear comment return; 48h SLA breach → manager outbox)
   [S6 + S7 run continuously across the lane]
 ```
 
@@ -56,6 +57,8 @@ Delivery rule: while the posting class is shadow/draft_only, dispatch runs
 | N6 | dispatch | Act | SCRIPT→kernel gateway | external_publish / shadow=simulate | delivered_count==0 in shadow; consumes S4 token live | none | C5 (Q9-early) |
 | N7 | delivery_verify | Score | SCRIPT | internal_read / shadow | post ID + status pulled back from Zernio; missing/failed = receipt FAIL → manager | none | C15.1 (Q12) |
 | N9 | record | Record | SCRIPT | internal_write / shadow | runs row appended; receipt chain complete | none | factory law |
+| N10 | review_card | Ask | SCRIPT | external_ask / always human | receipt-gated card creation; `emits_ask=true`; return path `runtime/linear_read_comments.py`; return SLA 48h (`# DEFAULT pending owner review`) | none | C11, C14, C17 (Q11, Q14) |
+| N11 | harvest_review_asks | Read | SCRIPT | internal_read / shadow-safe | reader runs with network denied in shadow; decision is returned to ledger; ask older than 48h emits one SLA-breach escalation to the existing manager outbox | none | C14, C17 (Q14) |
 
 ## SG-SENSE — independent engagement + outcome sensing (read-only)
 

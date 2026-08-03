@@ -84,6 +84,19 @@
     {
      "id": "N9",
      "impl": "runtime/record.py"
+    },
+    {
+     "id": "N10",
+     "external_dispatch": true,
+     "emits_ask": true,
+     "return_path": "runtime/linear_read_comments.py",
+     "return_sla_hours": 48,
+     "_return_sla_note": "# DEFAULT pending owner review",
+     "impl": "runtime/create_review_card.py"
+    },
+    {
+     "id": "N11",
+     "impl": "runtime/harvest_review_asks.py"
     }
    ]
   },
@@ -183,8 +196,8 @@
   "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node",
   "runtime/guards.py": "implements shared safety guards S1/S2/S3/S6/S7 (guard nodes carry no impl field); S4/S5/S8 route through kernel gateways via kernel_bridge",
   "runtime/social_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one",
-  "runtime/create_review_card.py": "human-review lane: creates the Linear approval card after a successful run (wired via social_daily.sh); MAP DEBT \u2014 needs a proper SG node + concept trace, recorded in wayfinder map fog 2026-08-02",
   "runtime/linear_close_issue.py": "human-review lane: closes the Linear card after decision processing; same map debt as create_review_card.py",
-  "runtime/linear_read_comments.py": "human-review lane: reads card decisions back into the decisions flow; same map debt as create_review_card.py"
+  "runtime/linear_read_comments.py": "declared N10 return-path component; executed by N11 harvest_review_asks rather than as a standalone graph stage",
+  "runtime/v2_record.py": "factory run-record/v2 sidecar invoked by the daily trigger for every receipt-gated stage"
  }
 }
