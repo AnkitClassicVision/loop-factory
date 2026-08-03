@@ -1,0 +1,10 @@
+# Loop Factory event-triggered triage instance. Installed DISABLED by convention
+# via install_triggers.py; the owner reviews units and enables triggers deliberately.
+# Proposal-only repair planning plus one bounded digest; it never fixes units.
+[Unit]
+Description=Triage Loop Factory after %i failure
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart=/usr/bin/python3 -m factory.triage_agent --repo-root {{REPO}} --config %h/.config/loop-factory/triage.yaml --execute --trigger-unit %i

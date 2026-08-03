@@ -249,6 +249,85 @@ def _resolve_outbox(repo_root: Path, configured: str) -> Path:
     return path if path.is_absolute() else repo_root / path
 
 
+def _registered_departments(repo_root: Path) -> set[str]:
+    """Return department names advertised on disk or by the estate registry."""
+    names: set[str] = set()
+    departments_dir = repo_root / "departments"
+    if departments_dir.is_dir():
+        names.update(path.name for path in departments_dir.iterdir() if path.is_dir())
+    registry_dir = repo_root / "estate" / "registry.d"
+    if not registry_dir.is_dir():
+        return names
+    for path in sorted(registry_dir.glob("*.yaml")):
+        names.add(path.stem)
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            LOGGER.warning("cannot inspect triage registry entry %s: %s", path, exc)
+            continue
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for key in ("id", "department", "name"):
+                value = entry.get(key)
+                if isinstance(value, str) and value:
+                    names.add(value)
+    return names
+
+
+def _department_for_unit(repo_root: Path, unit: str) -> str | None:
+    for department in sorted(_registered_departments(repo_root), key=len, reverse=True):
+        if unit == department or (
+            unit.startswith(department)
+            and len(unit) > len(department)
+            and unit[len(department)] in "-_.@"
+        ):
+            return department
+    return None
+
+
+def _department_for_outbox(repo_root: Path, trigger_path: str) -> str | None:
+    path = Path(trigger_path).expanduser()
+    resolved = (path if path.is_absolute() else repo_root / path).resolve()
+    departments_dir = (repo_root / "departments").resolve()
+    try:
+        relative = resolved.relative_to(departments_dir)
+    except ValueError:
+        return None
+    if not relative.parts:
+        return None
+    department = relative.parts[0]
+    return department if department in _registered_departments(repo_root) else None
+
+
+def _trigger_context(
+    repo_root: Path,
+    trigger_unit: str | None,
+    trigger_path: str | None,
+) -> tuple[dict[str, str], str | None]:
+    if trigger_unit and trigger_path:
+        raise ValueError("--trigger-unit and --trigger-path are mutually exclusive")
+    if trigger_unit:
+        trigger = {"kind": "unit_failure", "ref": trigger_unit}
+        department = _department_for_unit(repo_root, trigger_unit)
+    elif trigger_path:
+        trigger = {"kind": "outbox_append", "ref": trigger_path}
+        department = _department_for_outbox(repo_root, trigger_path)
+    else:
+        trigger = {"kind": "timer", "ref": "loop-factory-triage.timer"}
+        department = None
+    if department is not None:
+        charter_path = repo_root / "departments" / department / "charter.yaml"
+        try:
+            load_charter(charter_path, expect_department=department)
+        except CharterError as exc:
+            LOGGER.warning("summoning department charter unavailable for %s: %s", department, exc)
+    return trigger, department
+
+
 def _read_appends(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
     if not path.exists():
         return [], 0
@@ -449,11 +528,24 @@ def _human_phrase(item: dict[str, Any]) -> str:
     return phrase.rstrip(".")
 
 
-def _digest(items: list[dict[str, Any]], queued: int) -> str:
+def _digest(
+    items: list[dict[str, Any]],
+    queued: int,
+    trigger: dict[str, str],
+    summoning_department: str | None,
+) -> str:
     phrases = [_human_phrase(item) for item in items]
     detail = "; ".join(phrases)
     suffix = f" {queued} fix proposal{'s' if queued != 1 else ''} queued." if queued else ""
-    return f"[triage] {len(items)} need you: {detail}.{suffix}".replace("..", ".")
+    if trigger["kind"] == "unit_failure":
+        unit = re.sub(r"\.(?:service|timer)$", "", trigger["ref"])
+        lead = f"[triage] summoned by {unit} failure: "
+    elif trigger["kind"] == "outbox_append":
+        source = summoning_department or Path(trigger["ref"]).name
+        lead = f"[triage] summoned by {source} outbox append: "
+    else:
+        lead = "[triage] "
+    return f"{lead}{len(items)} need you: {detail}.{suffix}".replace("..", ".")
 
 
 def _digest_is_cooling(path: Path, fingerprint: str, now: datetime, hours: float) -> bool:
@@ -478,10 +570,13 @@ def run(
     *,
     execute: bool = False,
     now: str | datetime | None = None,
+    trigger_unit: str | None = None,
+    trigger_path: str | None = None,
 ) -> dict[str, Any]:
     """Plan or execute one bounded triage pass and return its receipt."""
     root = Path(repo_root).resolve()
     now_dt = _utc_now(now)
+    trigger, summoning_department = _trigger_context(root, trigger_unit, trigger_path)
     triage_dir = root / "state" / "triage"
     cursor_path = triage_dir / "cursor.json"
     seen_path = triage_dir / "seen_fingerprints.jsonl"
@@ -514,6 +609,34 @@ def run(
         incoming.extend((row, key) for row in rows)
         cursor[key] = end
 
+    # A failed unit is itself finite evidence even if its department outbox did
+    # not append. It enters the same dedupe, proposal, audit, and cooldown lanes
+    # as every other escalation; no repair or restart is performed here.
+    if trigger["kind"] == "unit_failure":
+        unit = trigger["ref"]
+        incoming.append(
+            (
+                {
+                    "kind": "escalation",
+                    "department": summoning_department or "factory",
+                    "issue": f"systemd unit {unit} failed",
+                    "context": {
+                        "unit": unit,
+                        "finding_code": "UNIT_FAILURE",
+                        "fingerprint": f"unit-failure:{unit}",
+                    },
+                },
+                f"systemd:{unit}",
+            )
+        )
+
+    if summoning_department is not None:
+        incoming.sort(
+            key=lambda pair: 0
+            if pair[0].get("department") == summoning_department
+            else 1
+        )
+
     active = _active_fingerprints(seen_path)
     seen_events: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
@@ -539,6 +662,7 @@ def run(
                     "reason": "resolution_marker",
                     "source": source,
                     "timestamp": now_dt.isoformat(),
+                    "trigger": trigger,
                 }
             )
             continue
@@ -561,6 +685,7 @@ def run(
                     "action": "suppressed_duplicate",
                     "source": source,
                     "timestamp": now_dt.isoformat(),
+                    "trigger": trigger,
                 }
             )
             decisions.append({**item, "action": "suppressed_duplicate"})
@@ -622,7 +747,11 @@ def run(
                     proposal_files.append(str(card))
 
     human_items = [item for item in unique_items if item["class"] in HUMAN_CLASSES]
-    digest_text = _digest(human_items, queued_repairs) if human_items else None
+    digest_text = (
+        _digest(human_items, queued_repairs, trigger, summoning_department)
+        if human_items
+        else None
+    )
     digest_fingerprint = (
         hashlib.sha256(digest_text.encode("utf-8")).hexdigest()[:16]
         if digest_text is not None
@@ -676,6 +805,7 @@ def run(
             "action": action,
             "source": item["source"],
             "timestamp": now_dt.isoformat(),
+            "trigger": trigger,
         }
         if reason:
             audit_row["reason"] = reason
@@ -687,6 +817,7 @@ def run(
         _atomic_json(cursor_path, cursor)
 
     receipt = {
+        "trigger": trigger,
         "dry_run": not execute,
         "rows": len(incoming),
         "by_class": {name: by_class.get(name, 0) for name in CLASSES if by_class.get(name, 0)},
@@ -721,6 +852,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--now", help="timezone-aware ISO timestamp (test/replay seam)")
+    trigger_group = parser.add_mutually_exclusive_group()
+    trigger_group.add_argument("--trigger-unit", help="systemd unit that summoned triage")
+    trigger_group.add_argument("--trigger-path", help="outbox path whose append summoned triage")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     receipt = run(
@@ -728,6 +862,8 @@ def main(argv: list[str] | None = None) -> int:
         load_config(args.config),
         execute=args.execute,
         now=args.now,
+        trigger_unit=args.trigger_unit,
+        trigger_path=args.trigger_path,
     )
     print(json.dumps(receipt, sort_keys=True))
     return 0

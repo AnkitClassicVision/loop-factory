@@ -1,0 +1,10 @@
+# Loop Factory outbox append triage service. Installed DISABLED by convention
+# via install_triggers.py; the owner reviews each rendered unit before enabling it.
+# Proposal-only: this summons triage but never repairs or mutates a source unit.
+[Unit]
+Description=Triage Loop Factory after outbox append {{OUTBOX_DESCRIPTION}}
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart=/usr/bin/python3 -m factory.triage_agent --repo-root {{REPO}} --config %h/.config/loop-factory/triage.yaml --execute --trigger-path {{OUTBOX}}
