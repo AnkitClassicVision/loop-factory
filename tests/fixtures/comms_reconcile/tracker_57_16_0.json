@@ -1,0 +1,7 @@
+{
+  "schema": "obe.referral-touch-report.v1",
+  "summary": {
+    "outbound_referral_touch_count": 57,
+    "inbound_reply_count": 16
+  }
+}
