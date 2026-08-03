@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,13 @@ from kernel.jsonl_store import append_jsonl
 
 
 SCHEMA_VERSION = "score-record/v1"
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, appends land in the spool; the runner stamps identity from
+# its own execution state at promotion — never from the emitter's claims.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
+# "promotion" is stamped by the runner at promotion time (identity +
+# signature) — never by an emitter.
+OPTIONAL_FIELDS = frozenset({"promotion"})
 SOURCES = frozenset({"script", "judge", "human"})
 FIELDS = frozenset(
     {
@@ -39,10 +47,12 @@ def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
 def validate_score(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ValueError("score record must be an object")
-    if set(record) != FIELDS:
-        missing = sorted(FIELDS - set(record))
-        unknown = sorted(set(record) - FIELDS)
+    missing = sorted(FIELDS - set(record))
+    unknown = sorted(set(record) - FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
         raise ValueError(f"score fields mismatch: missing={missing}, unknown={unknown}")
+    if "promotion" in record and not isinstance(record["promotion"], dict):
+        raise ValueError("promotion must be an object")
     if record["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must equal {SCHEMA_VERSION}")
     for field in (
@@ -109,5 +119,16 @@ def build_score(
 
 
 def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
-    """Validate and append one score to ``state/scores.jsonl``."""
-    return append_jsonl(Path(state_dir) / "scores.jsonl", validate_score(record))
+    """Validate and append one score to ``state/scores.jsonl``.
+
+    Runner-mediated appends (review B1, Option C): inside a graph-runner
+    node process (RECORD_SPOOL_ENV present) the row lands in the per-attempt
+    spool — the canonical stream is unreachable from node code through this
+    API. The runner stamps target_ref.department and target_ref.run_id from
+    its own execution state at promotion; target_ref.node stays the
+    SUBJECT of the score (a judge node scoring another node is legitimate).
+    """
+    validated = validate_score(record)
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    target_dir = Path(spool) if spool else Path(state_dir)
+    return append_jsonl(target_dir / "scores.jsonl", validated)

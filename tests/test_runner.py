@@ -237,7 +237,12 @@ def test_run_lock_identity_uses_full_fingerprint_hash(tmp_path):
                       _two_node_manifest())
     result = _run(dept, tmp_path, fingerprint="trigger-1")
     full = hashlib.sha256(b"trigger-1").hexdigest()
-    assert result["run_id"] == f"SG-RUN-{full}"
+    assert result["run_id"] == _bound_run_id(dept, "trigger-1")
+    binding = next(
+        (tmp_path / "estate" / "run-control" / "demo"
+         / "trigger-bindings").glob("*.json"))
+    assert json.loads(binding.read_text(encoding="utf-8"))[
+        "trigger_fingerprint_sha256"] == full
 
 
 def test_projection_exported_and_auditor_verifies(tmp_path):
@@ -607,7 +612,7 @@ def test_resume_continues_from_frontier_not_entry(tmp_path):
         RUN.run_graph(dept, trigger_fingerprint="cont-1", signer=SIGNER,
                       root=tmp_path, sleep_fn=crash_sleep)
     assert _markers(dept) == ["n1", "n2", "n3"]
-    run_id = _run_id_for("cont-1")
+    run_id = _bound_run_id(dept, "cont-1")
     pre = json.loads((dept / "state" / "graph_runs" / run_id / "run_state.json")
                      .read_text(encoding="utf-8"))
     assert pre["state"] not in ("done", "failed", "escalated", "killed")
@@ -651,6 +656,7 @@ def _rewrite_state(dept, run_id, mutate):
 def test_signing_exception_terminates_killed_with_finding(tmp_path):
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
+    _prebind_run_id(dept, "raise-1")
     raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
     result = RUN.run_graph(dept, trigger_fingerprint="raise-1", signer=raising,
                            root=tmp_path, sleep_fn=lambda s: None)
@@ -772,7 +778,7 @@ def test_retagged_row_refuses_resume(tmp_path):
                       root=tmp_path, sleep_fn=lambda s: None,
                       crash_hook=_crash_once_at("post_mark_fired"))
     assert _markers(dept) == ["n1"]
-    run_id = _run_id_for("retag-1")
+    run_id = _bound_run_id(dept, "retag-1")
     ledger_before = _ledger_lines(dept, run_id)
 
     def retag(state):
@@ -983,8 +989,8 @@ def test_held_run_lock_noops_cleanly(tmp_path):
     import sys as sys_mod
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
-    run_dir = dept / "state" / "graph_runs" / _run_id_for("held-1")
-    run_dir.mkdir(parents=True)
+    run_id = _prebind_run_id(dept, "held-1")
+    run_dir = dept / "state" / "graph_runs" / run_id
     locker_src = ("import fcntl, sys, time\n"
                   "handle = open(sys.argv[1], 'a+')\n"
                   "fcntl.flock(handle.fileno(), fcntl.LOCK_EX)\n"
@@ -1055,9 +1061,29 @@ def test_kill_raised_during_node_prevents_any_transition(tmp_path):
 # Wedged-run recovery (B5) — the idempotency lock must not entomb a crash
 # --------------------------------------------------------------------------- #
 
-def _run_id_for(fingerprint):
+def _bound_run_id(dept, fingerprint):
     import hashlib
-    return "SG-RUN-" + hashlib.sha256(fingerprint.encode()).hexdigest()
+    fingerprint_hash = hashlib.sha256(fingerprint.encode()).hexdigest()
+    matches = []
+    root = dept.parents[1]
+    for path in (root / "estate" / "run-control" / dept.name
+                 / "trigger-bindings").glob("*.json"):
+        binding = json.loads(path.read_text(encoding="utf-8"))
+        if binding.get("trigger_fingerprint_sha256") == fingerprint_hash:
+            matches.append(binding["run_id"])
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _prebind_run_id(dept, fingerprint):
+    import hashlib
+    run_id, preexisting = RUN._bind_trigger_run_id(
+        dept.parents[1], dept / "state", department=dept.name,
+        loop_id="SG-RUN",
+        fingerprint_hash=hashlib.sha256(fingerprint.encode()).hexdigest(),
+        signer=SIGNER)
+    assert preexisting is False
+    return run_id
 
 
 def test_identity_incomplete_checkpoint_refuses_resume(tmp_path):
@@ -1066,16 +1092,16 @@ def test_identity_incomplete_checkpoint_refuses_resume(tmp_path):
     # genuinely absent state file may initialize fresh.
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
-    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-1")
-    run_dir.mkdir(parents=True)
+    run_dir = (dept / "state" / "graph_runs"
+               / _prebind_run_id(dept, "wedge-1"))
     (run_dir / "run_state.json").write_text(
         json.dumps({"schema": "graph-run-v1", "state": "awaiting_receipt"}),
         encoding="utf-8")  # no graph/release identity at all
     with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
         _run(dept, tmp_path, fingerprint="wedge-1")
     assert _markers(dept) == []
-    run_dir2 = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
-    run_dir2.mkdir(parents=True)
+    run_dir2 = (dept / "state" / "graph_runs"
+                / _prebind_run_id(dept, "wedge-2"))
     (run_dir2 / "run_state.json").write_text("{broken", encoding="utf-8")
     with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
         _run(dept, tmp_path, fingerprint="wedge-2")
@@ -1093,6 +1119,7 @@ def test_stale_projection_cannot_pass_after_signing_failure(tmp_path):
     proj_path = dept / "state" / "receipts" / "execution-projection.json"
     assert PJ.verify_projection(
         json.loads(proj_path.read_text(encoding="utf-8")), SIGNER) == []
+    _prebind_run_id(dept, "proj-2")
     raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
     result = RUN.run_graph(dept, trigger_fingerprint="proj-2", signer=raising,
                            root=tmp_path, sleep_fn=lambda s: None)
@@ -1110,8 +1137,9 @@ def test_stale_projection_cannot_pass_after_signing_failure(tmp_path):
 def test_crash_before_first_state_persist_recovers(tmp_path):
     dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
                       _two_node_manifest())
-    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
-    run_dir.mkdir(parents=True)  # crash between mkdir and first persist
+    run_dir = (dept / "state" / "graph_runs"
+               / _prebind_run_id(dept, "wedge-2"))
+    assert run_dir.is_dir()  # crash after binding, before first persist
     result = _run(dept, tmp_path, fingerprint="wedge-2")
     assert result["resumed"] is True
     assert result["state"] == "done"
