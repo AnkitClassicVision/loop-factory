@@ -26,6 +26,7 @@ on-time reliability cannot be reconstructed from current public-state evidence.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ from factory import runrecord
 
 
 DEFAULT_PIPELINE_REPO = Path("/mnt/d_drive/repos/podcast")
+OBJECTIVES_EVIDENCE_CONFIG = Path(__file__).with_name("estate.json")
 MEDIA_SUFFIXES = frozenset(
     {".aac", ".flac", ".m4a", ".mkv", ".mov", ".mp3", ".mp4", ".wav", ".webm"}
 )
@@ -59,7 +61,15 @@ PUBLISHED_STAGES = frozenset(
         "complete",
     }
 )
-OWNED_VALUES = frozenset({"hopper_depth", "publish_reliability"})
+OWNED_VALUES = frozenset(
+    {
+        "hopper_depth",
+        "publish_reliability",
+        "hopper_interviews_ready",
+        "state_drift",
+        "unledgered_inbound",
+    }
+)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -263,6 +273,101 @@ def _publish_reliability(
     )
 
 
+def _read_json_object(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("top-level JSON value must be an object")
+    return value
+
+
+def _configured_evidence_paths(config_path: Path) -> tuple[dict[str, str], str | None]:
+    try:
+        config = _read_json_object(config_path)
+        evidence = config["objectives_evidence"]
+        if not isinstance(evidence, dict):
+            raise TypeError("objectives_evidence must be an object")
+        paths: dict[str, str] = {}
+        for objective in (
+            "hopper_interviews_ready",
+            "state_drift",
+            "unledgered_inbound",
+        ):
+            value = evidence.get(objective)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"objectives_evidence.{objective} must be a path")
+            if not Path(value).is_absolute():
+                raise ValueError(f"objectives_evidence.{objective} must be absolute")
+            paths[objective] = value
+        return paths, None
+    except (OSError, UnicodeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {}, f"unreadable objectives evidence config: {config_path}: {exc}"
+
+
+def _resolve_evidence(pattern: str) -> tuple[Path | None, str]:
+    matches = sorted(Path(item) for item in glob.glob(pattern) if Path(item).is_file())
+    if not matches:
+        return None, f"missing evidence artifact: {pattern}"
+    return matches[-1], f"read {matches[-1]}"
+
+
+def _hopper_interviews_ready(path: Path) -> int:
+    ledger = _read_json_object(path)
+    if ledger.get("schema") != "funnel-ledger/v1":
+        raise ValueError("expected schema funnel-ledger/v1")
+    people = ledger.get("people")
+    if not isinstance(people, list) or not all(isinstance(row, dict) for row in people):
+        raise ValueError("people must be a list of objects")
+    return sum(
+        row.get("stage") == "recorded" and row.get("kind") != "solo"
+        for row in people
+    )
+
+
+def _reconcile_count(path: Path, field: str) -> int:
+    receipt = _read_json_object(path)
+    if receipt.get("subcommand") not in {"rebuild", "drift"}:
+        raise ValueError("expected a funnel ledger reconcile receipt")
+    counts = receipt.get("counts")
+    if not isinstance(counts, dict):
+        raise ValueError("counts must be an object")
+    value = counts.get(field)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"counts.{field} must be a non-negative integer")
+    return value
+
+
+def _additional_objectives(config_path: Path) -> tuple[dict[str, int], dict[str, str]]:
+    configured, config_error = _configured_evidence_paths(config_path)
+    if config_error:
+        return {}, {
+            objective: config_error
+            for objective in (
+                "hopper_interviews_ready",
+                "state_drift",
+                "unledgered_inbound",
+            )
+        }
+
+    readers = {
+        "hopper_interviews_ready": lambda path: _hopper_interviews_ready(path),
+        "state_drift": lambda path: _reconcile_count(path, "drift"),
+        "unledgered_inbound": lambda path: _reconcile_count(path, "unledgered_added"),
+    }
+    values: dict[str, int] = {}
+    details: dict[str, str] = {}
+    for objective, reader in readers.items():
+        path, resolution = _resolve_evidence(configured[objective])
+        if path is None:
+            details[objective] = resolution
+            continue
+        try:
+            values[objective] = reader(path)
+            details[objective] = resolution
+        except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            details[objective] = f"unreadable evidence artifact: {path}: {exc}"
+    return values, details
+
+
 def _read_existing(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"schema": "objectives-observed/v1", "values": {}}
@@ -361,11 +466,18 @@ def _run(
     reliability, reliability_detail, reliability_metrics, reliability_unknown = (
         _publish_reliability(state_dir, sources, today)
     )
+    evidence_config = (
+        OBJECTIVES_EVIDENCE_CONFIG
+        if pipeline_repo == DEFAULT_PIPELINE_REPO
+        else pipeline_repo / "estate.json"
+    )
+    additional_values, additional_details = _additional_objectives(evidence_config)
     values: dict[str, int | float] = {}
     if hopper is not None:
         values["hopper_depth"] = hopper
     if reliability is not None:
         values["publish_reliability"] = reliability
+    values.update(additional_values)
 
     _atomic_write_objectives(state_dir, ts=now, owned_values=values)
     status = "unknown" if hopper is None or reliability_unknown else "ok"
@@ -375,11 +487,18 @@ def _run(
         "subject": "owner-objectives",
         "status": status,
         "evidence": f"{pipeline_repo / 'episodes'},{sources / 'publish_schedule.json'}",
-        "detail": f"hopper: {hopper_detail}; publish reliability: {reliability_detail}",
+        "detail": (
+            f"hopper: {hopper_detail}; publish reliability: {reliability_detail}; "
+            + "; ".join(
+                f"{objective}: {detail}"
+                for objective, detail in additional_details.items()
+            )
+        ),
         "metrics": {
             "values": values,
             "hopper": hopper_metrics,
             "publish_reliability": reliability_metrics,
+            "objectives_evidence": additional_details,
         },
     }
     _append(state_dir, observation)

@@ -1,4 +1,9 @@
 {
+  "objectives_evidence": {
+    "hopper_interviews_ready": "/mnt/d_drive/repos/podcast/episodes/FUNNEL-LEDGER.json",
+    "state_drift": "/mnt/d_drive/repos/podcast/episodes/receipts/funnel-ledger-drift-*.json",
+    "unledgered_inbound": "/mnt/d_drive/repos/podcast/episodes/receipts/funnel-ledger-rebuild-*.json"
+  },
   "systemd_user_timers": [
     {
       "name": "podcast-loop-health",
