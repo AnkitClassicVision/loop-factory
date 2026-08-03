@@ -103,6 +103,14 @@ thresholds:
   backlog_aging_min: 1
   budget_near_frac: 0.8
 
+comms_loop_invariant:  # owner-ratified (Ankit, 2026-08-03) from ringer/comms-loop-invariant/charter-proposal.md
+  applies_to: every outbound ask class
+  requires:
+    - "return_path: the named component that reads the answers"
+    - "return_sla_hours: how long a reply may sit unharvested"
+  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
+  never: an ask class may not ship without a declared and executed return path
+
 execution:  # owner addendum (Ankit, 2026-07-23): factory-wide process discipline
   headless: true            # every process step runs headless (Claude/Codex/Ringer),
                             # never dependent on an interactive operator session
