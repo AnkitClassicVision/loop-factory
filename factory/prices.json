@@ -1,7 +1,7 @@
 {
   "schema_version": "model-prices/v1",
   "effective_date": "2026-08-02",
-  "ratified": false,
+  "ratified": true,
   "source": "https://openai.com/index/gpt-5-6/",
   "models": {
     "claude-subscription/default": {
@@ -67,5 +67,6 @@
       "price_status": "unknown_placeholder",
       "engine": "grok_openrouter"
     }
-  }
+  },
+  "ratified_by": "Ankit (verbal, 2026-08-02, in-session: subscription lanes carry null per-token prices by design)"
 }

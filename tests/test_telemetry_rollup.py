@@ -321,8 +321,9 @@ assert len(rows) == 1
 
 
 def test_candidate_price_table_covers_review_lanes():
-    table = json.loads((PROJECT_ROOT / "factory" / "prices.json").read_text(encoding="utf-8"))
-    assert table["ratified"] is False
+    price_table_path = PROJECT_ROOT / "factory" / "prices.json"
+    table = json.loads(price_table_path.read_text(encoding="utf-8"))
+    assert table["ratified"] is True
     assert {
         "claude-subscription/default",
         "codex-oauth/default",
@@ -331,11 +332,14 @@ def test_candidate_price_table_covers_review_lanes():
         "kimi-subscription/default",
         "openrouter/x-ai/grok-default",
     } <= set(table["models"])
-    for model in table["models"].values():
+    for model_name, model in table["models"].items():
         if model["input_usd_per_1m_tokens"] is None:
             assert model["output_usd_per_1m_tokens"] is None
             assert model["estimated"] is False
             assert model["price_status"] == "unknown_placeholder"
+            cost = lock_service.model.compute_cost_usd(model_name, 1_000, 500, price_table_path)
+            assert cost is None
+            assert cost != 0
 
 
 def test_jsonl_append_is_concurrent_and_score_records_are_separate(tmp_path):
