@@ -421,6 +421,33 @@ def test_open_state_finding_emits_flat_andon(tmp_path):
     }
 
 
+def test_active_incident_status_remains_open_andon(tmp_path):
+    department = _department(tmp_path)
+    (department / "state" / "incidents.jsonl").write_text(
+        json.dumps(
+            {
+                "code": "future_active_alarm",
+                "status": "active",
+                "severity": "warning",
+                "ts": "2026-08-02T19:20:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows, _ = _build(tmp_path)
+
+    incidents = [
+        row
+        for row in _of_kind(rows, "andon")
+        if row["data"]["code"] == "future_active_alarm"
+    ]
+    assert len(incidents) == 1
+    status = _of_kind(rows, "dept_status")[0]
+    assert status["data"]["open_findings"] == 1
+
+
 def test_script_node_records_count_in_rollup_without_lane_rows(tmp_path):
     """Regression: script nodes (engine/auth None) must count as runs."""
     department = _department(tmp_path)

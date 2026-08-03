@@ -235,6 +235,41 @@ def test_same_day_history_rebuild_overwrites_with_latest_feed(tmp_path):
     assert list(history_dir.iterdir()) == [history_dir / "2026-08-02.json"]
 
 
+def test_nonfresh_refresh_preserves_existing_same_day_history(tmp_path):
+    department = _department(tmp_path)
+    _run(department, "good")
+    history_dir = tmp_path / "archive"
+    assert rollup.rebuild(tmp_path)["complete"] is True
+    build_feed(tmp_path, now=NOW, history_dir=history_dir)
+    history_path = history_dir / "2026-08-02.json"
+    good_snapshot = history_path.read_bytes()
+
+    (tmp_path / "estate" / "state" / "rollup.sqlite3").unlink()
+    (department / "state" / "STATE.json").unlink()
+    assert rollup.rebuild(tmp_path)["complete"] is False
+
+    receipt = build_feed(tmp_path, now=NOW, history_dir=history_dir)
+
+    assert receipt["projection_status"] == "incomplete"
+    assert history_path.read_bytes() == good_snapshot
+
+
+def test_nonfresh_first_refresh_writes_flagged_history_gap(tmp_path):
+    department = _department(tmp_path)
+    history_dir = tmp_path / "archive"
+    (department / "state" / "STATE.json").unlink()
+    assert rollup.rebuild(tmp_path)["complete"] is False
+
+    receipt = build_feed(tmp_path, now=NOW, history_dir=history_dir)
+
+    saved = json.loads(
+        (history_dir / "2026-08-02.json").read_text(encoding="utf-8")
+    )
+    assert receipt["projection_status"] == "incomplete"
+    assert saved["projection_status"] == "incomplete"
+    assert saved["departments"] == {}
+
+
 def test_unknown_daily_metrics_stay_unknown_in_history(tmp_path):
     _department(tmp_path)
     history_dir = tmp_path / "archive"

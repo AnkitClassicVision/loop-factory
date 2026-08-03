@@ -37,6 +37,7 @@ LOGGER = logging.getLogger(__name__)
 UNKNOWN = "unknown"
 ALLOWED_AUTH_CLASSES = frozenset({"oauth_cli", "service_oauth", "local_model"})
 OPEN_APPROVAL_STATUSES = frozenset({"pending_approval", "pending", "open", "queued"})
+CLOSED_INCIDENT_STATUSES = frozenset({"closed", "resolved", "dismissed", "cleared"})
 TIMER_SNAPSHOT_SCHEMA = "timers-snapshot/v1"
 TIMER_RESULTS = frozenset({"success", "failure", UNKNOWN})
 ROLLUP_ENTITIES = (
@@ -362,7 +363,7 @@ def _canonical_andons(
 ) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for incident in incidents:
-        if incident.get("status") not in OPEN_APPROVAL_STATUSES:
+        if incident.get("status") in CLOSED_INCIDENT_STATUSES:
             continue
         department = incident.get("department") or "estate"
         ts = incident.get("ts")
@@ -958,7 +959,7 @@ def build_feed(
     malformed += count
     open_incidents: defaultdict[str, int] = defaultdict(int)
     for incident in canonical["incident"]:
-        if incident.get("status") in OPEN_APPROVAL_STATUSES:
+        if incident.get("status") not in CLOSED_INCIDENT_STATUSES:
             open_incidents[incident.get("department") or "estate"] += 1
 
     for name in names:
@@ -1035,10 +1036,18 @@ def build_feed(
     )
     history_path = history_root / f"{now_dt.date().isoformat()}.json"
     history = _history_snapshot(feed, now_dt.date().isoformat())
-    _atomic_write(
-        history_path,
-        json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
-    )
+    if projection["status"] == "fresh":
+        _atomic_write(
+            history_path,
+            json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
+        )
+    elif not history_path.exists():
+        history["projection_status"] = projection["status"]
+        history["projection_reason"] = projection["reason"]
+        _atomic_write(
+            history_path,
+            json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n",
+        )
     return {
         "departments": len(names),
         "lines": len(feed),
