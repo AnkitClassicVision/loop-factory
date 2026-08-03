@@ -1,0 +1,159 @@
+# outreach department charter — v0.1 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-08-03,
+# Claude Code AskUserQuestion readback r2).
+department: outreach
+version: v0.1
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-08-03"
+  surface: claude-code-askuserquestion-readback-r2
+owner: ankit
+mission: >-
+  Govern the HSD and sales outreach estates as their watchdog/manager: sense
+  every lane (hsd-daily-operator, obe-fix-consumer, the open-engine sales
+  chain and funnels), reconcile funnel state against HubSpot evidence every
+  run, drive drafting under the voice gate fail-closed, queue every sendable
+  artifact to the owner approval lane, heal known failure patterns (logged),
+  escalate unknowns exactly once. Sends happen only within pre-declared,
+  separately-promoted send classes; cold email is excluded forever outside an
+  explicit ankit_manual_exception.
+
+# Capability declarations (owner-authored pattern from the podcast charter:
+# XDG_RUNTIME_DIR is granted per-department, never globally). This implements
+# the signed mission's sensing scope (F1-A/D3: timer liveness of
+# hsd-daily-operator, obe-fix-consumer via systemd user units). Read-only
+# probing; mutating unit actions stay behind the heal allowlist and shadow.
+capabilities:
+  - systemd_user_probe
+
+autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
+
+setpoints:
+  operational: {metric: lanes_sensed_per_cycle, target: 8}
+  outcome: {metric: outreach_state_drift, target: 0}
+  objectives:                     # owner-confirmed (Ankit, 2026-08-03, F1-C)
+    outreach_state_drift:
+      label: "Funnel ledger vs HubSpot evidence drift"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " mismatches"
+    send_class_integrity:
+      label: "Sends outside a promoted class"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " sends"
+    approval_queue_aged:
+      label: "Approved-queue drafts waiting over 48h"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " drafts"
+  # Measure-first (owner F1-C): voice_gate_pass_rate, reply_rate,
+  # harvest_rate get SENSORS ONLY now; numbers ratified from two shadow
+  # weeks of baselines, then chartered.
+
+send_classes:  # owner-dictated (Ankit, 2026-08-03, F1-B) — promotion contract
+  promotion_rule: >-
+    Each class promotes SEPARATELY, only after 14 clean shadow days AND 100%
+    voice-gate pass rate on that class, and only by owner signature. A send
+    outside a promoted class is a kill condition, not a warning.
+  declared:
+    - id: approved_draft_execution
+      description: execute drafts a human already approved
+      status: declared_shadow
+    - id: warm_reply_followup
+      description: in-thread follow-ups to contacts who replied
+      status: declared_shadow
+    - id: reactivation_nudge
+      description: nudges to dormant known contacts
+      status: declared_shadow
+  excluded_forever:
+    - cold_email_outside_ankit_manual_exception
+
+comms_loop_invariant:  # factory invariant, inherited (owner-ratified 2026-08-03)
+  applies_to: every outbound ask class
+  requires:
+    - "return_path: the named component that reads the answers"
+    - "return_sla_hours: how long a reply may sit unharvested"
+  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
+  never: an ask class may not ship without a declared and executed return path
+
+thresholds:
+  weekly_touch_ceiling: 300
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 50
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+budget:
+  engine_policy: subscription_oauth_only
+  api_spend_rule: forbidden_escalate_instead
+  weekly_ceilings:
+    model_calls: 0        # the department's own runtime is deterministic;
+    dollars: 0            # model calls happen in governed lanes under their
+    worker_minutes: 600   # own budgets
+  estate_send_caps:       # adopted from the watched estates' existing caps
+    outbound_per_day: 12
+    new_contacts_per_day: 5
+    per_contact_cadence_floor_days: 4
+
+execution:
+  headless: true
+  step_receipts: required
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+    - send_class_registry          # the declared/promoted class list is governance
+
+escalation:
+  default: fully_automated_with_escalation
+  human_gates:
+    - external_send
+    - crm_write
+    - publish
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+    - send_class_promotion
+
+never:  # owner-confirmed hard floors (Ankit, 2026-08-03, F1-D)
+  - never_cold_email_outside_explicit_ankit_manual_exception
+  - never_bypass_or_weaken_the_voice_gate
+  - never_send_outside_a_promoted_class
+  - phi_out_of_domain__its_appearance_in_inputs_is_itself_an_escalation
+  - governance_files_human_only
+  - sensing_boundary__podcast_keeps_its_four_obe_guest_watches
+
+kill_if:  # owner-confirmed (Ankit, 2026-08-03, F1-D)
+  - a_send_occurs_outside_a_promoted_class
+  - a_voice_gate_bypass_is_detected
+
+funnels:
+  entries:
+    - SG-GOVERN
+
+memory:
+  local: departments/outreach/state
+  backends: []

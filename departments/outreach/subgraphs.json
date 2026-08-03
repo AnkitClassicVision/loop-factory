@@ -1,0 +1,32 @@
+{
+  "_doc": "Machine form of departments/outreach/procedural-graph.md. Derives from knowledge/concept-map.md (LOCKED 2026-08-03). Read-only governance funnel: no dispatch, no CRM writes, no model calls — the watched lanes dispatch under their own gateways. Node impls bind at F3 (Stage 9).",
+  "subgraphs": [
+    {
+      "id": "SG-GOVERN",
+      "concept_refs": ["C1", "C2", "C3", "C4", "C5", "C6", "C7"],
+      "not_applicable": {
+        "S1": "lane metadata and aggregate state only; no recipient identities to resolve",
+        "S2": "no recipients; nothing is ever eligible to receive from this funnel",
+        "S3": "zero model-capable nodes; deterministic sensing and reconciliation only",
+        "S4": "no dispatch in this funnel — watched lanes carry their own full send-guard chains",
+        "S5": "no dispatch: no send frequency to reserve",
+        "S6": "no dispatch: no kill controller needed in this funnel; the estate-level kill remains chartered",
+        "S7": "no dispatch: no circuit breaker needed in this funnel",
+        "S8": "zero cost-incurring nodes; model_calls budget is 0"
+      },
+      "nodes": [
+        {"id": "ORCH", "impl": "runtime/outreach_daily.sh"},
+        {"id": "N1", "impl": "runtime/lane_sense.py"},
+        {"id": "N2", "impl": "runtime/state_reconcile.py"},
+        {"id": "N3", "impl": "runtime/gate_monitor.py"},
+        {"id": "N4", "impl": "runtime/queue_ager.py"},
+        {"id": "N5", "impl": "runtime/escalate.py", "emits_ask": true, "return_path": "state_reconcile", "return_sla_hours": 48},
+        {"id": "N6", "impl": "runtime/objectives_sensor.py"}
+      ]
+    }
+  ],
+  "untraced_allowed": {
+    "runtime/common.py": "shared deterministic atomic I/O and run-record support imported by traced N1-N6 nodes; not independently executable",
+    "runtime/estate.json": "D1/D3 watch registry and fixture-swappable evidence configuration consumed by traced N1-N4 nodes"
+  }
+}
