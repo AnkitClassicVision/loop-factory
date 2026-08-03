@@ -76,6 +76,13 @@ def validate_subgraph(sg) -> list[str]:
     for i, node in enumerate(nodes):
         before = _guards_before(nodes, i)
         nid = node.get("id", f"#{i}")
+        if node.get("emits_ask") is True:
+            if not isinstance(node.get("return_path"), str) or not node["return_path"].strip():
+                fails.append(f"{sid}/{nid}: emits_ask node missing non-empty return_path")
+            return_sla = node.get("return_sla_hours")
+            if (not isinstance(return_sla, (int, float)) or
+                    isinstance(return_sla, bool) or return_sla <= 0):
+                fails.append(f"{sid}/{nid}: emits_ask node missing positive return_sla_hours")
         if node.get("model_capable") and "S3" not in before:
             fails.append(f"{sid}/{nid}: model-capable node not preceded by S3 privacy_preflight")
         if node.get("cost_incurring") and "S8" not in before:
