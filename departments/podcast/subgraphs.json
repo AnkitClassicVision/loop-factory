@@ -36,7 +36,10 @@
     },
     {
      "id": "N4",
-     "impl": "runtime/escalate_outbox.py"
+     "impl": "runtime/escalate_outbox.py",
+     "emits_ask": true,
+     "return_path": "runtime/comms_reconcile_sensor.py",
+     "return_sla_hours": 48
     },
     {
      "id": "N5",
@@ -45,7 +48,7 @@
     {
      "id": "N6",
      "impl": "runtime/comms_reconcile_sensor.py",
-     "execution": "available_not_invoked_by_daily_orchestrator"
+     "execution": "daily_shared_chain_before_compare_and_escalation"
     },
     {
      "id": "N9",

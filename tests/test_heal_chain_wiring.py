@@ -69,6 +69,9 @@ def _assert_one_valid_record(state_dir: Path, node: str, status: str = "ok") -> 
 def test_daily_script_launcher_wraps_heal_lane_in_order_after_manager_chain():
     lines = _script_lines()
     escalate = _line_index(lines, "runtime/escalate_outbox.py")
+    hopper = _line_index(lines, "runtime/hopper_sensor.py")
+    comms = _line_index(lines, "runtime/comms_reconcile_sensor.py")
+    compare = _line_index(lines, "runtime/compare_charter.py")
     manager = _line_index(lines, "factory/manager.py")
     approvals = _line_index(lines, "factory/human_in_the_loop.py")
     select = _line_index(lines, "runtime/heal_select.py")
@@ -80,6 +83,9 @@ def test_daily_script_launcher_wraps_heal_lane_in_order_after_manager_chain():
     # proven within the function body.
     heal_call = max(i for i, l in enumerate(lines) if l.strip() == "run_heal_phase")
     assert escalate < manager < approvals < heal_call
+    assert hopper < comms < compare < escalate
+    assert 'comms_receipt="$(' in "\n".join(lines)
+    assert 'validate_json_object <<<"${comms_receipt}"' in lines
     assert select < apply < verify
     # Audit fix round 1 (2026-08-03): heal steps are FAIL-CLOSED per incident.
     # The old pin asserted `|| true` on every heal invocation — enshrining the

@@ -123,6 +123,12 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+# The escalation answer-return reader is receipt-gated: nonzero, empty, or
+# non-object stdout stops the chain before compare/dedup can advance.
+comms_receipt="$(
+    python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/comms_reconcile_sensor.py" --tracker "${SOURCES}/referral_touch_tracker.json" --ledger "${SOURCES}/referral_ledger.json" --sla-hours 48 --state-dir "${STATE_DIR}"
+)"
+validate_json_object <<<"${comms_receipt}"
 # DAG supervisor (map node N1): validates the pipeline's hashed projection
 # receipt. The PIPELINE exports the file on its own timer (podcast repo,
 # podcast-dag-projection.timer); this department only reads it — supervisory

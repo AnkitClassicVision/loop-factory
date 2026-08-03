@@ -31,13 +31,18 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
           → N4 escalate_outbox (shadow: local outbox only)
 ```
 
+N4 emits a human ask whose declared return path is N6
+`runtime/comms_reconcile_sensor.py`, with `return_sla_hours: 48`.
+`# DEFAULT pending owner review`: the 48-hour SLA is an explicit provisional
+default until the owner reviews it.
+
 | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
 |---|---|---|---|---|---|---|
 | N1 | sense_estate | Sense | SCRIPT | internal_read / shadow | output lists EVERY unit in the charter estate inventory; a unit missing from output = check FAILS (silent-gap guard) | C3, C16, Q3 |
 | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
 | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
-| N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
-| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | available reconciliation sensor, but not invoked by the current daily orchestrator | C3, Q3 |
+| N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally; ask returns through N6 within the provisional 48-hour SLA | C12, C13, Q11 |
+| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | daily receipt-gated reconciliation runs before compare/dedup/escalation; missing or invalid receipt halts the chain | C3, Q3 |
 | N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
 
 Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
