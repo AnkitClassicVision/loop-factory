@@ -26,10 +26,9 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 ## SG-WATCHDOG — estate health sensing (proving slice, C3)
 
 ```
-[T every 30 min] → N1 sense_estate ─┐
-                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
-                   → N3 fingerprint_dedup
-                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper sensors
+          → DAG supervision → N2 compare_charter → N3 fingerprint_dedup
+          → N4 escalate_outbox (shadow: local outbox only)
 ```
 
 | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
@@ -38,8 +37,8 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
 | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
 | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
-| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
-| N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | available reconciliation sensor, but not invoked by the current daily orchestrator | C3, Q3 |
+| N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
 
 Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
 + log error patterns for the 7 loops + support lanes, (b) escalation-channel
@@ -68,7 +67,8 @@ a split-brain defect.
 ## SG-PIPELINE — independent guest-count sensor (C1/C4)
 
 ```
-[T daily + on watchdog demand] → S1 → N1 pipeline_sensor → N2 compare_charter → N9 record
+[shared daily chain] → S1 → N1 pipeline_sensor → other sensors
+                     → one shared N2 compare_charter
 ```
 
 | # | Node | impl | QA check (executed) | traces |
@@ -78,7 +78,7 @@ a split-brain defect.
 ## SG-PUBLISHDAY — publish-day verification (C1/C10)
 
 ```
-[T publish days 10:30 ET] → N1 publish_verifier → N2 compare_charter → N9 record
+[shared daily chain] → N1 publish_verifier → later sensors → one shared N2 compare_charter
 ```
 
 | # | Node | impl | QA check (executed) | traces |
@@ -88,7 +88,7 @@ a split-brain defect.
 ## SG-MANIFEST — guest manifest completeness sensor (C6/C7)
 
 ```
-[T daily] → S1 → N1 manifest_sensor → N2 compare_charter → N9 record
+[shared daily chain] → S1 → N1 manifest_sensor → later sensors → one shared N2 compare_charter
 ```
 
 | # | Node | impl | QA check (executed) | traces |
@@ -117,6 +117,12 @@ Department starts shadow (charter). Ladder per runbooks/promotion-ladder.md:
 shadow → heals live (playbook allowlist) → escalation delivery live. The
 department has NO send/publish/CRM-write class to promote — those live in the
 estate. No lane auto-promotes.
+
+## Daily maintenance
+
+After all daily consumers and the heal phase finish, the orchestrator runs
+`rotate_observations.py` to bound retained observation evidence, then rebuilds
+the operator boards. Rotation is therefore part of every successful daily run.
 
 ## Intent traceability
 
