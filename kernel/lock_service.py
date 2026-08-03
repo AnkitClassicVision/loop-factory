@@ -20,6 +20,7 @@ Hardened against the kernel-v1 GLM adversarial review:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import secrets
@@ -39,6 +40,7 @@ from gateways import read_broker  # noqa: E402
 # charter budget.weekly_ceilings (mirror; source of truth is charter.yaml)
 DEFAULT_CEILINGS = {"model_calls": 900, "dollars": 40, "worker_minutes": 1200}
 MAX_TTL_S = 300  # server-side cap on any permission slip's lifetime
+LOGGER = logging.getLogger(__name__)
 
 
 class LockServiceDown(RuntimeError):
@@ -56,18 +58,36 @@ class DurableNonceSet:
         self._path = pathlib.Path(path)
         self._mem: set = set()
         if self._path.exists():
-            # GLM P1-N1: tolerate a torn trailing line from a crashed write
-            # instead of aborting startup. A torn line is a consumption that did
-            # not durably commit (fsync happens before the effect returns), so
-            # skipping it is safe: that receipt's effect never completed.
-            for line in self._path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
+            raw_lines = self._path.read_bytes().splitlines(keepends=True)
+            for line_number, raw_line in enumerate(raw_lines, start=1):
+                is_final = line_number == len(raw_lines)
                 try:
+                    line = raw_line.decode("utf-8").strip()
                     self._mem.add(json.loads(line)["nonce"])
-                except (ValueError, KeyError, TypeError):
-                    continue
+                except (UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
+                    # A provably torn row is exactly the last physical line, with
+                    # no newline terminator, whose JSON syntax error is consistent
+                    # with input ending mid-value/object. Anything else may erase
+                    # durable replay evidence and therefore refuses startup.
+                    no_terminator = not raw_line.endswith((b"\n", b"\r"))
+                    eof_json_error = (
+                        isinstance(exc, json.JSONDecodeError)
+                        and (
+                            exc.pos >= len(line)
+                            or exc.msg.startswith("Unterminated string")
+                        )
+                    )
+                    if is_final and no_terminator and eof_json_error:
+                        LOGGER.warning(
+                            "ignoring provably torn final nonce-ledger row %s:%d",
+                            self._path,
+                            line_number,
+                        )
+                        continue
+                    raise LockServiceDown(
+                        f"nonce ledger load refused: {self._path}:{line_number}: "
+                        f"malformed row ({exc})"
+                    ) from exc
 
     def __contains__(self, nonce):
         return nonce in self._mem
