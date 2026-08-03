@@ -1,0 +1,112 @@
+# pulse department charter — v0.2 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-08-03,
+# Claude Code AskUserQuestion readback — acceptance run throwaway).
+department: pulse
+version: v0.2
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-08-03"
+  surface: claude-code-askuserquestion-readback-acceptance-run
+owner: ankit
+mission: >-
+  Read plain-text fixture status notes dropped into inbox/, assemble a daily
+  owner digest draft (shadow — never sent), and on an unreadable note emit one
+  clarify_note ask whose declared return path is the replies/ directory read on
+  the next cycle (48h SLA). Every readable note appears in exactly one digest
+  within 24 hours. Throwaway acceptance department: fixture data only, deleted
+  at the end of the acceptance run.
+
+autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
+
+setpoints:
+  operational: {metric: notes_processed_per_cycle, target: 10}
+  outcome: {metric: digest_coverage_pct, target: 100}
+  objectives:                     # owner-confirmed (Ankit, 2026-08-03, F1 Q2)
+    digest_coverage:
+      label: "Readable notes in exactly one digest within 24h"
+      setpoint: 100
+      minimum: 100
+      target: 100
+      unit: "%"
+    ask_return_integrity:
+      label: "Asks older than 48h with no harvested reply"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " asks"
+
+comms_loop_invariant:  # factory invariant, inherited (owner-ratified 2026-08-03)
+  applies_to: every outbound ask class
+  requires:
+    - "return_path: the named component that reads the answers"
+    - "return_sla_hours: how long a reply may sit unharvested"
+  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
+  never: an ask class may not ship without a declared and executed return path
+
+thresholds:
+  weekly_touch_ceiling: 300
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 50
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+budget:
+  engine_policy: subscription_oauth_only
+  api_spend_rule: forbidden_escalate_instead
+  weekly_ceilings:
+    model_calls: 0        # runtime is fully deterministic — zero model calls
+    dollars: 0
+    worker_minutes: 60
+
+execution:
+  headless: true
+  step_receipts: required
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+
+escalation:
+  default: fully_automated_with_escalation
+  human_gates:
+    - external_send
+    - crm_write
+    - publish
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+
+never:  # owner-confirmed hard floors (Ankit, 2026-08-03, F1 Q3)
+  - never_send_publish_spend_or_touch_network
+  - never_touch_real_data__fixture_notes_only
+  - never_enable_timers__acceptance_cycles_run_by_hand
+  - governance_files_human_only
+
+kill_if:  # owner-confirmed (Ankit, 2026-08-03, F1 Q3)
+  - any_external_action_attempted
+  - department_attempts_to_edit_a_governance_file
+
+funnels:
+  entries:
+    - SG-DIGEST
+
+memory:
+  local: departments/pulse/state
+  backends: []

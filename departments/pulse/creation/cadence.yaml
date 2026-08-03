@@ -1,0 +1,34 @@
+# pulse — Stage 8 cadence/alert contract (owner decision D1: daily 07:00,
+# Persistent=false, catch_up skip, never enabled during acceptance)
+department: pulse
+triggers:
+  - kind: time
+    spec:
+      on_calendar: "*-*-* 07:00:00"
+      persistent: false
+      catch_up: skip
+  - kind: event
+    spec:
+      source_path: departments/pulse/inbox
+      cursor_policy:
+        first_run: eof
+concurrency:
+  max_concurrent: 1
+  overlap_policy: skip
+alerting:
+  classification_table:
+    - code: objective_breach
+      route: human
+    - code: ask_return_sla_breach
+      route: human
+    - code: release_drift
+      route: proposal
+  dedupe_window_minutes: 60
+  digest:
+    cap_per_day: 1
+    cooldown_minutes: 360
+escalation:
+  owner: ankit
+  sla_hours: 48
+activation:
+  enabled_by_default: false
