@@ -1,0 +1,28 @@
+{
+  "systemd_user_timers": [
+    {
+      "name": "hsd-daily-operator",
+      "expected_cadence": "12h",
+      "stale_after_minutes": 900,
+      "log_glob": "/mnt/d_drive/repos/hubspot-daily-2/state/scheduler_logs/daily-*.log"
+    },
+    {
+      "name": "obe-fix-consumer",
+      "expected_cadence": "10min",
+      "stale_after_minutes": 30,
+      "evidence": "timer_only"
+    }
+  ],
+  "sales_lanes": [
+    {"name": "sales-daily-chain", "evidence_path": "/mnt/d_drive/repos/open-engine/departments/sales/state/runs-v2.jsonl"},
+    {"name": "sales-funnels", "evidence_path": "/mnt/d_drive/repos/open-engine/departments/sales/state/receipts.jsonl"},
+    {"name": "linkedin-lanes", "evidence_path": "/mnt/d_drive/repos/open-engine/departments/sales/state/linkedin_send_audit.jsonl"},
+    {"name": "approval-send", "evidence_path": "/mnt/d_drive/repos/open-engine/departments/sales/state/approval_queue.jsonl"}
+  ],
+  "funnel_ledger_paths": ["/mnt/d_drive/repos/open-engine/departments/sales/state/STATE.json"],
+  "hubspot_evidence_paths": ["/mnt/d_drive/repos/hubspot-daily-2/reports/control_loop_summary_*.json"],
+  "voice_gate_receipt_globs": ["/mnt/d_drive/repos/open-engine/departments/sales/state/receipts.jsonl"],
+  "observed_send_ledgers": ["/mnt/d_drive/repos/open-engine/departments/sales/state/linkedin_send_audit.jsonl"],
+  "approval_queue_paths": ["/mnt/d_drive/repos/open-engine/departments/sales/state/approval_queue.jsonl"],
+  "declared_send_classes": ["approved_draft_execution", "warm_reply_followup", "reactivation_nudge"]
+}

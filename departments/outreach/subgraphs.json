@@ -16,16 +16,17 @@
       },
       "nodes": [
         {"id": "ORCH", "impl": "runtime/outreach_daily.sh"},
-        {"id": "N1"},
-        {"id": "N2"},
-        {"id": "N3"},
-        {"id": "N4"},
-        {"id": "N5", "emits_ask": true, "return_path": "state_reconcile", "return_sla_hours": 48},
-        {"id": "N6"}
+        {"id": "N1", "impl": "runtime/lane_sense.py"},
+        {"id": "N2", "impl": "runtime/state_reconcile.py"},
+        {"id": "N3", "impl": "runtime/gate_monitor.py"},
+        {"id": "N4", "impl": "runtime/queue_ager.py"},
+        {"id": "N5", "impl": "runtime/escalate.py", "emits_ask": true, "return_path": "state_reconcile", "return_sla_hours": 48},
+        {"id": "N6", "impl": "runtime/objectives_sensor.py"}
       ]
     }
   ],
   "untraced_allowed": {
-    "runtime/runtime_node.py": "F0 scaffold node template; impls bind at F3 (Stage 9) and this entry is removed then"
+    "runtime/common.py": "shared deterministic atomic I/O and run-record support imported by traced N1-N6 nodes; not independently executable",
+    "runtime/estate.json": "D1/D3 watch registry and fixture-swappable evidence configuration consumed by traced N1-N4 nodes"
   }
 }
