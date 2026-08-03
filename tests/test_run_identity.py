@@ -35,6 +35,7 @@ def _load(name, rel):
 R = _load("identity_kernel_receipts", "kernel/receipts.py")
 REL = _load("identity_release", "factory/release.py")
 RUN = _load("identity_runner", "factory/runner.py")
+PJ = _load("identity_projection", "factory/projection.py")
 
 SIGNER = R.LocalSigner(key="test-key")
 SPOOL_ENV = "OE_RECORD_SPOOL"
@@ -206,6 +207,25 @@ def _rollup_state(tmp_path):
     return state
 
 
+def _write_projection(state, *run_ids, tamper=False):
+    """Write the department's SIGNED execution projection — the only source
+    rollup trusts for graph-run identity (F2)."""
+    body = PJ.build_projection(
+        department="demo", graph_id="SG-RUN", graph_hash="graph-hash",
+        release_hash="release-hash", factory_version={}, nodes=[], edges=[],
+        runs=[{"run_id": run_id, "state": "done",
+               "termination_reason": "terminal_edge", "transitions": []}
+              for run_id in run_ids],
+        generated_at="2026-08-02T00:00:00+00:00")
+    signed = PJ.sign_projection(body, SIGNER)
+    if tamper:  # mutate AFTER signing: the signature no longer verifies
+        signed["runs"].append({"run_id": "injected", "state": "done",
+                               "termination_reason": None, "transitions": []})
+    path = state / "receipts" / "execution-projection.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(signed), encoding="utf-8")
+
+
 def _v2_row(gid, run_id="wrapper-1"):
     return {
         "schema": "run-record/v2", "rev": 2, "run_id": run_id,
@@ -265,6 +285,7 @@ def test_rollup_joins_signed_promoted_rows(tmp_path):
     _write_row(state / "telemetry.jsonl",
                _sign_row(_telemetry_row(gid), pid="b" * 32))
     _write_row(state / "scores.jsonl", _sign_row(_score_row(gid), pid="c" * 32))
+    _write_projection(state, gid)
 
     result = rollup.rebuild(tmp_path, signer=SIGNER)
     assert result["complete"], result
@@ -489,7 +510,8 @@ def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
     score_rows = _read_jsonl(state / "scores.jsonl")
     assert len(score_rows) == 1
     assert score_rows[0]["target_ref"]["graph_run_id"] == gid
-    assert (state / "graph_runs" / gid / "promotions.jsonl").exists()
+    assert (RUN.run_control_dir(tmp_path, "demo", gid)
+            / "promotions.jsonl").exists()
 
     (state / "STATE.json").write_text(
         json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
@@ -667,32 +689,323 @@ def test_crash_before_promotion_resumes_and_promotes_exactly_once(tmp_path):
     assert rows[0]["graph_run_id"] == second["run_id"]
 
 
-def test_crash_mid_promotion_dedupes_by_stable_row_id(tmp_path):
-    """A crash between the canonical appends and the promotion marker means
-    the re-executed promotion appends again — the stable promotion id makes
-    the duplicate collapse to exactly one row in the rollup."""
+MARKING_EMITTER = """\
+import json, pathlib, sys
+sys.path.insert(0, {root!r})
+from factory import runrecord
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+with (state / "execcount.txt").open("a", encoding="utf-8") as fh:
+    fh.write("exec\\n")
+runrecord.emit_record(state, department="demo", node="N1", status="ok")
+print(json.dumps({{"status": "ok"}}))
+"""
+
+
+def _incident_codes(db_path):
+    connection = sqlite3.connect(db_path)
+    try:
+        return [row[0] for row in connection.execute(
+            "SELECT code FROM incident")]
+    finally:
+        connection.close()
+
+
+def _wrapper_row_count(db_path, gid):
+    connection = sqlite3.connect(db_path)
+    try:
+        return connection.execute(
+            "SELECT COUNT(*) FROM run WHERE graph_run_id = ? AND run_id != ?",
+            (gid, gid)).fetchone()[0]
+    finally:
+        connection.close()
+
+
+def test_crash_mid_promotion_completes_from_original_spool_exactly_once(
+        tmp_path):
+    """F3 regression: a crash between the canonical appends and the
+    completion marker must NOT re-execute the node — re-execution produces a
+    different body under the same promotion id (the probe's two-signed-bodies
+    defect). Recovery completes the promotion from the ORIGINAL spool, so the
+    re-appended rows are byte-identical and collapse to exactly one row."""
     dept = _make_dept(
-        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        tmp_path, {"sense.py": MARKING_EMITTER.format(root=str(ROOT))},
         _one_node_manifest())
     with pytest.raises(RuntimeError, match="pre_promotion_marker"):
         RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
                       root=tmp_path, sleep_fn=lambda s: None,
                       crash_hook=_crash_once_at("pre_promotion_marker"))
+    executions = (dept / "state" / "execcount.txt").read_text(
+        encoding="utf-8").splitlines()
+    assert len(executions) == 1
     second = RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
                            root=tmp_path, sleep_fn=lambda s: None)
     assert second["resumed"] is True and second["state"] == "done"
+    # the node did NOT run a second time — promotion resumed from the spool
+    assert len((dept / "state" / "execcount.txt").read_text(
+        encoding="utf-8").splitlines()) == 1
     physical = _read_jsonl(dept / "state" / "runs-v2.jsonl")
-    assert len(physical) == 2  # at-least-once append...
-    assert len({json.dumps(r["promotion"]["id"]) for r in physical}) == 1
+    assert len(physical) == 2
+    assert len({r["promotion"]["id"] for r in physical}) == 1
+    # byte-identical bodies: no conflicting signed rows under one id
+    assert len({json.dumps(r, sort_keys=True) for r in physical}) == 1
     (dept / "state" / "STATE.json").write_text(
         json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
     built = rollup.rebuild(tmp_path, signer=SIGNER)
-    connection = sqlite3.connect(built["database"])
-    try:
-        # wrapper rows only: the graph run's own runs.jsonl row also joins
-        count = connection.execute(
-            "SELECT COUNT(*) FROM run WHERE graph_run_id = ? AND run_id != ?",
-            (second["run_id"], second["run_id"])).fetchone()[0]
-    finally:
-        connection.close()
-    assert count == 1  # ...exactly-once at read time
+    assert _wrapper_row_count(built["database"], second["run_id"]) == 1
+    assert not [c for c in _incident_codes(built["database"])
+                if c.startswith("graph_identity_")]
+
+
+def test_conflicting_promotion_bodies_are_quarantined(tmp_path):
+    """F3 regression: two validly signed rows sharing one promotion id but
+    differing in content is never last-writer-wins — both are quarantined."""
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "f" * 8
+    first = _sign_row(_v2_row(gid, run_id="wrapper-1"), pid="f" * 32)
+    second = _sign_row(_v2_row(gid, run_id="wrapper-2"), pid="f" * 32)
+    _write_row(state / "runs-v2.jsonl", first)
+    _write_row(state / "runs-v2.jsonl", second)
+    _write_projection(state, gid)
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"] is False
+    assert any(code.startswith("graph_identity_conflict")
+               for code in _incident_codes(result["database"]))
+    assert _wrapper_row_count(result["database"], gid) == 0
+
+
+# --------------------------------------------------------------------------- #
+# F1: the promotion marker is runner-owned and verified before any skip
+# --------------------------------------------------------------------------- #
+
+def test_promotion_marker_lives_outside_department_state(tmp_path):
+    dept = _make_dept(
+        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    control = RUN.run_control_dir(tmp_path, "demo", result["run_id"])
+    assert (control / "promotions.jsonl").exists()
+    # nothing marker-shaped remains anywhere the node can reach by its own
+    # sanctioned paths (its state dir and the spool it was handed)
+    assert list((dept / "state").rglob("promotions.jsonl")) == []
+    assert control.resolve() not in (dept / "state").resolve().parents
+    assert not str(control.resolve()).startswith(
+        str((dept / "state").resolve()))
+
+
+FORGED_MARKER_NODE = """\
+import json, os, pathlib, sys
+sys.path.insert(0, {root!r})
+from factory import runrecord
+
+state = pathlib.Path(__file__).resolve().parents[1] / "state"
+state.mkdir(parents=True, exist_ok=True)
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+
+# The probe: claim the promotion already happened, from every location the
+# node's own sanctioned paths can reach.
+for target in (spool.parent.parent / "promotions.jsonl",
+               spool.parent / "promotions.jsonl",
+               state / "promotions.jsonl"):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({{"node": "N1", "attempt": 1}}) + "\\n")
+
+runrecord.emit_record(state, department="demo", node="N1", status="ok")
+print(json.dumps({{"status": "ok"}}))
+"""
+
+
+def test_node_written_marker_does_not_strand_records(tmp_path):
+    """F1 regression: the node forges promotion markers at every path it can
+    reach. Promotion still happens — rows land canonically, not stranded."""
+    dept = _make_dept(
+        tmp_path, {"sense.py": FORGED_MARKER_NODE.format(root=str(ROOT))},
+        _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "done"
+    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["graph_run_id"] == result["run_id"]
+    assert rows[0]["promotion"]["sig"]
+
+
+def test_unverifiable_marker_repromotes_and_records_incident(tmp_path):
+    """F1 regression: a marker whose signature does not verify is never
+    honored as a skip — the runner re-promotes and records an incident."""
+    import hashlib as _hashlib
+
+    dept = _make_dept(
+        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
+        _one_node_manifest())
+    run_id = "SG-RUN-" + _hashlib.sha256(b"t1").hexdigest()
+    control = RUN.run_control_dir(tmp_path, "demo", run_id)
+    control.mkdir(parents=True, exist_ok=True)
+    with (control / "promotions.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "schema": "promotion-marker/v1", "department": "demo",
+            "run_id": run_id, "node": "N1", "attempt": 1,
+            "counts": {"runs-v2.jsonl": 1}, "row_ids": ["deadbeef"],
+            "sig": "not-a-valid-signature"}) + "\n")
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "done"
+    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
+    assert len(rows) == 1  # re-promoted, not silently skipped
+    incidents = _read_jsonl(dept / "state" / "graph_incidents.jsonl")
+    assert any(row.get("code") == "promotion_marker_unverifiable"
+               for row in incidents)
+
+
+# --------------------------------------------------------------------------- #
+# F2: graph-run rows derive from the VERIFIED execution projection
+# --------------------------------------------------------------------------- #
+
+def test_unbacked_graph_claim_in_runs_jsonl_is_quarantined(tmp_path):
+    """F2 regression: an unsigned direct graph claim written into
+    runs.jsonl must not enter the victim's bundle — no projection backing,
+    so it quarantines as an incident."""
+    state = _rollup_state(tmp_path)
+    victim = "SG-RUN-" + "9" * 8
+    _write_row(state / "runs.jsonl", {
+        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
+        "run_id": victim, "graph_run_id": victim, "loop_id": "SG-RUN"})
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"] is False
+    assert rollup.graph_run_bundle(result["database"], victim)["run"] == []
+    assert any(code.startswith("graph_identity_")
+               for code in _incident_codes(result["database"]))
+
+
+def test_graph_rows_backed_by_verified_projection_are_ingested(tmp_path):
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "7" * 8
+    _write_row(state / "runs.jsonl", {
+        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
+        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
+    _write_projection(state, gid)
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"], result
+    assert [row["run_id"] for row in
+            rollup.graph_run_bundle(result["database"], gid)["run"]] == [gid]
+
+
+def test_tampered_projection_quarantines_graph_rows(tmp_path):
+    state = _rollup_state(tmp_path)
+    gid = "SG-RUN-" + "8" * 8
+    _write_row(state / "runs.jsonl", {
+        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
+        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
+    _write_projection(state, gid, tamper=True)
+    result = rollup.rebuild(tmp_path, signer=SIGNER)
+    assert result["complete"] is False
+    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
+
+
+# --------------------------------------------------------------------------- #
+# F4 / F5: full telemetry validation and hostile spool entries
+# --------------------------------------------------------------------------- #
+
+BAD_TELEMETRY_SPOOLER = """\
+import json, os, pathlib
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+spool.mkdir(parents=True, exist_ok=True)
+row = {
+    "schema_version": "step-telemetry/v1", "ts": "2026-08-02T00:00:00+00:00",
+    "gen_ai.operation.name": "chat", "gen_ai.provider.name": None,
+    "gen_ai.request.model": None, "gen_ai.response.model": None,
+    "gen_ai.usage.input_tokens": -5, "gen_ai.usage.output_tokens": None,
+    "gen_ai.response.finish_reasons": ["not-a-real-reason"],
+    "duration_ms": 1, "error.type": None, "loopfactory.cost_usd": None,
+    "loopfactory.auth.route": "nonsense-route", "loopfactory.engine": None,
+    "loopfactory.price.schema_version": None,
+    "loopfactory.price.effective_date": None,
+    "loopfactory.department": "demo", "loopfactory.run_id": None,
+    "loopfactory.step_id": None, "loopfactory.node": "N1",
+    "loopfactory.telemetry.source": "legacy_null", "estimated": False,
+}
+with (spool / "telemetry.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(row) + "\\n")
+print(json.dumps({"status": "ok"}))
+"""
+
+
+def test_invalid_telemetry_row_refuses_promotion(tmp_path):
+    """F4: the full telemetry validator runs BEFORE signing — an invalid row
+    never gets signed and rejected downstream."""
+    dept = _make_dept(tmp_path, {"sense.py": BAD_TELEMETRY_SPOOLER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    assert not (dept / "state" / "telemetry.jsonl").exists()
+    run_state = json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+    assert "spool" in run_state["nodes"]["N1"]["reason"]
+
+
+VALID_V2_BODY = {
+    "schema": "run-record/v2", "rev": 2, "run_id": "linked-1",
+    "department": "demo", "node": "N1", "epoch": 0,
+    "ts": "2026-08-02T00:00:01+00:00", "attempt": 1, "round": None,
+    "release": None, "trigger": None, "engine": None, "model": None,
+    "auth_class": None, "usage": None, "cost": None, "duration_ms": None,
+    "status": "ok", "errors": [], "artifacts": [], "receipts": [],
+    "evaluator": None, "approval": None, "external_actions_taken": 0,
+}
+
+SYMLINK_SPOOLER = """\
+import json, os, pathlib
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+spool.mkdir(parents=True, exist_ok=True)
+# the link target holds a fully VALID record, so only rejecting the
+# non-regular spool entry itself can catch this
+target = spool.parent / "elsewhere.jsonl"
+target.write_text({body!r} + "\\n", encoding="utf-8")
+(spool / "runs-v2.jsonl").symlink_to(target)
+print(json.dumps({{"status": "ok"}}))
+""".format(body=json.dumps(VALID_V2_BODY))
+
+
+def test_symlinked_spool_entry_refuses_promotion(tmp_path):
+    """F5: a spool entry that is not a regular file is refused."""
+    dept = _make_dept(tmp_path, {"sense.py": SYMLINK_SPOOLER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    run_state = json.loads(
+        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
+        .read_text(encoding="utf-8"))
+    assert "spool" in run_state["nodes"]["N1"]["reason"]
+    assert not (dept / "state" / "runs-v2.jsonl").exists()
+
+
+OVERSIZE_SPOOLER = """\
+import json, os, pathlib
+spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
+spool.mkdir(parents=True, exist_ok=True)
+# every line is a VALID record under the per-row cap, and the row count
+# stays under the per-stream cap: only a FILE-size bound checked before the
+# read can catch this
+body = json.loads({body!r})
+body["errors"] = ["x" * 50000]
+line = json.dumps(body) + "\\n"
+with (spool / "runs-v2.jsonl").open("w", encoding="utf-8") as fh:
+    for _ in range(200):
+        fh.write(line)
+print(json.dumps({{"status": "ok"}}))
+""".format(body=json.dumps(VALID_V2_BODY))
+
+
+def test_oversize_spool_file_refuses_before_full_read(tmp_path):
+    """F5: the size bound is checked BEFORE the file is read into memory."""
+    dept = _make_dept(tmp_path, {"sense.py": OVERSIZE_SPOOLER},
+                      _one_node_manifest())
+    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
+                           root=tmp_path, sleep_fn=lambda s: None)
+    assert result["state"] == "escalated"
+    assert not (dept / "state" / "runs-v2.jsonl").exists()
