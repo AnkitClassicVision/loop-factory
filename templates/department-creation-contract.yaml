@@ -1,0 +1,39 @@
+# Stage 3 Creation Contract: replace placeholders with owner-approved decisions.
+destination:
+  statement: "Stand up the example department in shadow with one proven loop."
+  # Describe an observable command or procedure with a binary pass/fail result.
+  binary_exit_test: "Run the fixture proof and require every named gate to exit zero."
+  proof_department: example-department
+proof_loop: example-daily-loop
+owner: example-owner
+factory_version_target: "v2"
+privacy_external_effect_boundary: "Fixtures only; zero external sends, writes, publishes, or spend."
+
+# Exactly these eight concerns are allowed. Each concern names one authority;
+# the same authority may intentionally govern multiple concerns.
+canonical_authorities:
+  transition: kernel.transition
+  run_identity: factory.records
+  telemetry: factory.records
+  eval_policy: charter.eval_policy
+  eval_evidence: factory.evaluation
+  board_projection: factory.board
+  healing: factory.manager
+  escalation: kernel.outbox
+
+f1_answers:
+  - question_id: F1-PROVING-SLICE
+    answer: "The example daily loop is the proving slice."
+    source: decisions/intent-lock.md
+open_questions:
+  - question_id: F1-NONBLOCKING-FOLLOWUP
+    blocking: false
+
+proof_matrix:
+  - stage: contract-validation
+    gate: "Creation Contract checker exits zero."
+  - stage: shadow-proof
+    gate: "Fixture shadow run records delivered_count equal to zero."
+
+decision_sources:
+  - decisions/intent-lock.md

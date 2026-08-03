@@ -1,0 +1,6 @@
+{
+  "schema": "referral-ledger-v1",
+  "referrals": [
+    {"source": "synthetic-fixture"}
+  ]
+}

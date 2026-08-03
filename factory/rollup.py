@@ -18,7 +18,7 @@ from factory import scores as score_records
 
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = "rollup/v1"
+SCHEMA_VERSION = "rollup/v2"  # v2: signed promotion + canonical run joins
 ENTITIES = (
     "department",
     "run",
@@ -76,8 +76,11 @@ CREATE TABLE approval (
   queued_at TEXT, card_ref TEXT, source_ref TEXT, schema_version TEXT NOT NULL
 );
 CREATE INDEX run_by_status_ts ON run(status, ts);
+CREATE INDEX run_by_run_id ON run(run_id);
 CREATE INDEX telemetry_by_department_ts ON step_telemetry(department, ts);
+CREATE INDEX telemetry_by_run_id ON step_telemetry(run_id);
 CREATE INDEX score_by_department_label ON score(department, label);
+CREATE INDEX score_by_run_id ON score(run_id);
 CREATE INDEX incident_by_status ON incident(status);
 CREATE INDEX approval_by_status_age ON approval(status, queued_at);
 """
@@ -86,6 +89,166 @@ CREATE INDEX approval_by_status_age ON approval(status, queued_at);
 def _stable_id(*parts: Any) -> str:
     raw = "\x1f".join("" if part is None else str(part) for part in parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _resolve_verifier():
+    """The kernel signer when its key is present in-process, else None."""
+    if not os.environ.get("OE_KERNEL_SIGNING_KEY"):
+        return None
+    from kernel import receipts
+
+    return receipts.LocalSigner()
+
+
+def _promotion_verdict(row: dict[str, Any], signer) -> str:
+    """Read-time defense (review B1, Option C): only the runner's promotion
+    step may put graph identity into a canonical stream, and it signs every
+    promoted row. A graph-claiming row without a valid signature is a
+    same-uid direct file write (or tampering) and is quarantined."""
+    promotion = row.get("promotion")
+    if not isinstance(promotion, dict) or not isinstance(
+            promotion.get("sig"), str):
+        return "unsigned"
+    if signer is None:
+        return "unverifiable"
+    unsigned = {**row, "promotion": {k: v for k, v in promotion.items()
+                                     if k != "sig"}}
+    try:
+        payload = json.dumps(unsigned, sort_keys=True, separators=(",", ":"),
+                             allow_nan=False).encode("utf-8")
+        verified = signer.verify(payload, promotion["sig"])
+    except Exception:
+        return "invalid"
+    return "ok" if verified else "invalid"
+
+
+def _promotion_id(row: dict[str, Any]) -> str | None:
+    promotion = row.get("promotion")
+    if isinstance(promotion, dict) and isinstance(promotion.get("id"), str):
+        return promotion["id"]
+    return None
+
+
+def _body_hash(row: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(row, sort_keys=True, separators=(",", ":"),
+                   default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _collapse_promotions(rows, incidents):
+    """Exactly-once for promotion-backed rows (review F3).
+
+    Rows sharing a promotion id must be byte-identical — that is what a
+    crash-recovered promotion re-appending the SAME spool produces. Two
+    different bodies under one id is a conflict, never last-writer-wins:
+    the whole group is quarantined as an incident.
+    """
+    grouped: dict[str, list] = {}
+    passthrough = []
+    for row in rows:
+        marker = row.pop("_promotion_body", None)
+        if marker is None:
+            passthrough.append(row)
+        else:
+            grouped.setdefault(row["id"], []).append((marker, row))
+    for row_id, group in grouped.items():
+        bodies = {marker for marker, _row in group}
+        if len(bodies) > 1:
+            first = group[0][1]
+            incidents.append(
+                _incident(
+                    department=first.get("department"),
+                    code="graph_identity_conflict",
+                    source_ref=str(first.get("source_ref")),
+                )
+            )
+            continue
+        passthrough.append(group[0][1])
+    return passthrough
+
+
+def _projection_runs(root, state_dir, department, incidents, signer):
+    """Graph runs backed by the department's VERIFIED signed projection.
+
+    Review F2: runs.jsonl is a plain append-only event log — anything that
+    can write the file can claim a graph run in it. The signed execution
+    projection (factory/projection.py, exported by the runner) is the
+    authority instead: graph-run rows are DERIVED from it, and a runs.jsonl
+    graph claim without projection backing is quarantined. Deny-by-default —
+    a missing, unreadable, unverifiable, or tampered projection backs
+    nothing at all.
+
+    Known bound, stated honestly: a department whose projection covers one
+    subgraph will not back graph claims from a second subgraph's runs; those
+    surface as graph_identity_unbacked incidents (visible and fail-closed)
+    rather than being silently trusted.
+    """
+    path = state_dir / "receipts" / "execution-projection.json"
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise OSError("projection is not a regular file")
+    except (FileNotFoundError, OSError):
+        return {}
+    value = _read_json(root, path, department, incidents)
+    if value is None:
+        return {}
+    from factory import projection as projection_module
+
+    if signer is None:
+        findings = [{"kind": "no_verifier"}]
+    else:
+        findings = projection_module.verify_projection(value, signer)
+    if findings:
+        incidents.append(
+            _incident(
+                department=department,
+                code="graph_identity_projection_invalid",
+                source_ref=_relative(root, path),
+            )
+        )
+        return {}
+    backed = {}
+    for run in value.get("runs") or []:
+        if not isinstance(run, dict):
+            continue
+        run_id = run.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            backed[run_id] = run
+    return backed
+
+
+def _projection_run_rows(root, state_dir, department, backed):
+    """Derive the canonical graph-run rows from the verified projection."""
+    source_ref = _relative(root, state_dir / "receipts"
+                           / "execution-projection.json")
+    out = []
+    for run_id, run in sorted(backed.items()):
+        transitions = run.get("transitions") or []
+        last = transitions[-1] if isinstance(transitions, list) and transitions \
+            else {}
+        try:
+            safe_run_id = _identifier(run_id, "run_id", nullable=False)
+            status = _identifier(run.get("state") or "unknown", "status",
+                                 nullable=False)
+            ts = _identifier(last.get("ts") if isinstance(last, dict) else None,
+                             "timestamp")
+            current_step = _identifier(
+                last.get("from") if isinstance(last, dict) else None, "node")
+        except ValueError:
+            continue
+        out.append({
+            "id": _stable_id("run", department, safe_run_id),
+            "department": department,
+            "run_id": safe_run_id,
+            "current_step": current_step,
+            "status": status,
+            "ts": ts,
+            "epoch": None,
+            "source_ref": source_ref,
+            "schema_version": SCHEMA_VERSION,
+        })
+    return out
 
 
 def _relative(root: Path, path: Path) -> str:
@@ -263,12 +426,56 @@ def _department_row(root: Path, department: str, state_dir: Path, state: dict | 
 
 
 def _run_rows(
-    root: Path, path: Path, department: str, incidents: list[dict[str, Any]]
+    root: Path, path: Path, department: str, incidents: list[dict[str, Any]],
+    signer=None, backed: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
+    promoted: list[dict[str, Any]] = []
     source_ref = _relative(root, path)
+    # Two different integrity stories per stream:
+    #  * promoted runs-v2 rows carry the runner's canonical run_id and require
+    #    a valid promotion signature. An unsigned row colliding with a signed
+    #    projection run is quarantined.
+    #  * runs.jsonl graph events are never the source of a graph-run row. The
+    #    verified projection is authoritative; an unbacked graph event is an
+    #    incident, while a backed one is skipped in favor of its projection.
+    promoted_stream = path.name == "runs-v2.jsonl"
     for line_number, row in _read_jsonl(root, path, department, incidents):
         run_id = row.get("run_id")
+        promotion_id = _promotion_id(row)
+        if promoted_stream and promotion_id is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
+        elif (promoted_stream and isinstance(run_id, str)
+              and run_id in (backed or {})):
+            incidents.append(
+                _incident(
+                    department=department,
+                    code="graph_identity_unsigned",
+                    source_ref=f"{source_ref}:{line_number}",
+                )
+            )
+            continue
+        elif (not promoted_stream and isinstance(row.get("loop_id"), str)
+              and isinstance(run_id, str)):
+            if run_id not in (backed or {}):
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code="graph_identity_unbacked",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+            # Backed or not, the projection is the source of graph-run rows.
+            continue
         if not isinstance(run_id, str) or not run_id:
             run_id = _stable_id(department, source_ref, line_number)
         node = row.get("node")
@@ -291,7 +498,11 @@ def _run_rows(
             )
             continue
         candidate = {
-            "id": _stable_id("run", department, run_id),
+            # the stable promotion id collapses re-appended duplicates from
+            # a crash between canonical append and promotion marker
+            "id": (_stable_id("run", department, "promotion", promotion_id)
+                   if promotion_id else _stable_id("run", department, run_id)),
+            **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
             "department": department,
             "run_id": run_id,
             "current_step": node,
@@ -301,6 +512,12 @@ def _run_rows(
             "source_ref": f"{source_ref}:{line_number}",
             "schema_version": SCHEMA_VERSION,
         }
+        if promotion_id is not None:
+            # promoted rows are never collapsed here: two bodies under one
+            # promotion id is a CONFLICT for _collapse_promotions to
+            # quarantine, not a latest-writer-wins race (review F3)
+            promoted.append(candidate)
+            continue
         prior = latest.get(run_id)
         if prior is None or ((candidate["ts"] or ""), line_number) >= (
             (prior["ts"] or ""), prior.get("_line", -1)
@@ -309,64 +526,98 @@ def _run_rows(
             latest[run_id] = candidate
     for row in latest.values():
         row.pop("_line", None)
-    return sorted(latest.values(), key=lambda row: row["id"])
+    return sorted(list(latest.values()) + promoted, key=lambda row: row["id"])
 
 
-def _telemetry_rows(root, path, department, incidents):
+def validate_telemetry_row(row: dict[str, Any], department: str | None = None):
+    """Full step-telemetry validation, raising ValueError on the first fault.
+
+    Shared definition (review F4): factory/runner.py runs this over every
+    spooled telemetry row BEFORE signing and promotion, so an invalid row can
+    never be signed and then rejected only here at read time.
+    """
+    reasons = row.get("gen_ai.response.finish_reasons")
+    if reasons is not None and (
+        not isinstance(reasons, list)
+        or len(reasons) > 8
+        or any(reason not in _FINISH_REASONS for reason in reasons)
+    ):
+        raise ValueError("finish reasons are invalid")
+    if row.get("schema_version") != "step-telemetry/v1":
+        raise ValueError("telemetry schema_version is invalid")
+    if row.get("loopfactory.auth.route") not in _AUTH_ROUTES:
+        raise ValueError("auth route is invalid")
+    if not isinstance(row.get("estimated"), bool):
+        raise ValueError("estimated must be boolean")
+    return {
+        "ts": _identifier(row.get("ts"), "timestamp", nullable=False),
+        "department": _identifier(
+            row.get("loopfactory.department") or department,
+            "department",
+            nullable=False,
+        ),
+        "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
+        "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
+        "node": _identifier(row.get("loopfactory.node"), "node"),
+        "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
+        "provider_name": _identifier(row.get("gen_ai.provider.name"), "provider_name"),
+        "request_model": _identifier(row.get("gen_ai.request.model"), "request_model"),
+        "response_model": _identifier(row.get("gen_ai.response.model"), "response_model"),
+        "error_type": _identifier(row.get("error.type"), "error_type"),
+        "auth_route": _identifier(row.get("loopfactory.auth.route"), "auth_route"),
+        "engine": _identifier(row.get("loopfactory.engine"), "engine"),
+        "price_schema_version": _identifier(
+            row.get("loopfactory.price.schema_version"), "price_schema_version"
+        ),
+        "price_effective_date": _identifier(
+            row.get("loopfactory.price.effective_date"), "price_effective_date"
+        ),
+        "telemetry_source": _identifier(
+            row.get("loopfactory.telemetry.source"), "telemetry_source"
+        ),
+        "input_tokens": _number(
+            row.get("gen_ai.usage.input_tokens"), "input_tokens", integer=True
+        ),
+        "output_tokens": _number(
+            row.get("gen_ai.usage.output_tokens"), "output_tokens", integer=True
+        ),
+        "duration_ms": _number(
+            row.get("duration_ms"), "duration_ms", integer=True, nullable=False
+        ),
+        "cost_usd": _number(row.get("loopfactory.cost_usd"), "cost_usd"),
+    }
+
+
+def _telemetry_rows(root, path, department, incidents, signer=None, backed=None):
     out = []
     source_ref = _relative(root, path)
     for line_number, row in _read_jsonl(root, path, department, incidents):
+        promotion_id = _promotion_id(row)
+        claimed_run_id = row.get("loopfactory.run_id")
+        if promotion_id is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
+        elif (isinstance(claimed_run_id, str)
+              and claimed_run_id in (backed or {})):
+            incidents.append(
+                _incident(
+                    department=department,
+                    code="graph_identity_unsigned",
+                    source_ref=f"{source_ref}:{line_number}",
+                )
+            )
+            continue
         reasons = row.get("gen_ai.response.finish_reasons")
         try:
-            if reasons is not None and (
-                not isinstance(reasons, list)
-                or len(reasons) > 8
-                or any(reason not in _FINISH_REASONS for reason in reasons)
-            ):
-                raise ValueError("finish reasons are invalid")
-            if row.get("schema_version") != "step-telemetry/v1":
-                raise ValueError("telemetry schema_version is invalid")
-            if row.get("loopfactory.auth.route") not in _AUTH_ROUTES:
-                raise ValueError("auth route is invalid")
-            if not isinstance(row.get("estimated"), bool):
-                raise ValueError("estimated must be boolean")
-            safe_values = {
-                "ts": _identifier(row.get("ts"), "timestamp", nullable=False),
-                "department": _identifier(
-                    row.get("loopfactory.department") or department,
-                    "department",
-                    nullable=False,
-                ),
-                "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
-                "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
-                "node": _identifier(row.get("loopfactory.node"), "node"),
-                "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
-                "provider_name": _identifier(row.get("gen_ai.provider.name"), "provider_name"),
-                "request_model": _identifier(row.get("gen_ai.request.model"), "request_model"),
-                "response_model": _identifier(row.get("gen_ai.response.model"), "response_model"),
-                "error_type": _identifier(row.get("error.type"), "error_type"),
-                "auth_route": _identifier(row.get("loopfactory.auth.route"), "auth_route"),
-                "engine": _identifier(row.get("loopfactory.engine"), "engine"),
-                "price_schema_version": _identifier(
-                    row.get("loopfactory.price.schema_version"), "price_schema_version"
-                ),
-                "price_effective_date": _identifier(
-                    row.get("loopfactory.price.effective_date"), "price_effective_date"
-                ),
-                "telemetry_source": _identifier(
-                    row.get("loopfactory.telemetry.source"), "telemetry_source"
-                ),
-                "input_tokens": _number(
-                    row.get("gen_ai.usage.input_tokens"), "input_tokens", integer=True
-                ),
-                "output_tokens": _number(
-                    row.get("gen_ai.usage.output_tokens"), "output_tokens", integer=True
-                ),
-                "duration_ms": _number(
-                    row.get("duration_ms"), "duration_ms", integer=True, nullable=False
-                ),
-                "cost_usd": _number(row.get("loopfactory.cost_usd"), "cost_usd"),
-            }
+            safe_values = validate_telemetry_row(row, department)
         except ValueError as exc:
             incidents.append(
                 _incident(
@@ -378,7 +629,12 @@ def _telemetry_rows(root, path, department, incidents):
             continue
         out.append(
             {
-                "id": _stable_id("telemetry", department, source_ref, line_number),
+                "id": (_stable_id("telemetry", department, "promotion",
+                                  promotion_id)
+                       if promotion_id
+                       else _stable_id("telemetry", department, source_ref,
+                                       line_number)),
+                **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
                 "department": safe_values["department"],
                 "run_id": safe_values["run_id"],
                 "step_id": safe_values["step_id"],
@@ -407,10 +663,33 @@ def _telemetry_rows(root, path, department, incidents):
     return out
 
 
-def _score_rows(root, path, department, incidents):
+def _score_rows(root, path, department, incidents, signer=None, backed=None):
     out = []
     source_ref = _relative(root, path)
     for line_number, row in _read_jsonl(root, path, department, incidents):
+        target = row.get("target_ref")
+        claimed = target.get("run_id") if isinstance(target, dict) else None
+        promotion_id = _promotion_id(row)
+        if promotion_id is not None:
+            verdict = _promotion_verdict(row, signer)
+            if verdict != "ok":
+                incidents.append(
+                    _incident(
+                        department=department,
+                        code=f"graph_identity_{verdict}",
+                        source_ref=f"{source_ref}:{line_number}",
+                    )
+                )
+                continue
+        elif isinstance(claimed, str) and claimed in (backed or {}):
+            incidents.append(
+                _incident(
+                    department=department,
+                    code="graph_identity_unsigned",
+                    source_ref=f"{source_ref}:{line_number}",
+                )
+            )
+            continue
         try:
             row = score_records.validate_score(row)
         except ValueError as exc:
@@ -426,7 +705,12 @@ def _score_rows(root, path, department, incidents):
         value = row["gen_ai.evaluation.score.value"]
         out.append(
             {
-                "id": _stable_id("score", department, source_ref, line_number),
+                "id": (_stable_id("score", department, "promotion",
+                                  promotion_id)
+                       if promotion_id
+                       else _stable_id("score", department, source_ref,
+                                       line_number)),
+                **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
                 "department": target.get("department") or department,
                 "run_id": target.get("run_id"),
                 "step_id": target.get("step_id"),
@@ -585,9 +869,15 @@ def _insert_rows(connection: sqlite3.Connection, table: str, rows: Iterable[dict
         )
 
 
-def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, Any]:
+def rebuild(
+    root: str | Path,
+    db_path: str | Path | None = None,
+    signer=None,
+) -> dict[str, Any]:
     root = Path(root).resolve()
     db_path = Path(db_path or root / "estate" / "state" / "rollup.sqlite3")
+    if signer is None:
+        signer = _resolve_verifier()
     incidents: list[dict[str, Any]] = []
     rows: dict[str, list[dict[str, Any]]] = {entity: [] for entity in ENTITIES}
 
@@ -640,13 +930,21 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
                             "schema_version": SCHEMA_VERSION,
                         }
                     )
+        # F2: the signed execution projection is the authority on graph runs
+        backed = _projection_runs(root, state_dir, department, incidents, signer)
+        rows["run"].extend(
+            _projection_run_rows(root, state_dir, department, backed))
         for run_path in (state_dir / "runs.jsonl", state_dir / "runs-v2.jsonl"):
             if _source_available(root, run_path, department, incidents):
-                rows["run"].extend(_run_rows(root, run_path, department, incidents))
+                rows["run"].extend(_run_rows(root, run_path, department, incidents, signer, backed))
         if _source_available(root, state_dir / "telemetry.jsonl", department, incidents):
-            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents))
+            rows["step_telemetry"].extend(_telemetry_rows(
+                root, state_dir / "telemetry.jsonl", department, incidents,
+                signer, backed))
         if _source_available(root, state_dir / "scores.jsonl", department, incidents):
-            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents))
+            rows["score"].extend(_score_rows(
+                root, state_dir / "scores.jsonl", department, incidents,
+                signer, backed))
         for path in sorted(state_dir.rglob("*")):
             if path.is_symlink():
                 incidents.append(
@@ -695,6 +993,11 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
                 rows["approval"].extend(_approval_rows(root, path, "estate", incidents))
             elif "receipt" in name:
                 rows["receipt"].extend(_receipt_rows(root, path, "estate", incidents))
+    # Promotion-id-keyed rows: a crash-recovered promotion re-appends the
+    # SAME spool, so duplicates must be byte-identical; conflicting bodies
+    # under one id are quarantined rather than silently resolved (F3).
+    for entity in ("run", "step_telemetry", "score"):
+        rows[entity] = _collapse_promotions(rows[entity], incidents)
     rows["incident"].extend(incidents)
     rows["incident"] = list({row["id"]: row for row in rows["incident"]}.values())
     deduped_runs: dict[str, dict[str, Any]] = {}
@@ -733,6 +1036,38 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
         "complete": complete,
         "schema_version": SCHEMA_VERSION,
     }
+
+
+def graph_run_bundle(db_path: str | Path, run_id: str) -> dict[str, list]:
+    """Return every rollup row correlated to ONE graph execution.
+
+    The graph runner's canonical run_id is the one correlation key across the
+    projection-derived run, promoted run summaries, telemetry, and scores.
+    """
+    run_id = _identifier(run_id, "run_id", nullable=False)
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        bundle = {
+            "run": [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM run WHERE run_id = ? ORDER BY id",
+                    (run_id,),
+                )
+            ],
+        }
+        for entity in ("step_telemetry", "score"):
+            bundle[entity] = [
+                dict(row)
+                for row in connection.execute(
+                    f"SELECT * FROM {entity} WHERE run_id = ? ORDER BY id",
+                    (run_id,),
+                )
+            ]
+    finally:
+        connection.close()
+    return bundle
 
 
 def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]:

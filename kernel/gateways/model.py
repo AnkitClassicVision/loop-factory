@@ -7,6 +7,7 @@ from kernel.jsonl_store import append_jsonl
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
 
 
 SCHEMA_VERSION = "step-telemetry/v1"
+# Runner-injected spool location (canonical name: kernel/capabilities.py).
+# When present, telemetry rows land in the spool instead of any caller-given
+# canonical path; the runner stamps identity at promotion.
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 AUTH_ROUTES = frozenset(
     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
 )
@@ -359,6 +364,12 @@ def call_model(
         ),
         "estimated": metadata.get("estimated", False),
     }
+    # Runner-mediated appends (review B1, Option C): inside a node process
+    # the canonical telemetry path is unreachable — rows land in the spool
+    # and only the runner's promotion step writes the canonical stream.
+    spool = os.environ.get(RECORD_SPOOL_ENV)
+    if spool:
+        telemetry_path = Path(spool) / "telemetry.jsonl"
     telemetry_error: Exception | None = None
     if telemetry_path is not None:
         try:

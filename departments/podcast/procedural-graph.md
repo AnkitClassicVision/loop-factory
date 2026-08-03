@@ -26,8 +26,10 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 ## SG-WATCHDOG — estate health sensing (proving slice, C3)
 
 ```
-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
+[T every 30 min] → N1 sense_estate ─┐
+                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
+                   → N3 fingerprint_dedup
+                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
 ```
 
 | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
@@ -36,12 +38,16 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
 | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
 | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
+| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
 | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
 
 Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
 + log error patterns for the 7 loops + support lanes, (b) escalation-channel
 liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
-(c) VPS reachability + service state (read-only SSH).
+(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
+open-loop communication reconciliation: it reads the referral tracker report
+and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
+invariant, and emits findings only; it never sends anything.
 
 ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
 

@@ -1,0 +1,10 @@
+# Loop Factory escalation triage service. Installed DISABLED by convention;
+# the owner enables its timer deliberately after review. Proposal-only repair
+# planning plus a bounded human digest; it never launches Ringer or fixes units.
+[Unit]
+Description=Triage Loop Factory escalations into repair proposals and a human digest
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart=/usr/bin/python3 -m factory.triage_agent --repo-root {{REPO}} --config %h/.config/loop-factory/triage.yaml --execute

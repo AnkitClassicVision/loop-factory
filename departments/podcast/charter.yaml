@@ -69,6 +69,32 @@ setpoints:
       minimum: 2
       target: 6
       unit: " recordings"
+    hopper_interviews_ready:            # owner-dictated (Ankit, 2026-08-03): at least one
+      label: "Finished interviews ready to go"   # FINISHED interview in the hopper at all times;
+      setpoint: 2                       # >=2 interviews in the 6-target mix
+      minimum: 1
+      target: 2
+      unit: " interviews"
+    state_drift:                        # owner-dictated (Ankit, 2026-08-03): funnel ledger must
+      label: "Ledger vs evidence drift" # reconcile clean against Gmail/Calendar/HubSpot evidence
+      setpoint: 0                       # every run; any drift is a breach, not a warning
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " mismatches"
+    unledgered_inbound:                 # owner-dictated (Ankit, 2026-08-03): every inbound human
+      label: "Inbound humans missing from ledger"  # exists in FUNNEL-LEDGER.json within one run
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " people"
+  # Owner decisions 2026-08-03 (Ankit): HubSpot is the system of record for people and
+  # touches; the repo FUNNEL-LEDGER.json is the operational state machine, rebuilt by
+  # reconciling against evidence every run. CRM stage writes are approved PHASED: week 1
+  # read-and-reconcile only; then a narrow crm_stage_write class limited to the
+  # obe_funnel_stage + obe_next_action_on contact properties, promoted only after
+  # state_drift has held 0 for 7 consecutive days.
 
 thresholds:
   weekly_touch_ceiling: 300
@@ -76,6 +102,14 @@ thresholds:
   faux_work_touch_floor: 50
   backlog_aging_min: 1
   budget_near_frac: 0.8
+
+comms_loop_invariant:  # owner-ratified (Ankit, 2026-08-03) from ringer/comms-loop-invariant/charter-proposal.md
+  applies_to: every outbound ask class
+  requires:
+    - "return_path: the named component that reads the answers"
+    - "return_sla_hours: how long a reply may sit unharvested"
+  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
+  never: an ask class may not ship without a declared and executed return path
 
 execution:  # owner addendum (Ankit, 2026-07-23): factory-wide process discipline
   headless: true            # every process step runs headless (Claude/Codex/Ringer),

@@ -1,0 +1,13 @@
+# Loop Factory outbox append trigger. Installed DISABLED by convention via
+# install_triggers.py; the owner reviews each rendered path before enabling it.
+# The installer renders a literal path into a hash-named concrete unit because
+# PathModified= does not reliably recover an arbitrary path from template %i/%f.
+[Unit]
+Description=Watch Loop Factory escalation outbox {{OUTBOX_DESCRIPTION}}
+
+[Path]
+PathModified={{OUTBOX}}
+Unit={{WATCH_SERVICE}}
+
+[Install]
+WantedBy=default.target

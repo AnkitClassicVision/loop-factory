@@ -206,7 +206,7 @@ run_draft_with_fallback() {
       continue
     fi
     DRAFT_ENGINE="${engine}"
-    if "$@" --engine "${engine}"; then
+    if timeout 150s "$@" --engine "${engine}"; then
       if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
         return 0
       fi
@@ -217,7 +217,7 @@ run_draft_with_fallback() {
   if test -n "${skipped_qa}"; then
     echo "last resort: using ${skipped_qa} for both draft and QA" >&2
     DRAFT_ENGINE="${skipped_qa}"
-    if "$@" --engine "${skipped_qa}"; then
+    if timeout 150s "$@" --engine "${skipped_qa}"; then
       if test -s "${receipt}" && receipt_is_valid_json "${receipt}"; then
         return 0
       fi

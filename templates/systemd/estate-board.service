@@ -12,5 +12,6 @@ ExecStart=/usr/bin/python3 -m factory.timersense --out estate/state/timers.json 
 # fallback. The leading '-' lets an incomplete rebuild continue to boardfeed,
 # which sees the .incomplete marker and renders the required warning banner.
 ExecStart=-/usr/bin/python3 loopfactory.py rollup --root .
+ExecStart=/usr/bin/python3 -m factory.external_departments --repo-root .
 ExecStart=/usr/bin/python3 -m factory.boardfeed --repo-root .
 ExecStart=/usr/bin/python3 -m factory.board --feed estate/state/board-feed.ndjson --site estate/state/boards
