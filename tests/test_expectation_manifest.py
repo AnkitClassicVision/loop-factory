@@ -161,3 +161,40 @@ def test_cli_exit_codes(tmp_path, capsys):
                     "--snapshots", str(snap_path), "--now", NOW.isoformat()]) == 0
     assert em.main(["--manifest", str(manifest_path), "--root", str(tmp_path),
                     "--now", NOW.isoformat()]) == 2  # snapshots absent: fail closed
+
+
+SYNC_MANIFEST = """\
+schema: expectation-manifest/v1
+process: local-render-sync
+instances:
+  source: snapshot
+  snapshot: assigned
+steps:
+  - id: raw-synced-local
+    deadline_minutes: 60
+    expect:
+      - kind: artifact
+        glob: "episodes/{episode}/raw/.local-sync-receipt.json"
+"""
+
+
+def test_instance_extras_render_into_artifact_globs(tmp_path):
+    receipt = tmp_path / "episodes" / "2026-08-04-solo" / "raw" / ".local-sync-receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{}", encoding="utf-8")
+    snapshots = {"assigned": [{"id": "rec-1", "episode": "2026-08-04-solo",
+                               "anchor_ts": (NOW - timedelta(minutes=90)).isoformat()}]}
+    manifest = em.load_manifest(write_manifest(tmp_path, SYNC_MANIFEST))
+    ok_receipt = em.reconcile(manifest, tmp_path, snapshots, NOW)
+    assert ok_receipt["counts"]["deltas"] == 0 and ok_receipt["counts"]["ok"] == 1
+    receipt.unlink()
+    delta_receipt = em.reconcile(manifest, tmp_path, snapshots, NOW)
+    assert delta_receipt["counts"]["deltas"] == 1
+
+
+def test_missing_extras_key_fails_closed(tmp_path):
+    snapshots = {"assigned": [{"id": "rec-1",
+                               "anchor_ts": (NOW - timedelta(minutes=90)).isoformat()}]}
+    manifest = em.load_manifest(write_manifest(tmp_path, SYNC_MANIFEST))
+    with pytest.raises(em.ManifestError, match="fail closed"):
+        em.reconcile(manifest, tmp_path, snapshots, NOW)

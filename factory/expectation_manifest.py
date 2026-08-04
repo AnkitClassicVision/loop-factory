@@ -79,6 +79,7 @@ class Instance:
     id: str
     anchor_ts: datetime
     evidence: str
+    extras: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -165,6 +166,8 @@ def discover_instances(manifest: Manifest, root: Path, snapshots: dict) -> list[
                 id=str(row["id"]),
                 anchor_ts=_parse_ts(row.get("anchor_ts"), f"snapshot {key!r} id {row['id']}"),
                 evidence=f"snapshot:{key}",
+                extras={k: str(v) for k, v in row.items()
+                        if k not in ("id", "anchor_ts") and isinstance(v, (str, int, float))},
             ))
         return out
     pattern = str(root / spec["glob"])
@@ -201,7 +204,13 @@ def _json_pointer(value, pointer: str):
 def _satisfied(item: dict, instance: Instance, root: Path, snapshots: dict) -> tuple[bool, str]:
     kind = item["kind"]
     if kind == "artifact":
-        pattern = str(root / str(item["glob"]).format(id=instance.id))
+        try:
+            rendered = str(item["glob"]).format(id=instance.id, **instance.extras)
+        except KeyError as exc:
+            raise ManifestError(
+                f"artifact glob references {exc} absent from instance "
+                f"{instance.id!r} (fail closed, not skipped)")
+        pattern = str(root / rendered)
         found = globlib.glob(pattern)
         needed = int(item.get("min_count", 1))
         return len(found) >= needed, f"artifact {pattern} matched {len(found)}/{needed}"
