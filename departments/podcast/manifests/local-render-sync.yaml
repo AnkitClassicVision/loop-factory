@@ -20,3 +20,15 @@ steps:
     authorized_skip:
       glob: "state/skips/local-render-sync/{id}-*.json"
     heal: escalate
+  - id: produced-local
+    description: >-
+      Auto-produce ran on this host (owner decision: recording today produces
+      today). The receipt exists whether the run passed or was blocked by a
+      gate; a MISSING receipt past deadline means the trigger chain is dead.
+    deadline_minutes: 180
+    expect:
+      - kind: artifact
+        glob: "/mnt/d_drive/repos/podcast/episodes/{episode}/raw/.local-produce-receipt.json"
+    authorized_skip:
+      glob: "state/skips/local-render-sync/{id}-produce-*.json"
+    heal: escalate
