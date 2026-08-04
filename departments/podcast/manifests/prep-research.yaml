@@ -1,0 +1,24 @@
+# Expectation manifest: prep-research (owner decision, Ankit 2026-08-04).
+# Every episode whose prep doc went out must carry non-empty guest research.
+# The defining failure: Mike Guelcher's booking stamped submitted/researched/
+# prep-doc-sent in 24ms with research: {} and the prep doc rendered
+# "GUEST DATA MISSING". A stage stamp is not an artifact.
+# deadline_minutes 0: the moment the prep-doc-sent stamp exists, empty
+# research is a delta, not a pending.
+schema: expectation-manifest/v1
+process: prep-research
+instances:
+  source: snapshot
+  snapshot: prep-episodes
+steps:
+  - id: research-behind-the-stamp
+    description: >-
+      The 'researched' stamp is backed by real research (solo episodes are
+      exempt by construction in the snapshot writer).
+    deadline_minutes: 0
+    expect:
+      - kind: snapshot_member
+        snapshot: research-complete
+    authorized_skip:
+      glob: "state/skips/prep-research/{id}-*.json"
+    heal: escalate

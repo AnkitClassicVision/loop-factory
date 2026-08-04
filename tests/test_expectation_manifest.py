@@ -104,13 +104,21 @@ steps:
 """
 
 
+def _age_file(path, minutes):
+    import os
+    stamp = (NOW - timedelta(minutes=minutes)).timestamp()
+    os.utime(path, (stamp, stamp))
+
+
 def test_mike_case_empty_research_with_stamped_stage_is_a_delta(tmp_path):
     ep = tmp_path / "episodes" / "2026-08-04-mike" / "content"
     ep.mkdir(parents=True)
     (ep / "prep-doc.html").write_text("doc", encoding="utf-8")
-    (ep.parent / "episode.json").write_text(
+    ep_json = ep.parent / "episode.json"
+    ep_json.write_text(
         json.dumps({"stage": "prep-call-booked", "guests": [{"research": {}}]}),
         encoding="utf-8")
+    _age_file(ep_json, 60)  # deterministic anchor: mtime is relative to fixed NOW
     manifest = em.load_manifest(write_manifest(tmp_path, RESEARCH_MANIFEST))
     receipt = em.reconcile(manifest, tmp_path, {}, NOW)
     assert receipt["counts"]["deltas"] == 1
@@ -121,8 +129,10 @@ def test_real_research_passes(tmp_path):
     ep = tmp_path / "episodes" / "2026-08-04-good" / "content"
     ep.mkdir(parents=True)
     (ep / "prep-doc.html").write_text("doc", encoding="utf-8")
-    (ep.parent / "episode.json").write_text(
+    ep_json = ep.parent / "episode.json"
+    ep_json.write_text(
         json.dumps({"guests": [{"research": {"bio": "real"}}]}), encoding="utf-8")
+    _age_file(ep_json, 60)
     manifest = em.load_manifest(write_manifest(tmp_path, RESEARCH_MANIFEST))
     receipt = em.reconcile(manifest, tmp_path, {}, NOW)
     assert receipt["counts"] == {"ok": 1, "pending": 0, "authorized_skips": 0, "deltas": 0}

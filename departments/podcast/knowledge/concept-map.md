@@ -72,6 +72,20 @@ graph LR
   invented here.
 - Manifest completeness target %: TBD_MEASURE_IN_SHADOW.
 
+## POST-LOCK ADDENDA (owner-decided, dated)
+
+- 2026-08-04 (Ankit, Claude Code): **Expectation manifests** join the watchdog
+  (SG-WATCHDOG N10, `runtime/expectation_reconcile.py`). Every process step
+  declares the artifacts it expects and by when (`manifests/*.yaml`); the
+  sensor diffs declarations against the estate ground-truth snapshot; every
+  past-deadline gap either carries an authorized-skip receipt
+  (`state/skips/<process>/`) or becomes an alarm observation. Rationale: the
+  Jul 9 - Aug 4 dead recording-webhook and the empty-research prep doc were
+  invisible to receipt checks because the failing steps never ran; absence
+  needs a declared expectation and a clock to be detectable. The VPS estate
+  self-heals the dead-webhook signature under the owner's standing recovery
+  authorization; this sensor is the independent verification layer.
+
 ## INTENT LOCK
 
 Status: **LOCKED**. Provenance: decided_by **Ankit**, date **2026-07-22**,
