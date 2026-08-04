@@ -74,6 +74,18 @@ graph LR
 
 ## POST-LOCK ADDENDA (owner-decided, dated)
 
+- 2026-08-04 (Ankit, Claude Code): **Render-host boundary.** ALL video
+  editing and rendering happens on the local GPU box, into
+  `/mnt/d_drive/repos/podcast/episodes/<episode>/`. The VPS owns intake only:
+  webhook -> assignment -> raw download -> transcripts, stopping at stage
+  `assets-downloaded` with a `raw/.local-render-handoff.json` receipt
+  (orchestrator guard, `PODCAST_RENDER_HOST=local`). A local 15-minute sync
+  timer (`local_render_sync.py`) pulls handed-off assets down and writes
+  `raw/.local-sync-receipt.json`. Rationale: the VPS render path had rotted
+  invisibly since the July local-GPU handoff (ffmpeg 4.4 gaps found on every
+  attempt); the boundary makes the intended architecture executable and
+  auditable instead of implicit.
+
 - 2026-08-04 (Ankit, Claude Code): **Expectation manifests** join the watchdog
   (SG-WATCHDOG N10, `runtime/expectation_reconcile.py`). Every process step
   declares the artifacts it expects and by when (`manifests/*.yaml`); the
