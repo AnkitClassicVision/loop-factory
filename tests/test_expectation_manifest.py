@@ -198,3 +198,38 @@ def test_missing_extras_key_fails_closed(tmp_path):
     manifest = em.load_manifest(write_manifest(tmp_path, SYNC_MANIFEST))
     with pytest.raises(em.ManifestError, match="fail closed"):
         em.reconcile(manifest, tmp_path, snapshots, NOW)
+
+
+GRANDPARENT_MANIFEST = """\
+schema: expectation-manifest/v1
+process: publish-promo
+instances:
+  source: glob
+  glob: "episodes/*/content/anchor-receipt.json"
+  id_from: grandparent_dir
+steps:
+  - id: youtube-scheduled
+    deadline_minutes: 30
+    expect:
+      - kind: artifact
+        glob: "episodes/{id}/content/next-receipt.json"
+"""
+
+
+def test_grandparent_dir_ids_instances_by_episode(tmp_path):
+    ep = tmp_path / "episodes" / "2026-08-04-solo" / "content"
+    ep.mkdir(parents=True)
+    (ep / "anchor-receipt.json").write_text("{}")
+    _age_file(ep / "anchor-receipt.json", 60)
+    receipt = reconcile(tmp_path, GRANDPARENT_MANIFEST, {})
+    assert receipt["instances"] == 1
+    assert receipt["deltas"][0]["instance"] == "2026-08-04-solo"
+    (ep / "next-receipt.json").write_text("{}")
+    receipt = reconcile(tmp_path, GRANDPARENT_MANIFEST, {})
+    assert receipt["deltas"] == []
+
+
+def test_unknown_id_from_fails_closed(tmp_path):
+    bad = GRANDPARENT_MANIFEST.replace("grandparent_dir", "cousin_dir")
+    with pytest.raises(em.ManifestError, match="id_from"):
+        reconcile(tmp_path, bad, {})

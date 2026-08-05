@@ -1,0 +1,37 @@
+# Expectation manifest: publish-promo (owner decision, Ankit 2026-08-05:
+# "do the youtube and promo lane too").
+# Once an episode's podcast publish is scheduled (transistor receipt exists),
+# the rest of the wave must follow: the YouTube wave receipt within 12h, and
+# the social lane SETTLED within 24h — settled means a Zernio promo receipt
+# (scheduled), an owner SKIP marker (authorized skip), or a fix-requested
+# marker acknowledged via the skip glob after the human redraft. A missing
+# receipt past deadline means a publish lane silently died mid-wave.
+schema: expectation-manifest/v1
+process: publish-promo
+instances:
+  source: glob
+  glob: "/mnt/d_drive/repos/podcast/episodes/*/content/transistor-schedule-receipt.json"
+  id_from: grandparent_dir
+steps:
+  - id: youtube-scheduled
+    description: YouTube main + Shorts wave receipt exists
+    deadline_minutes: 720
+    expect:
+      - kind: artifact
+        glob: "/mnt/d_drive/repos/podcast/episodes/{id}/content/youtube-schedule-receipt.json"
+    authorized_skip:
+      glob: "state/skips/publish-promo/{id}-youtube-*.json"
+    heal: escalate
+  - id: social-settled
+    description: >-
+      Zernio promo lane settled — receipt, owner skip, or fix-requested
+      marker (a fix request pauses the clock via the skip glob only after a
+      human writes the redraft skip receipt; the marker alone must keep
+      escalating so redrafts are never silently dropped).
+    deadline_minutes: 1440
+    expect:
+      - kind: artifact
+        glob: "/mnt/d_drive/repos/podcast/episodes/{id}/content/zernio-promo-receipt.json"
+    authorized_skip:
+      glob: "/mnt/d_drive/repos/podcast/episodes/{id}/content/zernio-promo-skipped.json"
+    heal: escalate

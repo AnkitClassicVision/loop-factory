@@ -172,10 +172,17 @@ def discover_instances(manifest: Manifest, root: Path, snapshots: dict) -> list[
         return out
     pattern = str(root / spec["glob"])
     id_from = spec.get("id_from", "parent_dir")
+    if id_from not in ("parent_dir", "grandparent_dir", "stem"):
+        raise ManifestError(f"instances.id_from must be parent_dir|grandparent_dir|stem, got {id_from!r}")
     out = []
     for match in sorted(globlib.glob(pattern)):
         p = Path(match)
-        instance_id = p.parent.name if id_from == "parent_dir" else p.stem
+        if id_from == "parent_dir":
+            instance_id = p.parent.name
+        elif id_from == "grandparent_dir":
+            instance_id = p.parent.parent.name
+        else:
+            instance_id = p.stem
         out.append(Instance(
             id=instance_id,
             anchor_ts=datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc),
