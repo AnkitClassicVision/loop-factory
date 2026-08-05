@@ -18,7 +18,8 @@ Send mode additionally requires ``--config``. The preferred YAML shape is::
 For compatibility with the outbox configuration, ``senders.reescalation`` and
 ``senders.ping`` are also accepted. Sender values are argv templates, never
 shell commands. Available placeholders are ``{card_identifier}``, ``{issue}``,
-``{reescalation_count}``, ``{reason}``, ``{text}``, and ``{now}``.
+``{reescalation_count}``, ``{reason}``, ``{text}``, ``{now}``,
+``{department}``, and ``{first_raised}``.
 """
 from __future__ import annotations
 
@@ -248,6 +249,16 @@ def send_due(
             "reescalation_count": str(card.reescalation_count + 1),
             "reason": card.reason,
             "now": now_text,
+            "department": (
+                card.row.get("department")
+                if isinstance(card.row.get("department"), str)
+                else ""
+            ),
+            "first_raised": (
+                card.row.get("first_raised")
+                if isinstance(card.row.get("first_raised"), str)
+                else ""
+            ),
             "text": (
                 f"Re-escalation due for {card.card_identifier}. "
                 f"Ping {card.reescalation_count + 1}. {card.reason}."
@@ -279,14 +290,19 @@ def send_due(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Re-escalate unanswered cards")
     parser.add_argument("--ledger", required=True)
-    parser.add_argument("--now", required=True)
+    parser.add_argument("--now")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--config")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
     try:
-        now = _datetime(args.now, "now")
+        now_text = (
+            args.now
+            if args.now is not None
+            else datetime.now(timezone.utc).isoformat()
+        )
+        now = _datetime(now_text, "now")
         cards = due_cards(args.ledger, now)
         print(json.dumps({"due": [card.public() for card in cards]}))
         if args.plan_only:
@@ -294,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.config:
             raise ReescalationError("send mode requires --config")
         sender = _sender_from_config(args.config)
-        return send_due(args.ledger, cards, sender, args.now)
+        return send_due(args.ledger, cards, sender, now_text)
     except ReescalationError as exc:
         LOGGER.error("re-escalation refused: %s", exc)
         return 2
