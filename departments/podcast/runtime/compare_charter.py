@@ -43,6 +43,8 @@ FAILURE_CLASSES = {
     # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
     # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
     ("hopper", "unknown"): ("hopper_blind", "high"),
+    ("funnel", "alarm"): ("funnel_behind", "high"),
+    ("funnel", "unknown"): ("funnel_blind", "med"),
     ("ledger", "fail"): ("ledger_failed", "high"),
     ("receipt", "unknown"): ("receipt_unknown", "med"),
     ("log", "unknown"): ("log_unknown", "med"),
@@ -103,6 +105,14 @@ MEANINGS = {
     "hopper_blind": {
         "what_it_means": "The watchdog gauge that checks episodes are publishing on time has no data to read; the podcast itself may be fine, but this gauge is blind.",
         "what_it_needs": "An ops repair of the publish-schedule data file; nothing needed from you unless you want it handled differently.",
+    },
+    "funnel_behind": {
+        "what_it_means": "The guest pipeline fell behind its daily numbers, so future episodes are at risk of running dry.",
+        "what_it_needs": "Approve the catch-up actions the loops propose, or tell them to pause the pace; the daily work order has the exact items.",
+    },
+    "funnel_blind": {
+        "what_it_means": "The daily guest pipeline count has no trustworthy information to read, so it cannot tell whether future episodes are on track.",
+        "what_it_needs": "Ops must restore the guest and booking records; nothing needed from you unless the tracking process should change.",
     },
     "ledger_failed": {
         "what_it_means": "The record of podcast message sends shows a failure.",
@@ -186,6 +196,7 @@ QUESTIONS = {
     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
     "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
+    "funnel": "Which guest pipeline number missed its line, and what catch-up action will restore it?",
     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
     "receipt": "What blocked this unit from producing a fresh execution receipt?",
     "log": "Which versioned repair playbook should handle this logged failure?",

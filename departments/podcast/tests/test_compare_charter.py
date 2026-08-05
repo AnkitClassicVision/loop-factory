@@ -26,6 +26,19 @@ def test_hopper_unknown_classifies_as_high_severity_candidate():
     )
 
 
+def test_funnel_alarm_classifies_as_high_severity_candidate():
+    candidate = compare_charter.compare_observations(
+        [_observation("funnel", "alarm")], {}
+    )[0]
+
+    assert candidate["failure_class"] == "funnel_behind"
+    assert candidate["severity"] == "high"
+    assert candidate["what_it_means"] == (
+        "The guest pipeline fell behind its daily numbers, so future episodes "
+        "are at risk of running dry."
+    )
+
+
 def test_truly_unknown_sensor_status_pair_still_raises():
     with pytest.raises(
         ValueError,

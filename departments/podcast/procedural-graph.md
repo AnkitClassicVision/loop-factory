@@ -26,7 +26,7 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 ## SG-WATCHDOG — estate health sensing (proving slice, C3)
 
 ```
-[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper sensors
+[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper/funnel-floor sensors
           → DAG supervision → N2 compare_charter → N3 fingerprint_dedup
           → N4 escalate_outbox (shadow: local outbox only)
 ```
@@ -42,6 +42,7 @@ default until the owner reviews it.
 | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
 | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
 | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally; ask returns through N6 within the provisional 48-hour SLA | C12, C13, Q11 |
+| N11 | funnel_floor_sensor | Sense | SCRIPT | internal_read / shadow | six charter funnel floors + weekly outreach quota computed from FUNNEL-LEDGER evidence; missing ledger => every floor UNKNOWN (never assumed ok); breach classifies funnel_behind, blind gauge funnel_blind (owner amendment 2026-08-05) | C3, C4, Q3 |
 | N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | daily receipt-gated reconciliation runs before compare/dedup/escalation; missing or invalid receipt halts the chain | C3, Q3 |
 | N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
 

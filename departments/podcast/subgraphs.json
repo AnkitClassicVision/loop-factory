@@ -46,6 +46,10 @@
      "impl": "runtime/hopper_sensor.py"
     },
     {
+     "id": "N11",
+     "impl": "runtime/funnel_floor_sensor.py"
+    },
+    {
      "id": "N6",
      "impl": "runtime/comms_reconcile_sensor.py",
      "execution": "daily_shared_chain_before_compare_and_escalation"
