@@ -61,6 +61,12 @@ class DueCard:
         }
 
 
+@dataclass(frozen=True)
+class QuarantinedRow:
+    identity: str
+    reason: str
+
+
 def _datetime(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise ReescalationError(f"{field} must be a non-empty ISO 8601 string")
@@ -81,7 +87,9 @@ def _count(value: Any) -> int:
     return value
 
 
-def _latest_rows(path: str | Path) -> list[tuple[int, dict[str, Any]]]:
+def _latest_rows(
+    path: str | Path,
+) -> tuple[list[tuple[int, dict[str, Any]]], list[QuarantinedRow]]:
     """Return the complete last ledger row for each row hash."""
     ledger = Path(path)
     try:
@@ -90,6 +98,7 @@ def _latest_rows(path: str | Path) -> list[tuple[int, dict[str, Any]]]:
         raise ReescalationError(f"ledger could not be read: {exc}") from exc
 
     latest: dict[str, tuple[int, dict[str, Any]]] = {}
+    quarantined: list[QuarantinedRow] = []
     for line_number, line in enumerate(lines, start=1):
         try:
             row = json.loads(line)
@@ -98,27 +107,46 @@ def _latest_rows(path: str | Path) -> list[tuple[int, dict[str, Any]]]:
                 f"ledger line {line_number} is invalid JSON: {exc}"
             ) from exc
         if not isinstance(row, dict):
-            raise ReescalationError(
-                f"ledger line {line_number} is not a JSON object"
+            quarantined.append(
+                QuarantinedRow(
+                    identity=f"ledger line {line_number}",
+                    reason=f"ledger line {line_number} is not a JSON object",
+                )
             )
+            continue
         row_hash = row.get("row_hash")
         if not isinstance(row_hash, str) or not row_hash:
-            raise ReescalationError(f"ledger line {line_number} lacks row_hash")
+            identifier = row.get("card_identifier")
+            identity = (
+                identifier
+                if isinstance(identifier, str) and identifier
+                else f"ledger line {line_number}"
+            )
+            quarantined.append(
+                QuarantinedRow(
+                    identity=identity,
+                    reason=f"ledger line {line_number} lacks row_hash",
+                )
+            )
+            continue
         latest[row_hash] = (line_number, row)
-    return list(latest.values())
+    return list(latest.values()), quarantined
 
 
-def _cards(path: str | Path) -> list[dict[str, Any]]:
+def _cards(
+    path: str | Path,
+) -> tuple[list[dict[str, Any]], list[QuarantinedRow]]:
     """Collapse eligible latest ledger rows to one stable row per card."""
     grouped: dict[str, dict[str, Any]] = {}
-    for _, row in _latest_rows(path):
+    latest, quarantined = _latest_rows(path)
+    for _, row in latest:
         if row.get("status") not in ELIGIBLE_STATUSES:
             continue
         identifier = row.get("card_identifier")
         if not isinstance(identifier, str) or not identifier:
             continue
         grouped.setdefault(identifier, row)
-    return list(grouped.values())
+    return list(grouped.values()), quarantined
 
 
 def _normal_interval(count: int) -> timedelta:
@@ -159,10 +187,22 @@ def _cadence(
     return start, interval, reason, count
 
 
-def due_cards(path: str | Path, now: datetime) -> list[DueCard]:
+def _due_cards_with_quarantine(
+    path: str | Path, now: datetime
+) -> tuple[list[DueCard], list[QuarantinedRow]]:
     due: list[DueCard] = []
-    for row in _cards(path):
-        start, interval, reason, count = _cadence(row, now)
+    rows, quarantined = _cards(path)
+    for row in rows:
+        try:
+            start, interval, reason, count = _cadence(row, now)
+        except ReescalationError as exc:
+            quarantined.append(
+                QuarantinedRow(
+                    identity=row["card_identifier"],
+                    reason=str(exc),
+                )
+            )
+            continue
         if now >= start + interval:
             due.append(
                 DueCard(
@@ -172,6 +212,11 @@ def due_cards(path: str | Path, now: datetime) -> list[DueCard]:
                     row=row,
                 )
             )
+    return due, quarantined
+
+
+def due_cards(path: str | Path, now: datetime) -> list[DueCard]:
+    due, _ = _due_cards_with_quarantine(path, now)
     return due
 
 
@@ -303,14 +348,25 @@ def main(argv: list[str] | None = None) -> int:
             else datetime.now(timezone.utc).isoformat()
         )
         now = _datetime(now_text, "now")
-        cards = due_cards(args.ledger, now)
-        print(json.dumps({"due": [card.public() for card in cards]}))
+        cards, quarantined = _due_cards_with_quarantine(args.ledger, now)
+        for row in quarantined:
+            print(f"quarantined {row.identity}: {row.reason}")
+            LOGGER.error("quarantined %s: %s", row.identity, row.reason)
+        print(
+            json.dumps(
+                {
+                    "due": [card.public() for card in cards],
+                    "quarantined": len(quarantined),
+                }
+            )
+        )
         if args.plan_only:
-            return 0
+            return 2 if quarantined else 0
         if not args.config:
             raise ReescalationError("send mode requires --config")
         sender = _sender_from_config(args.config)
-        return send_due(args.ledger, cards, sender, now_text)
+        send_result = send_due(args.ledger, cards, sender, now_text)
+        return 2 if quarantined else send_result
     except ReescalationError as exc:
         LOGGER.error("re-escalation refused: %s", exc)
         return 2

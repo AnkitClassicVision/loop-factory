@@ -51,6 +51,29 @@ def _ledger_rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def _sender_config(tmp_path: Path) -> tuple[Path, Path]:
+    calls = tmp_path / "calls.jsonl"
+    sender = tmp_path / "sender.py"
+    sender.write_text(
+        "import json, pathlib, sys\n"
+        f"path=pathlib.Path({str(calls)!r})\n"
+        "with path.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "reescalation": {
+                    "sender": [sys.executable, str(sender), "{card_identifier}"]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config, calls
+
+
 def test_plan_only_is_pure_and_first_normal_ping_is_due_at_48_hours(tmp_path):
     ledger = tmp_path / "ledger.jsonl"
     _write_rows(ledger, [_row("hash-1", "ANK-1")])
@@ -272,3 +295,44 @@ def test_missing_or_failed_sender_fails_closed_without_appending(tmp_path):
     assert failed.returncode != 0
     assert "sender failed" in failed.stderr
     assert ledger.read_bytes() == original
+
+
+def test_malformed_row_does_not_block_due_card_and_exits_nonzero(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    malformed = _row("unused", "ANK-BAD")
+    del malformed["row_hash"]
+    _write_rows(ledger, [malformed, _row("hash-good", "ANK-GOOD")])
+    config, calls = _sender_config(tmp_path)
+
+    result = _run(ledger, "--config", str(config))
+
+    assert result.returncode == 2
+    assert _ledger_rows(calls) == [["ANK-GOOD"]]
+    assert "quarantined ANK-BAD: ledger line 1 lacks row_hash" in result.stdout
+    assert '"quarantined": 1' in result.stdout
+
+
+def test_quarantined_eligible_row_without_cadence_clock_is_not_pinged(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    poisoned = _row("hash-bad", "ANK-BAD")
+    del poisoned["first_raised"]
+    _write_rows(ledger, [poisoned, _row("hash-good", "ANK-GOOD")])
+    config, calls = _sender_config(tmp_path)
+
+    result = _run(ledger, "--config", str(config))
+
+    assert result.returncode == 2
+    assert _ledger_rows(calls) == [["ANK-GOOD"]]
+    assert "quarantined ANK-BAD: first_raised must be a non-empty ISO 8601 string" in result.stdout
+    assert all(row.get("card_identifier") != "ANK-BAD" for row in _ledger_rows(ledger)[2:])
+
+
+def test_unreadable_ledger_still_aborts_without_pings(tmp_path):
+    ledger = tmp_path / "missing-ledger.jsonl"
+    config, calls = _sender_config(tmp_path)
+
+    result = _run(ledger, "--config", str(config))
+
+    assert result.returncode == 2
+    assert "ledger could not be read" in result.stderr
+    assert not calls.exists()

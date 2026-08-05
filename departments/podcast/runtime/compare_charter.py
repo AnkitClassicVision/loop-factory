@@ -40,6 +40,9 @@ FAILURE_CLASSES = {
     # surfaced 2026-07-31 when the first full daily run hit an unmapped
     # ("ledger", "unknown") observation and correctly refused to continue.
     ("ledger", "unknown"): ("ledger_blind", "high"),
+    # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
+    # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
+    ("hopper", "unknown"): ("hopper_blind", "high"),
     ("ledger", "fail"): ("ledger_failed", "high"),
     ("receipt", "unknown"): ("receipt_unknown", "med"),
     ("log", "unknown"): ("log_unknown", "med"),
@@ -67,6 +70,7 @@ FAILURE_HINT_CLASSES = {
 QUESTIONS = {
     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
+    "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
     "receipt": "What blocked this unit from producing a fresh execution receipt?",
     "log": "Which versioned repair playbook should handle this logged failure?",
