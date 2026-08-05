@@ -250,6 +250,9 @@ def _append_ledger(
     summary: str,
     card: dict[str, Any] | None,
     packet_text: str = "",
+    urgency: Any = "normal",
+    due: Any = None,
+    has_due: bool = False,
 ) -> None:
     identifier = card.get("identifier") if isinstance(card, dict) else None
     url = card.get("url") if isinstance(card, dict) else None
@@ -270,7 +273,10 @@ def _append_ledger(
         "card_identifier": identifier if tracked else None,
         "card_url": url if isinstance(url, str) and url else None,
         "status": "open" if tracked else "untracked",
+        "urgency": urgency,
     }
+    if has_due:
+        ledger_row["due"] = due
     ledger_path = Path(path)
     try:
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -369,6 +375,11 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                             summary=summary_line,
                             card=card,
                             packet_text=text,
+                            urgency=(
+                                row["urgency"] if "urgency" in row else "normal"
+                            ),
+                            due=row.get("due"),
+                            has_due="due" in row,
                         )
                     if isinstance(identifier, str) and identifier and config["buzz"]:
                         buzz_values = {**values, "card": identifier}

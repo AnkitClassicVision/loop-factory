@@ -138,7 +138,7 @@ def _cadence(
     count = _count(row.get("reescalation_count"))
     clock_field = "last_ping_at" if row.get("last_ping_at") else "first_raised"
     start = _datetime(row.get(clock_field), clock_field)
-    urgency = row.get("urgency")
+    urgency = row.get("urgency", "normal")
     if urgency == "normal":
         interval = _normal_interval(count)
         reason = f"normal cadence: {int(interval.total_seconds() // 3600)}h elapsed"
