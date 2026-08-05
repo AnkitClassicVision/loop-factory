@@ -43,3 +43,25 @@ def test_every_declared_failure_transition_classifies(sensor, status):
     )
 
     assert len(candidates) == 1
+
+
+def test_every_failure_class_has_plain_english_meaning_and_need():
+    failure_classes = {
+        failure_class
+        for failure_class, _severity in compare_charter.FAILURE_CLASSES.values()
+    } | {
+        failure_class
+        for failure_class, _severity in compare_charter.FAILURE_HINT_CLASSES.values()
+    }
+
+    assert failure_classes == set(compare_charter.MEANINGS)
+    for failure_class in failure_classes:
+        meaning = compare_charter.MEANINGS[failure_class]
+        assert meaning["what_it_means"].strip()
+        assert meaning["what_it_needs"].strip()
+        assert not {
+            "sensor",
+            "verifier",
+            "fingerprint",
+            "observation",
+        } & set(meaning["what_it_means"].lower().split())

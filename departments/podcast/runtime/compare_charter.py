@@ -67,6 +67,121 @@ FAILURE_HINT_CLASSES = {
     ("receipt", "fail", "receipt_hollow"): ("receipt_hollow", "high"),
 }
 
+MEANINGS = {
+    "dag_receipt_violation": {
+        "what_it_means": "A required podcast step was skipped or its proof of completion cannot be trusted.",
+        "what_it_needs": "Ops must repair the skipped step and confirm who approved any intentional skip; nothing needed from you unless approval is disputed.",
+    },
+    "timer_failed": {
+        "what_it_means": "A scheduled podcast job tried to run and failed.",
+        "what_it_needs": "Ops must repair or retire the scheduled job; you only need to decide if the job should no longer run.",
+    },
+    "receipt_stale": {
+        "what_it_means": "A podcast job has not recently proven that it finished successfully.",
+        "what_it_needs": "Ops must check the job and restore a fresh completion record; nothing needed from you unless the job should be retired.",
+    },
+    "log_error": {
+        "what_it_means": "A podcast job recorded an error while running.",
+        "what_it_needs": "Ops must use the approved repair steps or bring you a specific decision if none apply.",
+    },
+    "channel_failed": {
+        "what_it_means": "The podcast alert route is not working, so important problems may not reach you.",
+        "what_it_needs": "Ops must restore the approved alert route; nothing needed from you unless a different route is required.",
+    },
+    "vps_service_failed": {
+        "what_it_means": "A podcast service on the hosted server is down.",
+        "what_it_needs": "Ops must repair the service through an approved playbook or ask you to approve a different recovery path.",
+    },
+    "timer_unknown": {
+        "what_it_means": "The system cannot tell whether a scheduled podcast job is working.",
+        "what_it_needs": "Ops must restore the job status check; you only need to decide if the job should be retired.",
+    },
+    "ledger_blind": {
+        "what_it_means": "The system cannot read the record that shows whether podcast messages were sent.",
+        "what_it_needs": "Ops must restore that send record; nothing needed from you unless the sending process should change.",
+    },
+    "hopper_blind": {
+        "what_it_means": "The watchdog gauge that checks episodes are publishing on time has no data to read; the podcast itself may be fine, but this gauge is blind.",
+        "what_it_needs": "An ops repair of the publish-schedule data file; nothing needed from you unless you want it handled differently.",
+    },
+    "ledger_failed": {
+        "what_it_means": "The record of podcast message sends shows a failure.",
+        "what_it_needs": "Ops must repair the failed send path and confirm the affected message status; nothing needed from you unless a resend needs approval.",
+    },
+    "receipt_unknown": {
+        "what_it_means": "The system cannot tell whether a podcast job finished successfully.",
+        "what_it_needs": "Ops must restore the job's completion record; nothing needed from you unless the job should be retired.",
+    },
+    "log_unknown": {
+        "what_it_means": "The system cannot read the podcast job's error record.",
+        "what_it_needs": "Ops must restore access to the job record; nothing needed from you unless the record location should change.",
+    },
+    "channel_unknown": {
+        "what_it_means": "The system cannot confirm that podcast alerts can reach you.",
+        "what_it_needs": "Ops must test and restore the approved alert route; nothing needed from you unless a new route is required.",
+    },
+    "vps_unknown": {
+        "what_it_means": "The system cannot tell whether a podcast service on the hosted server is running.",
+        "what_it_needs": "Ops must restore the service status check; nothing needed from you unless server access is required.",
+    },
+    "timer_warning": {
+        "what_it_means": "A scheduled podcast job is showing an early warning but has not fully failed.",
+        "what_it_needs": "Ops should inspect the job before its next run; nothing needed from you unless it should be retired.",
+    },
+    "receipt_warning": {
+        "what_it_means": "A podcast job's proof of completion is getting old and may soon be overdue.",
+        "what_it_needs": "Ops should confirm the next successful run updates the completion record; nothing needed from you.",
+    },
+    "log_warning": {
+        "what_it_means": "A podcast job recorded a warning that may become a failure.",
+        "what_it_needs": "Ops should inspect the warning and apply the approved repair if needed; nothing needed from you.",
+    },
+    "channel_warning": {
+        "what_it_means": "The podcast alert route is showing signs it may stop working.",
+        "what_it_needs": "Ops should test and repair the alert route; nothing needed from you unless a different route is required.",
+    },
+    "vps_warning": {
+        "what_it_means": "A podcast service on the hosted server is showing signs it may fail.",
+        "what_it_needs": "Ops should inspect and repair the service; nothing needed from you unless a different recovery path needs approval.",
+    },
+    "pipeline_below_target": {
+        "what_it_means": "There are too few confirmed podcast guests ready for recording.",
+        "what_it_needs": "The podcast team must identify and clear the missing guest work; you only need to help if an owner decision is blocking them.",
+    },
+    "pipeline_warn": {
+        "what_it_means": "The number of confirmed podcast guests is close to falling below target.",
+        "what_it_needs": "The podcast team should fill the guest gaps before they affect recording; nothing needed from you unless they flag a decision.",
+    },
+    "pipeline_unknown": {
+        "what_it_means": "The system cannot count how many podcast guests are ready for recording.",
+        "what_it_needs": "Ops must restore the guest-status data; nothing needed from you unless the tracking process should change.",
+    },
+    "publish_missing": {
+        "what_it_means": "Something required for today's podcast release is missing.",
+        "what_it_needs": "The publishing owner must restore the missing item or tell you exactly what decision is blocking release.",
+    },
+    "publish_unknown": {
+        "what_it_means": "The system cannot confirm whether today's podcast release is complete.",
+        "what_it_needs": "Ops must restore the release check; nothing needed from you unless the publishing owner reports a real release problem.",
+    },
+    "manifest_incomplete": {
+        "what_it_means": "Required guest details are missing before the episode can be published safely.",
+        "what_it_needs": "The podcast team must complete the missing guest details before publishing; nothing needed from you unless they cannot obtain them.",
+    },
+    "manifest_gap": {
+        "what_it_means": "Some guest details may be incomplete ahead of publishing.",
+        "what_it_needs": "The podcast team should complete the guest details before publish day; nothing needed from you unless they flag a blocker.",
+    },
+    "manifest_unknown": {
+        "what_it_means": "The system cannot confirm whether all required guest details are complete.",
+        "what_it_needs": "Ops must restore the guest-details check; nothing needed from you unless the podcast team reports missing information.",
+    },
+    "receipt_hollow": {
+        "what_it_means": "A podcast job created an empty completion record that does not prove the work finished.",
+        "what_it_needs": "Ops must rerun or repair the job so it produces a complete record; nothing needed from you unless the job itself should change.",
+    },
+}
+
 QUESTIONS = {
     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
@@ -245,6 +360,7 @@ def compare_observations(
                 "observed": _observed_for(row),
                 "evidence": [str(row.get("evidence", ""))],
                 "one_question": QUESTIONS[sensor],
+                **MEANINGS[failure_class],
             }
         )
     return candidates

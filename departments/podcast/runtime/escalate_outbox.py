@@ -17,7 +17,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from factory import runrecord
-from factory.human_in_the_loop import escalate
+from factory.human_in_the_loop import _atomic_write, escalate
+from departments.podcast.runtime.compare_charter import MEANINGS
 from departments.podcast.runtime import record as record_node
 
 
@@ -26,6 +27,38 @@ EscalateFn = Callable[..., dict[str, Any]]
 _FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 _DEFECT_MARKER = re.compile(r"^department_defect:[1-9][0-9]*$")
 LOGGER = logging.getLogger(__name__)
+
+
+def _plain_copy(failure_class: str) -> tuple[str, str]:
+    meaning = MEANINGS.get(failure_class)
+    if meaning is None:
+        return (
+            "A podcast process needs attention and the team could not fix it automatically.",
+            "Ops must investigate and bring you a specific decision only if one is required.",
+        )
+    return meaning["what_it_means"], meaning["what_it_needs"]
+
+
+def _eli5(failure_class: str) -> str:
+    what_it_means, what_it_needs = _plain_copy(failure_class)
+    return (
+        "[podcast] Action needed — "
+        f"WHAT THIS MEANS: {what_it_means} "
+        f"WHAT IT NEEDS: {what_it_needs}"
+    )
+
+
+def _replace_latest_eli5(path: Path, eli5: str) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if not lines[index].strip():
+            continue
+        packet = json.loads(lines[index])
+        packet["eli5"] = eli5
+        lines[index] = json.dumps(packet)
+        _atomic_write(path, "\n".join(lines) + "\n")
+        return
+    raise ValueError("escalation did not append an outbox row")
 
 
 def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
@@ -79,6 +112,7 @@ def _load_outbox_markers(
         evidence = context.get("evidence")
         issue = packet.get("issue")
         timestamp = packet.get("ts")
+        failure_class = issue.split(":", 1)[0] if isinstance(issue, str) else ""
         marker_matches_state = (
             (marker == "open" and incident_state == "open")
             or (
@@ -100,7 +134,7 @@ def _load_outbox_markers(
             and len(issue) > len(question) + 2
             and isinstance(timestamp, str)
             and bool(timestamp)
-            and packet.get("eli5") == f"[podcast] needs you: {issue}"
+            and packet.get("eli5") == _eli5(failure_class)
         )
         if not structurally_valid:
             _outbox_warning(path, line_number, "packet does not match podcast escalation schema")
@@ -174,6 +208,7 @@ def escalate_new_incidents(
                     "one_question": question,
                 },
             )
+            _replace_latest_eli5(outbox_path, _eli5(str(incident.get("failure_class"))))
             durable_markers[durable_key] = timestamp
             incident[escalated_field] = True
             incident[escalated_at_field] = timestamp
