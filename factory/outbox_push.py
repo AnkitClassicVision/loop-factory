@@ -19,11 +19,16 @@ Configuration YAML::
         - "{title}"
         - --body
         - "{body}"
+      buzz:
+        - buzz-command
+        - --card
+        - "{card}"
       card_enabled: true
 
 Sender values are argv templates, never shell commands. Ping templates may use
 ``{text}``, ``{department}``, and ``{kind}``; card templates may use
-``{title}``, ``{body}``, ``{department}``, and ``{kind}``.
+``{title}``, ``{body}``, ``{department}``, and ``{kind}``; optional buzz
+templates may use ``{card}``, ``{text}``, ``{department}``, and ``{kind}``.
 
 Exit codes: 2 for invalid configuration, 3 when every attempted ping fails,
 and 4 when every configured watch path is missing during a non-dry-run tick.
@@ -85,6 +90,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ConfigError("senders.card_enabled must be true or false")
     ping = _argv(senders.get("ping"), "ping", required=True)
     card = _argv(senders.get("card"), "card", required=card_enabled)
+    buzz = _argv(senders.get("buzz"), "buzz", required=False)
     ledger_file = raw.get("ledger_file")
     if ledger_file is not None and (
         not isinstance(ledger_file, str) or not ledger_file
@@ -111,6 +117,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
         "watches": clean_watches,
         "ping": ping,
         "card": card,
+        "buzz": buzz,
         "card_enabled": card_enabled,
         "ledger_file": ledger_file,
     }
@@ -185,6 +192,7 @@ def _render(template: list[str], values: dict[str, str]) -> list[str]:
         item.replace("{text}", values.get("text", ""))
         .replace("{title}", values.get("title", ""))
         .replace("{body}", values.get("body", ""))
+        .replace("{card}", values.get("card", ""))
         .replace("{department}", values["department"])
         .replace("{kind}", values["kind"])
         for item in template
@@ -240,10 +248,9 @@ def _append_ledger(
     department: str,
     kind: str,
     summary: str,
-    card_stdout: str,
+    card: dict[str, Any] | None,
     packet_text: str = "",
 ) -> None:
-    card = _last_json_object(card_stdout)
     identifier = card.get("identifier") if isinstance(card, dict) else None
     url = card.get("url") if isinstance(card, dict) else None
     tracked = isinstance(identifier, str) and bool(identifier)
@@ -345,24 +352,33 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             ping_successes += 1
             if card_argv:
                 ledger_file = config.get("ledger_file")
-                if ledger_file:
-                    card_success, card_stdout = _send_captured(card_argv)
-                else:
-                    card_success, card_stdout = _send(card_argv), ""
+                card_success, card_stdout = _send_captured(card_argv)
                 if not card_success:
                     LOGGER.warning(
                         "card sender failed for %s line %d", source, line_index + 1
                     )
-                elif ledger_file:
-                    _append_ledger(
-                        ledger_file,
-                        digest=digest,
-                        department=watch["department"],
-                        kind=watch["kind"],
-                        summary=summary_line,
-                        card_stdout=card_stdout,
-                        packet_text=text,
-                    )
+                else:
+                    card = _last_json_object(card_stdout)
+                    identifier = card.get("identifier") if isinstance(card, dict) else None
+                    if ledger_file:
+                        _append_ledger(
+                            ledger_file,
+                            digest=digest,
+                            department=watch["department"],
+                            kind=watch["kind"],
+                            summary=summary_line,
+                            card=card,
+                            packet_text=text,
+                        )
+                    if isinstance(identifier, str) and identifier and config["buzz"]:
+                        buzz_values = {**values, "card": identifier}
+                        buzz_argv = _render(config["buzz"], buzz_values)
+                        if not _send(buzz_argv):
+                            LOGGER.warning(
+                                "buzz sender failed for %s line %d",
+                                source,
+                                line_index + 1,
+                            )
             state["last_hashes"] = (state["last_hashes"] + [digest])[-HASH_LIMIT:]
             state["offset_lines"] = line_index + 1
             changed = True
