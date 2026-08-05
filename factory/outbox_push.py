@@ -238,17 +238,25 @@ def _append_ledger(
     kind: str,
     summary: str,
     card_stdout: str,
+    packet_text: str = "",
 ) -> None:
     card = _last_json_object(card_stdout)
     identifier = card.get("identifier") if isinstance(card, dict) else None
     url = card.get("url") if isinstance(card, dict) else None
     tracked = isinstance(identifier, str) and bool(identifier)
+    now = datetime.now(timezone.utc).isoformat()
     ledger_row = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now,
+        # first_raised is the age the re-escalation cadence measures from, and it
+        # is what a resuming agent needs to know how long this has been waiting.
+        "first_raised": now,
         "row_hash": digest,
         "department": department,
         "kind": kind,
         "summary": summary,
+        # The sanitized ask itself, so a FIX decision row can carry the original
+        # question to whoever picks it up. Already capped at TEXT_LIMIT upstream.
+        "packet_text": packet_text,
         "card_identifier": identifier if tracked else None,
         "card_url": url if isinstance(url, str) and url else None,
         "status": "open" if tracked else "untracked",
@@ -348,6 +356,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                         kind=watch["kind"],
                         summary=summary_line,
                         card_stdout=card_stdout,
+                        packet_text=text,
                     )
             state["last_hashes"] = (state["last_hashes"] + [digest])[-HASH_LIMIT:]
             state["offset_lines"] = line_index + 1

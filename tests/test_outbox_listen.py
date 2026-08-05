@@ -288,12 +288,14 @@ def test_fix_records_full_notes_stays_open_and_is_polled_again(tmp_path):
     assert len(decision["notes"]) == 2000
     assert _rows(ledger)[-1]["status"] == "fix_requested"
     assert _rows(ledger)[-1]["notes_hash"]
-    assert _calls(tmp_path, "closer") == []
-    assert _calls(tmp_path, "ack") == [[
-        "ANK-110",
-        "AGENT UPDATE: fix request recorded and routed. Reply APPROVE or SKIP "
-        "after the revised payload lands.",
-    ]]
+    # Owner decision 2026-08-05: a FIX parks the card under the human owner in
+    # Agent Needs Input. It does NOT close, so the re-escalation keeps working.
+    assert _calls(tmp_path, "closer") == [["ANK-110", "Agent Needs Input"]]
+    assert len(_calls(tmp_path, "ack")) == 1
+    ack_body = _calls(tmp_path, "ack")[0][1]
+    assert ack_body.startswith("AGENT UPDATE:")
+    assert "owned by ankit" in ack_body
+    assert "Agent Needs Input" in ack_body
 
     assert _run(config).returncode == 0
     assert len(_calls(tmp_path, "reader")) == 2
@@ -320,7 +322,12 @@ def test_bare_fix_then_different_fix_then_approve_closes(tmp_path):
     assert [row["decision"] for row in decisions] == ["fix", "fix", "approve"]
     assert decisions[0]["first_line"] == "FIX"
     assert _rows(ledger)[-1]["status"] == "decided:approve"
-    assert _calls(tmp_path, "closer") == [["ANK-111", "Agent Done"]]
+    # Each FIX parks the card under the owner; only the final APPROVE closes it.
+    assert _calls(tmp_path, "closer") == [
+        ["ANK-111", "Agent Needs Input"],
+        ["ANK-111", "Agent Needs Input"],
+        ["ANK-111", "Agent Done"],
+    ]
     assert len(_calls(tmp_path, "ack")) == 3
 
 
@@ -349,4 +356,91 @@ def test_newest_fix_wins_over_approve_and_skip(tmp_path):
 
     assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
     assert _rows(tmp_path / "decisions.jsonl")[0]["decision"] == "fix"
-    assert _calls(tmp_path, "closer") == []
+    assert _calls(tmp_path, "closer") == [["ANK-113", "Agent Needs Input"]]
+
+
+def test_one_reply_settles_every_ledger_row_sharing_a_card(tmp_path):
+    """Production shape: 36 ledger rows collapsed onto 13 cards, ANK-293 alone
+    carrying 13 of them. One human APPROVE must produce exactly ONE decision,
+    poll the card ONCE, move state ONCE, and retire every row sharing the card."""
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _ledger_row("hash-a", "ANK-999"),
+            _ledger_row("hash-b", "ANK-999"),
+            _ledger_row("hash-c", "ANK-999"),
+        ],
+    )
+    reader, data = _reader(tmp_path)
+    data.write_text(
+        json.dumps(
+            {"ANK-999": [{"body": "APPROVE\nGo.", "createdAt": "2026-08-05T13:00:00Z"}]}
+        )
+    )
+    closer = _recorder(tmp_path, "closer")
+    ack = _recorder(tmp_path, "ack")
+    config = _config(tmp_path, ledger, reader, closer, ack)
+
+    assert _run(config).returncode == 0
+
+    decisions = _rows(tmp_path / "decisions.jsonl")
+    assert len(decisions) == 1
+    assert decisions[0]["row_hashes"] == ["hash-a", "hash-b", "hash-c"]
+    assert decisions[0]["row_hash"] == "hash-a"
+    assert len(_calls(tmp_path, "reader")) == 1
+    assert len(_calls(tmp_path, "closer")) == 1
+    assert len(_calls(tmp_path, "ack")) == 1
+
+    statuses = {row["row_hash"]: row["status"] for row in _rows(ledger)}
+    assert statuses == {
+        "hash-a": "decided:approve",
+        "hash-b": "decided:approve",
+        "hash-c": "decided:approve",
+    }
+
+    assert _run(config).returncode == 0
+    assert len(_rows(tmp_path / "decisions.jsonl")) == 1
+    assert len(_calls(tmp_path, "reader")) == 1
+
+
+def test_fix_decision_row_carries_everything_an_agent_needs_to_resume(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _ledger_row(
+                "hash-resume",
+                "ANK-777",
+                department="podcast",
+                kind="escalation",
+                summary="Which guest manifest field is missing?",
+                packet_text="Department: podcast\nKind: escalation\nmanifest_unknown",
+                first_raised="2026-08-01T09:00:00+00:00",
+            )
+        ],
+    )
+    reader, data = _reader(tmp_path)
+    data.write_text(
+        json.dumps(
+            {"ANK-777": [{"body": "FIX-NOTES: use the booking sheet, not the CRM"}]}
+        )
+    )
+    closer = _recorder(tmp_path, "closer")
+    config = _config(tmp_path, ledger, reader, closer)
+
+    assert _run(config).returncode == 0
+    decision = _rows(tmp_path / "decisions.jsonl")[0]
+    assert decision["decision"] == "fix"
+    assert decision["owner"] == "ankit"
+    assert decision["notes"] == "FIX-NOTES: use the booking sheet, not the CRM"
+    assert (
+        decision["resume_hint"]
+        == "podcast/escalation: Which guest manifest field is missing?"
+    )
+    assert (
+        decision["packet_text"]
+        == "Department: podcast\nKind: escalation\nmanifest_unknown"
+    )
+    assert decision["first_raised"] == "2026-08-01T09:00:00+00:00"
+    assert decision["card_url"] == "https://example.test/ANK-777"
