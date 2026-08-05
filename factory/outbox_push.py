@@ -24,6 +24,9 @@ Configuration YAML::
 Sender values are argv templates, never shell commands. Ping templates may use
 ``{text}``, ``{department}``, and ``{kind}``; card templates may use
 ``{title}``, ``{body}``, ``{department}``, and ``{kind}``.
+
+Exit codes: 2 for invalid configuration, 3 when every attempted ping fails,
+and 4 when every configured watch path is missing during a non-dry-run tick.
 """
 from __future__ import annotations
 
@@ -281,12 +284,14 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     attempts = 0
     ping_successes = 0
     changed = False
+    missing_watch_paths: list[str] = []
 
     for watch in config["watches"]:
         watch_path = watch["path"]
         source = Path(watch_path)
         state = _state(cursor, watch_path)
         if not source.exists():
+            missing_watch_paths.append(watch_path)
             continue
         try:
             lines = source.read_text(encoding="utf-8").splitlines()
@@ -364,6 +369,16 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
 
     if changed and not dry_run:
         _save_cursor(cursor_path, cursor)
+    if (
+        not dry_run
+        and config["watches"]
+        and len(missing_watch_paths) == len(config["watches"])
+    ):
+        LOGGER.error(
+            "outbox watch stalled; every configured watch path is missing: %s",
+            ", ".join(missing_watch_paths),
+        )
+        return 4
     return 3 if attempts and ping_successes == 0 else 0
 
 

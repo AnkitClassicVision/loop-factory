@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "factory" / "reescalate.py"
+NOW = "2026-08-05T12:00:00+00:00"
+
+
+def _row(row_hash: str, issue: str, **changes) -> dict:
+    row = {
+        "ts": "2026-08-01T12:00:00+00:00",
+        "row_hash": row_hash,
+        "card_identifier": issue,
+        "status": "open",
+        "first_raised": "2026-08-01T12:00:00+00:00",
+        "urgency": "normal",
+    }
+    row.update(changes)
+    return row
+
+
+def _write_rows(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _run(ledger: Path, *args: str, now: str = NOW) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--ledger", str(ledger), "--now", now, *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _due(result: subprocess.CompletedProcess[str]) -> list[dict]:
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["due"]
+
+
+def _ledger_rows(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_plan_only_is_pure_and_first_normal_ping_is_due_at_48_hours(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+    before = ledger.read_bytes()
+
+    result = _run(ledger, "--plan-only", now="2026-08-03T12:00:00+00:00")
+
+    assert _due(result) == [
+        {
+            "card_identifier": "ANK-1",
+            "reescalation_count": 0,
+            "reason": "normal cadence: 48h elapsed",
+        }
+    ]
+    assert ledger.read_bytes() == before
+
+
+def test_normal_card_is_not_due_before_48_hours(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+
+    result = _run(ledger, "--plan-only", now="2026-08-03T11:59:59+00:00")
+
+    assert _due(result) == []
+
+
+def test_normal_intervals_double_after_three_and_cap_without_stopping(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    rows = [
+        _row(
+            f"hash-{count}",
+            f"ANK-{count}",
+            first_raised="2026-01-01T00:00:00+00:00",
+            last_ping_at="2026-07-22T12:00:00+00:00",
+            reescalation_count=count,
+        )
+        for count in (2, 3, 4, 5, 12)
+    ]
+    _write_rows(ledger, rows)
+
+    result = _run(ledger, "--plan-only")
+
+    assert [item["card_identifier"] for item in _due(result)] == [
+        "ANK-2",
+        "ANK-3",
+        "ANK-4",
+        "ANK-5",
+        "ANK-12",
+    ]
+    assert [item["reason"] for item in _due(result)] == [
+        "normal cadence: 48h elapsed",
+        "normal cadence: 96h elapsed",
+        "normal cadence: 192h elapsed",
+        "normal cadence: 336h elapsed",
+        "normal cadence: 336h elapsed",
+    ]
+
+
+def test_only_open_and_fix_requested_latest_statuses_are_eligible(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _row("open", "ANK-OPEN"),
+            _row("fix", "ANK-FIX", status="fix_requested"),
+            _row("retired", "ANK-RETIRED", status="retired"),
+            _row("approve", "ANK-APPROVE", status="decided:approve"),
+            _row("skip", "ANK-SKIP", status="decided:skip"),
+        ],
+    )
+
+    result = _run(ledger, "--plan-only")
+
+    assert [item["card_identifier"] for item in _due(result)] == [
+        "ANK-OPEN",
+        "ANK-FIX",
+    ]
+
+
+def test_last_row_per_hash_wins(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _row("hash-1", "ANK-1"),
+            _row("hash-1", "ANK-1", status="retired"),
+        ],
+    )
+
+    result = _run(ledger, "--plan-only")
+
+    assert _due(result) == []
+
+
+def test_shared_card_identifier_produces_exactly_one_ping(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _row("hash-a", "ANK-13"),
+            _row("hash-b", "ANK-13", status="retired"),
+            _row("hash-c", "ANK-13"),
+        ],
+    )
+
+    result = _run(ledger, "--plan-only")
+
+    assert len(_due(result)) == 1
+    assert _due(result)[0]["card_identifier"] == "ANK-13"
+
+
+def test_urgent_uses_midpoint_floor_and_past_due_cadence(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(
+        ledger,
+        [
+            _row(
+                "midpoint",
+                "ANK-MID",
+                urgency="urgent",
+                first_raised="2026-08-05T00:00:00+00:00",
+                due="2026-08-06T00:00:00+00:00",
+            ),
+            _row(
+                "floor",
+                "ANK-FLOOR",
+                urgency="urgent",
+                first_raised="2026-08-05T09:00:00+00:00",
+                due="2026-08-05T12:00:00+00:00",
+            ),
+            _row(
+                "past",
+                "ANK-PAST",
+                urgency="urgent",
+                first_raised="2026-08-04T00:00:00+00:00",
+                due="2026-08-05T00:00:00+00:00",
+                last_ping_at="2026-08-05T09:00:00+00:00",
+                reescalation_count=4,
+            ),
+        ],
+    )
+
+    result = _run(ledger, "--plan-only")
+
+    assert [item["card_identifier"] for item in _due(result)] == [
+        "ANK-MID",
+        "ANK-FLOOR",
+        "ANK-PAST",
+    ]
+    assert _due(result)[1]["reason"] == "urgent cadence: 2h midpoint interval elapsed"
+    assert _due(result)[2]["reason"] == "urgent cadence: past due, 2h interval elapsed"
+
+
+def test_send_mode_renders_argv_and_appends_incremented_card_row(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+    calls = tmp_path / "calls.jsonl"
+    sender = tmp_path / "sender.py"
+    sender.write_text(
+        "import json, pathlib, sys\n"
+        f"path=pathlib.Path({str(calls)!r})\n"
+        "with path.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "reescalation": {
+                    "sender": [
+                        sys.executable,
+                        str(sender),
+                        "{card_identifier}",
+                        "{reescalation_count}",
+                        "{reason}",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(ledger, "--config", str(config))
+
+    assert result.returncode == 0, result.stderr
+    assert _ledger_rows(calls) == [
+        ["ANK-1", "1", "normal cadence: 48h elapsed"]
+    ]
+    appended = _ledger_rows(ledger)[-1]
+    assert appended["last_ping_at"] == NOW
+    assert appended["reescalation_count"] == 1
+    assert appended["status"] == "open"
+
+
+def test_missing_or_failed_sender_fails_closed_without_appending(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+    original = ledger.read_bytes()
+
+    missing = _run(ledger)
+
+    assert missing.returncode != 0
+    assert "requires --config" in missing.stderr
+    assert ledger.read_bytes() == original
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "reescalation": {
+                    "sender": [sys.executable, "-c", "raise SystemExit(7)", "{issue}"]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    failed = _run(ledger, "--config", str(config))
+
+    assert failed.returncode != 0
+    assert "sender failed" in failed.stderr
+    assert ledger.read_bytes() == original

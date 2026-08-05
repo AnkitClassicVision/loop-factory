@@ -140,11 +140,35 @@ def test_sensitive_fields_excluded_and_text_truncated(tmp_path):
     assert all(secret not in value for value in card_args)
 
 
-def test_missing_watch_file_is_tolerated(tmp_path):
+def test_single_missing_watch_file_is_a_stall(tmp_path):
     ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
-    result = _run(_config(tmp_path, tmp_path / "missing.jsonl", ping, card))
-    assert result.returncode == 0
+    missing = tmp_path / "missing.jsonl"
+    result = _run(_config(tmp_path, missing, ping, card))
+    assert result.returncode == 4
+    assert str(missing) in result.stderr
     assert not (tmp_path / "cursor.json").exists()
+
+
+def test_missing_watch_file_is_tolerated_when_another_watch_is_present(tmp_path):
+    missing = tmp_path / "missing.jsonl"
+    present = tmp_path / "present.jsonl"
+    present.write_text(json.dumps({"eli5": "existing watch processed"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, missing, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"].append(
+        {"path": str(present), "department": "label", "kind": "approval"}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(config)
+
+    assert result.returncode == 0
+    assert len(_calls(tmp_path / "ping.jsonl")) == 1
+    assert "existing watch processed" in _calls(tmp_path / "ping.jsonl")[0][0]
+    assert json.loads((tmp_path / "cursor.json").read_text())[str(present)][
+        "offset_lines"
+    ] == 1
 
 
 def test_invalid_config_exits_two(tmp_path):
