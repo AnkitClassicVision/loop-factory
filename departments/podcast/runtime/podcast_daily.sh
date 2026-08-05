@@ -123,6 +123,7 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/expectation_reconcile.py" --shadow --sources "${SOURCES}" || true
 # The escalation answer-return reader is receipt-gated: nonzero, empty, or
 # non-object stdout stops the chain before compare/dedup can advance.
 comms_receipt="$(

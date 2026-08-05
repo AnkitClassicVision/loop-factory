@@ -1,0 +1,23 @@
+# Expectation manifest: recording-intake (owner decision, Ankit 2026-08-04).
+# Every finished cloud recording must show processing evidence within 30
+# minutes, or the delta summons healing. This lane was silently dead
+# Jul 9 - Aug 4 because nothing declared what was supposed to exist by when.
+# Snapshot source: state/sources/expectation-snapshot.json, fetched read-only
+# from the VPS writer (podcast repo scripts/expectation_snapshot.py).
+schema: expectation-manifest/v1
+process: recording-intake
+instances:
+  source: snapshot
+  snapshot: daily-finished
+steps:
+  - id: intake-handled
+    description: >-
+      A finished Daily recording has a processing job or an assigned archive
+      entry. Absence past deadline is the dead-webhook signature.
+    deadline_minutes: 30
+    expect:
+      - kind: snapshot_member
+        snapshot: intake-handled
+    authorized_skip:
+      glob: "state/skips/recording-intake/{id}-*.json"
+    heal: escalate

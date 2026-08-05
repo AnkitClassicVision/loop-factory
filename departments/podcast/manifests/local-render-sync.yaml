@@ -1,0 +1,34 @@
+# Expectation manifest: local-render-sync (owner decision, Ankit 2026-08-04).
+# Render-host boundary: the VPS stops at assets-downloaded; every recording
+# assigned to an episode must be SYNCED to the local render workspace
+# (/mnt/d_drive/repos/podcast/episodes/<episode>/) within the deadline, proven
+# by the sync receipt local_render_sync.py writes. An unsynced recording past
+# deadline means the local sync timer is dead — exactly the silent-failure
+# shape this method exists to catch.
+schema: expectation-manifest/v1
+process: local-render-sync
+instances:
+  source: snapshot
+  snapshot: assigned-episode-recordings
+steps:
+  - id: raw-synced-local
+    description: local render workspace holds the synced raw assets
+    deadline_minutes: 60
+    expect:
+      - kind: artifact
+        glob: "/mnt/d_drive/repos/podcast/episodes/{episode}/raw/.local-sync-receipt.json"
+    authorized_skip:
+      glob: "state/skips/local-render-sync/{id}-*.json"
+    heal: escalate
+  - id: produced-local
+    description: >-
+      Auto-produce ran on this host (owner decision: recording today produces
+      today). The receipt exists whether the run passed or was blocked by a
+      gate; a MISSING receipt past deadline means the trigger chain is dead.
+    deadline_minutes: 180
+    expect:
+      - kind: artifact
+        glob: "/mnt/d_drive/repos/podcast/episodes/{episode}/raw/.local-produce-receipt.json"
+    authorized_skip:
+      glob: "state/skips/local-render-sync/{id}-produce-*.json"
+    heal: escalate

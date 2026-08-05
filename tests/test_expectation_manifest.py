@@ -1,0 +1,235 @@
+"""Expectation manifest reconciler: declared-expectation vs reality contract.
+
+The defining cases come from the 2026-08-04 incidents: a recording finished in
+a cloud with no job (snapshot_member), a research stage stamped done with an
+empty payload (json_field), and a step quiet inside its deadline that must NOT
+alarm yet (pending). Deny-by-default is load-bearing: a missing snapshot key
+is an error, never an empty-and-therefore-healthy list.
+"""
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from factory import expectation_manifest as em
+
+NOW = datetime(2026, 8, 4, 18, 0, tzinfo=timezone.utc)
+
+
+def write_manifest(tmp_path, body: str) -> Path:
+    path = tmp_path / "m.yaml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+RECORDING_MANIFEST = """\
+schema: expectation-manifest/v1
+process: recording-intake
+instances:
+  source: snapshot
+  snapshot: finished
+steps:
+  - id: job-enqueued
+    deadline_minutes: 30
+    expect:
+      - kind: snapshot_member
+        snapshot: jobs
+    authorized_skip:
+      glob: "skips/{id}-job-*.json"
+    heal: escalate
+"""
+
+
+def snap(finished_age_minutes: float, job_ids):
+    anchor = (NOW - timedelta(minutes=finished_age_minutes)).isoformat()
+    return {"finished": [{"id": "rec-1", "anchor_ts": anchor}], "jobs": list(job_ids)}
+
+
+def reconcile(tmp_path, manifest_body, snapshots, now=NOW):
+    manifest = em.load_manifest(write_manifest(tmp_path, manifest_body))
+    return em.reconcile(manifest, tmp_path, snapshots, now)
+
+
+def test_present_job_is_ok(tmp_path):
+    receipt = reconcile(tmp_path, RECORDING_MANIFEST, snap(60, ["rec-1"]))
+    assert receipt["counts"] == {"ok": 1, "pending": 0, "authorized_skips": 0, "deltas": 0}
+
+
+def test_missing_job_past_deadline_is_a_delta(tmp_path):
+    receipt = reconcile(tmp_path, RECORDING_MANIFEST, snap(60, []))
+    assert receipt["counts"]["deltas"] == 1
+    delta = receipt["deltas"][0]
+    assert delta["step"] == "job-enqueued" and delta["status"] == "missing"
+    assert delta["heal"] == "escalate"
+
+
+def test_missing_job_inside_deadline_is_pending_not_delta(tmp_path):
+    receipt = reconcile(tmp_path, RECORDING_MANIFEST, snap(10, []))
+    assert receipt["counts"]["deltas"] == 0
+    assert receipt["counts"]["pending"] == 1
+
+
+def test_authorized_skip_receipt_silences_the_delta(tmp_path):
+    (tmp_path / "skips").mkdir()
+    (tmp_path / "skips" / "rec-1-job-owner.json").write_text("{}", encoding="utf-8")
+    receipt = reconcile(tmp_path, RECORDING_MANIFEST, snap(60, []))
+    assert receipt["counts"]["deltas"] == 0
+    assert receipt["counts"]["authorized_skips"] == 1
+
+
+def test_missing_snapshot_key_fails_closed(tmp_path):
+    with pytest.raises(em.ManifestError, match="fail closed"):
+        reconcile(tmp_path, RECORDING_MANIFEST, {"finished": [
+            {"id": "rec-1", "anchor_ts": NOW.isoformat()}]})
+
+
+RESEARCH_MANIFEST = """\
+schema: expectation-manifest/v1
+process: prep-intake
+instances:
+  source: glob
+  glob: "episodes/*/episode.json"
+  id_from: parent_dir
+steps:
+  - id: researched-means-research
+    deadline_minutes: 0
+    expect:
+      - kind: json_field
+        file: "episodes/{id}/episode.json"
+        pointer: "guests/0/research"
+        non_empty: true
+      - kind: artifact
+        glob: "episodes/{id}/content/prep-doc.html"
+"""
+
+
+def _age_file(path, minutes):
+    import os
+    stamp = (NOW - timedelta(minutes=minutes)).timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def test_mike_case_empty_research_with_stamped_stage_is_a_delta(tmp_path):
+    ep = tmp_path / "episodes" / "2026-08-04-mike" / "content"
+    ep.mkdir(parents=True)
+    (ep / "prep-doc.html").write_text("doc", encoding="utf-8")
+    ep_json = ep.parent / "episode.json"
+    ep_json.write_text(
+        json.dumps({"stage": "prep-call-booked", "guests": [{"research": {}}]}),
+        encoding="utf-8")
+    _age_file(ep_json, 60)  # deterministic anchor: mtime is relative to fixed NOW
+    manifest = em.load_manifest(write_manifest(tmp_path, RESEARCH_MANIFEST))
+    receipt = em.reconcile(manifest, tmp_path, {}, NOW)
+    assert receipt["counts"]["deltas"] == 1
+    assert "research" in receipt["deltas"][0]["unmet"][0]
+
+
+def test_real_research_passes(tmp_path):
+    ep = tmp_path / "episodes" / "2026-08-04-good" / "content"
+    ep.mkdir(parents=True)
+    (ep / "prep-doc.html").write_text("doc", encoding="utf-8")
+    ep_json = ep.parent / "episode.json"
+    ep_json.write_text(
+        json.dumps({"guests": [{"research": {"bio": "real"}}]}), encoding="utf-8")
+    _age_file(ep_json, 60)
+    manifest = em.load_manifest(write_manifest(tmp_path, RESEARCH_MANIFEST))
+    receipt = em.reconcile(manifest, tmp_path, {}, NOW)
+    assert receipt["counts"] == {"ok": 1, "pending": 0, "authorized_skips": 0, "deltas": 0}
+
+
+def test_bad_schema_and_kinds_fail_closed(tmp_path):
+    with pytest.raises(em.ManifestError, match="schema"):
+        em.load_manifest(write_manifest(tmp_path, "schema: nope/v9\nprocess: x\n"))
+    bad_kind = RECORDING_MANIFEST.replace("snapshot_member", "vibes")
+    with pytest.raises(em.ManifestError, match="expect.kind"):
+        em.load_manifest(write_manifest(tmp_path, bad_kind))
+
+
+def test_cli_exit_codes(tmp_path, capsys):
+    manifest_path = write_manifest(tmp_path, RECORDING_MANIFEST)
+    snap_path = tmp_path / "snap.json"
+    snap_path.write_text(json.dumps(snap(60, [])), encoding="utf-8")
+    receipt_path = tmp_path / "receipt.json"
+    rc = em.main(["--manifest", str(manifest_path), "--root", str(tmp_path),
+                  "--snapshots", str(snap_path), "--now", NOW.isoformat(),
+                  "--receipt", str(receipt_path)])
+    assert rc == 3  # RED: delta present must be a nonzero, alarming exit
+    assert json.loads(receipt_path.read_text())["counts"]["deltas"] == 1
+    snap_path.write_text(json.dumps(snap(60, ["rec-1"])), encoding="utf-8")
+    assert em.main(["--manifest", str(manifest_path), "--root", str(tmp_path),
+                    "--snapshots", str(snap_path), "--now", NOW.isoformat()]) == 0
+    assert em.main(["--manifest", str(manifest_path), "--root", str(tmp_path),
+                    "--now", NOW.isoformat()]) == 2  # snapshots absent: fail closed
+
+
+SYNC_MANIFEST = """\
+schema: expectation-manifest/v1
+process: local-render-sync
+instances:
+  source: snapshot
+  snapshot: assigned
+steps:
+  - id: raw-synced-local
+    deadline_minutes: 60
+    expect:
+      - kind: artifact
+        glob: "episodes/{episode}/raw/.local-sync-receipt.json"
+"""
+
+
+def test_instance_extras_render_into_artifact_globs(tmp_path):
+    receipt = tmp_path / "episodes" / "2026-08-04-solo" / "raw" / ".local-sync-receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{}", encoding="utf-8")
+    snapshots = {"assigned": [{"id": "rec-1", "episode": "2026-08-04-solo",
+                               "anchor_ts": (NOW - timedelta(minutes=90)).isoformat()}]}
+    manifest = em.load_manifest(write_manifest(tmp_path, SYNC_MANIFEST))
+    ok_receipt = em.reconcile(manifest, tmp_path, snapshots, NOW)
+    assert ok_receipt["counts"]["deltas"] == 0 and ok_receipt["counts"]["ok"] == 1
+    receipt.unlink()
+    delta_receipt = em.reconcile(manifest, tmp_path, snapshots, NOW)
+    assert delta_receipt["counts"]["deltas"] == 1
+
+
+def test_missing_extras_key_fails_closed(tmp_path):
+    snapshots = {"assigned": [{"id": "rec-1",
+                               "anchor_ts": (NOW - timedelta(minutes=90)).isoformat()}]}
+    manifest = em.load_manifest(write_manifest(tmp_path, SYNC_MANIFEST))
+    with pytest.raises(em.ManifestError, match="fail closed"):
+        em.reconcile(manifest, tmp_path, snapshots, NOW)
+
+
+GRANDPARENT_MANIFEST = """\
+schema: expectation-manifest/v1
+process: publish-promo
+instances:
+  source: glob
+  glob: "episodes/*/content/anchor-receipt.json"
+  id_from: grandparent_dir
+steps:
+  - id: youtube-scheduled
+    deadline_minutes: 30
+    expect:
+      - kind: artifact
+        glob: "episodes/{id}/content/next-receipt.json"
+"""
+
+
+def test_grandparent_dir_ids_instances_by_episode(tmp_path):
+    ep = tmp_path / "episodes" / "2026-08-04-solo" / "content"
+    ep.mkdir(parents=True)
+    (ep / "anchor-receipt.json").write_text("{}")
+    _age_file(ep / "anchor-receipt.json", 60)
+    receipt = reconcile(tmp_path, GRANDPARENT_MANIFEST, {})
+    assert receipt["instances"] == 1
+    assert receipt["deltas"][0]["instance"] == "2026-08-04-solo"
+    (ep / "next-receipt.json").write_text("{}")
+    receipt = reconcile(tmp_path, GRANDPARENT_MANIFEST, {})
+    assert receipt["deltas"] == []
+
+
+def test_unknown_id_from_fails_closed(tmp_path):
+    bad = GRANDPARENT_MANIFEST.replace("grandparent_dir", "cousin_dir")
+    with pytest.raises(em.ManifestError, match="id_from"):
+        reconcile(tmp_path, bad, {})
