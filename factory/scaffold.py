@@ -12,14 +12,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from pathlib import Path
+
+try:
+    from factory.mailroom_registry import ConfigError as MailroomConfigError
+    from factory.mailroom_registry import register_watch
+except ModuleNotFoundError:  # pragma: no cover - supports direct script execution
+    from mailroom_registry import ConfigError as MailroomConfigError
+    from mailroom_registry import register_watch
 
 # Safe slug: filesystem-, YAML-, and systemd-unit-safe. Rejects path traversal,
 # quotes, spaces, and shell metacharacters by construction (Codex review #18).
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 
 _TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_MAILROOM_CONFIG = Path("~/.config/loop-factory/outbox_push.yaml")
+_MAILROOM_CONFIG_ENV = "LOOP_FACTORY_MAILROOM_CONFIG"
 
 _RUNTIME_README = """# {name} runtime
 
@@ -64,7 +76,21 @@ def _shell_double_quoted(value: Path) -> str:
     )
 
 
-def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
+def _mailroom_config_path(config_path: str | Path | None, root: Path) -> Path:
+    selected = config_path or os.environ.get(_MAILROOM_CONFIG_ENV)
+    if selected:
+        return Path(selected).expanduser()
+    if root.resolve() != _REPO_ROOT:
+        return root / ".config" / "loop-factory" / "outbox_push.yaml"
+    return _DEFAULT_MAILROOM_CONFIG.expanduser()
+
+
+def scaffold_department(
+    name: str,
+    root=".",
+    owner: str = "owner",
+    mailroom_config: str | Path | None = None,
+) -> dict:
     """Create the standard department skeleton. Returns a summary including a
     factory-standard registry entry, which is also persisted to
     estate/registry.d/<name>.yaml when that directory exists.
@@ -143,6 +169,27 @@ def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
         (registry_dir / f"{name}.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
         registry_file = str(registry_dir / f"{name}.yaml")
 
+    mailroom_path = _mailroom_config_path(mailroom_config, root)
+    outbox_path = dept / "state" / "decisions_outbox.jsonl"
+    try:
+        mailroom = register_watch(mailroom_path, name, outbox_path)
+    except MailroomConfigError as exc:
+        if not mailroom_path.exists():
+            print(
+                f"mailroom not wired: config {mailroom_path} is absent ({exc})",
+                file=sys.stderr,
+            )
+            mailroom = {
+                "config": str(mailroom_path),
+                "outbox": str(outbox_path),
+                "registered": False,
+                "reason": str(exc),
+            }
+        else:
+            raise
+    else:
+        print(f"mailroom watch registered in {mailroom_path}", file=sys.stderr)
+
     return {
         "department": name,
         "created": [
@@ -156,6 +203,7 @@ def scaffold_department(name: str, root=".", owner: str = "owner") -> dict:
         ],
         "registry_entry": registry_entry,
         "registry_file": registry_file,
+        "mailroom": mailroom,
         "next_human_step": (
             "F1 intent interview + intent lock (owner), then F2 charter setpoints + funnels"
         ),
@@ -167,8 +215,17 @@ def main() -> None:
     parser.add_argument("--name", required=True)
     parser.add_argument("--root", default=".")
     parser.add_argument("--owner", default="owner")
+    parser.add_argument("--mailroom-config", default=None)
     args = parser.parse_args()
-    print(json.dumps(scaffold_department(args.name, args.root, owner=args.owner), indent=2))
+    print(json.dumps(
+        scaffold_department(
+            args.name,
+            args.root,
+            owner=args.owner,
+            mailroom_config=args.mailroom_config,
+        ),
+        indent=2,
+    ))
 
 
 if __name__ == "__main__":

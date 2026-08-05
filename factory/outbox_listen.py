@@ -65,6 +65,13 @@ TIMESTAMP_FIELDS = (
     "timestamp",
     "ts",
 )
+# Owner decision (Ankit 2026-08-05): a FIX reply is owned by the human, not
+# silently re-queued to the department that raised it. The card moves to
+# NEEDS_INPUT_STATE and stays open so the re-escalation keeps working against it.
+OWNER = "ankit"
+NEEDS_INPUT_STATE = "Agent Needs Input"
+DONE_STATE = "Agent Done"
+NOTES_LIMIT = 2000
 
 
 class ConfigError(ValueError):
@@ -301,6 +308,61 @@ def _decision(comments: list[dict[str, Any]]) -> tuple[str, str, str] | None:
     return None
 
 
+def _open_groups(latest: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group still-open ledger rows by the card they actually point at.
+
+    outbox_push appends one ledger row per outbox line, but the card creator
+    dedupes by content and hands the SAME identifier back for related lines. In
+    production 36 ledger rows collapsed onto 13 cards; ANK-293 alone carried 13.
+    Polling per row would turn ONE human reply into one decision per row and fire
+    the state mover once per row, so the card is the unit of work here, not the
+    ledger row. Insertion order is file order, so the first row seen for an
+    identifier is the earliest and supplies department/kind/summary.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for row_hash, card in latest.items():
+        if card.get("status") not in {"open", "fix_requested"}:
+            continue
+        identifier = card.get("card_identifier")
+        if not isinstance(identifier, str) or not identifier:
+            continue
+        group = groups.get(identifier)
+        if group is None:
+            groups[identifier] = {
+                "identifier": identifier,
+                "card": card,
+                "row_hashes": [row_hash],
+                "fix_notes_hashes": set(card.get("_fix_notes_hashes", set())),
+            }
+            continue
+        group["row_hashes"].append(row_hash)
+        group["fix_notes_hashes"] |= set(card.get("_fix_notes_hashes", set()))
+    return list(groups.values())
+
+
+def _resume_context(card: dict[str, Any], notes: str) -> dict[str, Any]:
+    """Everything a fresh agent needs to pick a FIX up with no chat history.
+
+    Owner decision (Ankit 2026-08-05): the human owns a FIX, and the AI must be
+    able to resume it. So the decision row carries the ask, the answer, and where
+    it came from, in one row. An agent that reads only this row can act.
+    """
+    def _text(field: str) -> str:
+        value = card.get(field)
+        return value if isinstance(value, str) else ""
+
+    context: dict[str, Any] = {
+        "notes": notes[:NOTES_LIMIT],
+        "owner": OWNER,
+        "resume_hint": f"{_text('department')}/{_text('kind')}: {_text('summary')}".strip("/: "),
+        "first_raised": _text("first_raised") or _text("ts"),
+    }
+    for field in ("packet_text", "card_url"):
+        if _text(field):
+            context[field] = _text(field)
+    return context
+
+
 def _run_optional(argv: list[str], label: str) -> None:
     try:
         result = subprocess.run(argv, check=False)
@@ -317,12 +379,10 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
         return 0
     reader_calls = 0
     reader_failures = 0
-    for row_hash, card in latest.items():
-        if card.get("status") not in {"open", "fix_requested"}:
-            continue
-        identifier = card.get("card_identifier")
-        if not isinstance(identifier, str) or not identifier:
-            continue
+    for group in _open_groups(latest):
+        identifier = group["identifier"]
+        card = group["card"]
+        row_hashes = group["row_hashes"]
         reader_calls += 1
         comments = _run_reader(
             _render(config["reader"], {"issue": identifier})
@@ -335,13 +395,14 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             continue
         decision, first_line, notes = found
         notes_hash = hashlib.sha256(notes.encode("utf-8")).hexdigest()
-        if decision == "fix" and notes_hash in card.get("_fix_notes_hashes", set()):
+        if decision == "fix" and notes_hash in group["fix_notes_hashes"]:
             continue
         if dry_run:
             LOGGER.warning(
-                "dry-run would record %s for %s from %r",
+                "dry-run would record %s for %s (%d ledger row(s)) from %r",
                 decision,
                 identifier,
+                len(row_hashes),
                 first_line,
             )
             continue
@@ -350,31 +411,43 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
         decision_row = {
             "ts": _now(),
             "card_identifier": identifier,
-            "row_hash": row_hash,
+            # row_hash stays the earliest row for compatibility; row_hashes names
+            # every ledger row this one human reply settles.
+            "row_hash": row_hashes[0],
+            "row_hashes": row_hashes,
             "department": department if isinstance(department, str) else "",
             "kind": kind if isinstance(kind, str) else "",
             "decision": decision,
             "source": "linear-comment",
             "first_line": first_line,
         }
+        packet_id = card.get("packet_id")
+        if packet_id is not None:
+            decision_row["packet_id"] = packet_id
         if decision == "fix":
-            decision_row["notes"] = notes[:2000]
+            decision_row.update(_resume_context(card, notes))
         try:
             _append_jsonl(config["decisions_file"], decision_row)
-            _append_jsonl(
-                config["ledger_file"],
-                {
-                    "ts": _now(),
-                    "row_hash": row_hash,
-                    "department": decision_row["department"],
-                    "kind": decision_row["kind"],
-                    "card_identifier": identifier,
-                    "status": (
-                        "fix_requested" if decision == "fix" else f"decided:{decision}"
-                    ),
-                    **({"notes_hash": notes_hash} if decision == "fix" else {}),
-                },
-            )
+            for row_hash in row_hashes:
+                _append_jsonl(
+                    config["ledger_file"],
+                    {
+                        "ts": _now(),
+                        "row_hash": row_hash,
+                        "department": decision_row["department"],
+                        "kind": decision_row["kind"],
+                        "card_identifier": identifier,
+                        "status": (
+                            "fix_requested" if decision == "fix" else f"decided:{decision}"
+                        ),
+                        **(
+                            {"packet_id": packet_id}
+                            if packet_id is not None
+                            else {}
+                        ),
+                        **({"notes_hash": notes_hash} if decision == "fix" else {}),
+                    },
+                )
         except OSError as exc:
             LOGGER.error("decision files could not be appended: %s", exc)
             continue
@@ -382,10 +455,12 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             values = {
                 "issue": identifier,
                 "body": (
-                    "AGENT UPDATE: fix request recorded and routed. Reply APPROVE "
-                    "or SKIP after the revised payload lands."
+                    f"AGENT UPDATE: your reply is recorded and this card is owned by "
+                    f"{OWNER}. It stays open in {NEEDS_INPUT_STATE} and keeps "
+                    "re-escalating until it is resolved. Any agent can resume it "
+                    "from the recorded decision row; nothing is queued silently."
                 ),
-                "state": "",
+                "state": NEEDS_INPUT_STATE,
             }
         else:
             values = {
@@ -394,12 +469,14 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                     f"AGENT DONE: decision recorded ({decision}). "
                     "This card's loop is closed."
                 ),
-                "state": "Agent Done",
+                "state": DONE_STATE,
             }
         if config["ack"]:
             _run_optional(_render(config["ack"], values), "ack sender")
-        if decision != "fix" and config["close_enabled"]:
-            _run_optional(_render(config["closer"], values), "card closer")
+        # The closer is a state mover, so a FIX uses it too: it parks the card in
+        # NEEDS_INPUT_STATE under the owner rather than closing it.
+        if config["close_enabled"]:
+            _run_optional(_render(config["closer"], values), "card state mover")
     if reader_calls and reader_failures == reader_calls:
         return 3
     return 0
