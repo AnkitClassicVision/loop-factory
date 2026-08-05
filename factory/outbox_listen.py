@@ -421,6 +421,9 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             "source": "linear-comment",
             "first_line": first_line,
         }
+        packet_id = card.get("packet_id")
+        if packet_id is not None:
+            decision_row["packet_id"] = packet_id
         if decision == "fix":
             decision_row.update(_resume_context(card, notes))
         try:
@@ -436,6 +439,11 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                         "card_identifier": identifier,
                         "status": (
                             "fix_requested" if decision == "fix" else f"decided:{decision}"
+                        ),
+                        **(
+                            {"packet_id": packet_id}
+                            if packet_id is not None
+                            else {}
                         ),
                         **({"notes_hash": notes_hash} if decision == "fix" else {}),
                     },

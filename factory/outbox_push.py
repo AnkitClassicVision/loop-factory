@@ -250,6 +250,7 @@ def _append_ledger(
     summary: str,
     card: dict[str, Any] | None,
     packet_text: str = "",
+    packet_id: Any = None,
     urgency: Any = "normal",
     due: Any = None,
     has_due: bool = False,
@@ -275,6 +276,8 @@ def _append_ledger(
         "status": "open" if tracked else "untracked",
         "urgency": urgency,
     }
+    if packet_id is not None:
+        ledger_row["packet_id"] = packet_id
     if has_due:
         ledger_row["due"] = due
     ledger_path = Path(path)
@@ -375,6 +378,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                             summary=summary_line,
                             card=card,
                             packet_text=text,
+                            packet_id=row.get("packet_id"),
                             urgency=(
                                 row["urgency"] if "urgency" in row else "normal"
                             ),
