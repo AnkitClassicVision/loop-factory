@@ -30,7 +30,7 @@ Sender values are argv templates, never shell commands. Ping templates may use
 ``{title}``, ``{body}``, ``{department}``, and ``{kind}``; optional buzz
 templates may use ``{card}``, ``{text}``, ``{department}``, and ``{kind}``.
 
-Exit codes: 2 for invalid configuration, 3 when every attempted ping fails,
+Exit codes: 2 for invalid configuration, 3 for a sender delivery failure,
 and 4 when every configured watch path is missing during a non-dry-run tick.
 """
 from __future__ import annotations
@@ -299,6 +299,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     cursor = _load_cursor(cursor_path)
     attempts = 0
     ping_successes = 0
+    card_failures = 0
     changed = False
     missing_watch_paths: list[str] = []
 
@@ -357,19 +358,25 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             attempts += 1
             if not _send(ping_argv):
                 LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
+                # Ping failures stop before cursor mutation, so the row retries in order.
                 break
             ping_successes += 1
             if card_argv:
                 ledger_file = config.get("ledger_file")
                 card_success, card_stdout = _send_captured(card_argv)
                 if not card_success:
-                    LOGGER.warning(
+                    card_failures += 1
+                    LOGGER.error(
                         "card sender failed for %s line %d", source, line_index + 1
                     )
+                    # Do not consume an undelivered card. The repeated plain ping is the
+                    # deliberate loud outage signal until this in-order retry succeeds.
+                    break
                 else:
                     card = _last_json_object(card_stdout)
                     identifier = card.get("identifier") if isinstance(card, dict) else None
                     if ledger_file:
+                        # Ledger append behavior is unchanged once card delivery succeeds.
                         _append_ledger(
                             ledger_file,
                             digest=digest,
@@ -389,6 +396,8 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                         buzz_values = {**values, "card": identifier}
                         buzz_argv = _render(config["buzz"], buzz_values)
                         if not _send(buzz_argv):
+                            # Card plus ledger already make this re-armable, so a lost
+                            # buzz remains a delay and the row is consumed as before.
                             LOGGER.warning(
                                 "buzz sender failed for %s line %d",
                                 source,
@@ -410,7 +419,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             ", ".join(missing_watch_paths),
         )
         return 4
-    return 3 if attempts and ping_successes == 0 else 0
+    return 3 if card_failures or (attempts and ping_successes == 0) else 0
 
 
 def main(argv: list[str] | None = None) -> int:

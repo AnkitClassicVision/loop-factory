@@ -114,15 +114,75 @@ def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tm
     assert sum("second" in text for text in texts) == 1
 
 
-def test_card_failure_does_not_block_cursor(tmp_path):
+def test_card_failure_leaves_row_unconsumed(tmp_path):
     watch = tmp_path / "outbox.jsonl"
     watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
     ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
-    config = _config(tmp_path, watch, ping, card)
+    cursor = tmp_path / "cursor.json"
+    cursor.write_text(
+        json.dumps({str(watch): {"offset_lines": 0, "last_hashes": []}}) + "\n"
+    )
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+
+    assert _run(config).returncode == 3
+    assert json.loads(cursor.read_text())[str(watch)] == {
+        "offset_lines": 0,
+        "last_hashes": [],
+    }
+    assert not ledger.exists()
+
+
+def test_card_failure_retries_successfully_on_next_tick(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+
+    assert _run(config).returncode == 3
+
+    working_card = _card_sender_output(
+        tmp_path,
+        "working_card",
+        '{"identifier":"ANK-456","url":"https://example.test/ANK-456"}\n',
+    )
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"][1] = str(working_card)
+    config.write_text(yaml.safe_dump(data))
+
     assert _run(config).returncode == 0
-    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)]["offset_lines"] == 1
-    assert _run(config).returncode == 0
-    assert len(_calls(tmp_path / "ping.jsonl")) == 1
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    assert len(state["last_hashes"]) == 1
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-456"
+    assert len(_calls(tmp_path / "ping.jsonl")) == 2
+
+
+def test_buzz_failure_after_card_and_ledger_consumes_row(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "buzz later"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(
+        tmp_path,
+        "card_for_buzz",
+        '{"identifier":"ANK-789","url":"https://example.test/ANK-789"}\n',
+    )
+    buzz = _sender(tmp_path, "bad_buzz", 1)
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["buzz"] = [sys.executable, str(buzz), "{card}"]
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(config)
+
+    assert result.returncode == 0
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    assert len(state["last_hashes"]) == 1
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-789"
+    assert "buzz sender failed" in result.stderr
 
 
 def test_sensitive_fields_excluded_and_text_truncated(tmp_path):

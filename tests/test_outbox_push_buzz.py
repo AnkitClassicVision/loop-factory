@@ -150,11 +150,23 @@ def test_buzz_does_not_run_without_a_successful_durable_card(tmp_path, case):
         )
     )
 
-    assert result.returncode == 0
     assert _calls(tmp_path / "buzz.jsonl") == []
-    assert json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))[
-        str(watch)
-    ]["offset_lines"] == 1
+    if case == "card-failed":
+        # 2026-08-05 contract: an undelivered card is never consumed — the row
+        # stays for the next tick's in-order retry and the run exits 3 loudly.
+        assert result.returncode == 3
+        cursor = tmp_path / "cursor.json"
+        state = (
+            json.loads(cursor.read_text(encoding="utf-8")).get(str(watch))
+            if cursor.exists()
+            else None
+        )
+        assert not state or state["offset_lines"] == 0
+    else:
+        assert result.returncode == 0
+        assert json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))[
+            str(watch)
+        ]["offset_lines"] == 1
 
 
 def test_buzz_failure_warns_but_does_not_fail_or_stop_tick(tmp_path):
