@@ -61,7 +61,13 @@ def _validated_row(value: Any) -> dict:
     meta = value["meta"]
     if not isinstance(meta, dict) or not set(meta).issubset(META_KEYS):
         raise LedgerError(f"meta keys must be within {sorted(META_KEYS)}")
-    if _contains_pii(value):
+    # subject_id must be a strict 16-hex opaque identity — validated by SHAPE
+    # and exempted from the phone-like scan (caught live 2026-08-06: a real
+    # salted hash contained 7+ consecutive digits and false-tripped the PII
+    # heuristic; fixture salts had passed by luck).
+    if not re.fullmatch(r"[0-9a-f]{16}", value["subject_id"]):
+        raise LedgerError("subject_id must be a 16-char lowercase hex opaque id")
+    if _contains_pii({k: v for k, v in value.items() if k != "subject_id"}):
         raise LedgerError("event contains an email or phone-like value")
     parsed = _utc(value["ts"])
     row = dict(value)

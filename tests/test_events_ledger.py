@@ -14,7 +14,7 @@ NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
 def test_append_event_happy_path(tmp_path):
     path = append_event(
         tmp_path,
-        subject_id="opaque-1",
+        subject_id="00000000000000a1",
         from_stage="lead",
         to_stage="qualified",
         ts=NOW,
@@ -22,7 +22,7 @@ def test_append_event_happy_path(tmp_path):
     )
     assert path == tmp_path / "events.jsonl"
     assert json.loads(path.read_text()) == {
-        "subject_id": "opaque-1",
+        "subject_id": "00000000000000a1",
         "from_stage": "lead",
         "to_stage": "qualified",
         "ts": "2026-08-05T12:00:00+00:00",
@@ -33,23 +33,23 @@ def test_append_event_happy_path(tmp_path):
 @pytest.mark.parametrize("value", ["person@example.com", "call 2125551212"])
 def test_append_rejects_email_or_phone_like_pii(tmp_path, value):
     with pytest.raises(LedgerError):
-        append_event(tmp_path, subject_id="opaque", from_stage="lead", to_stage="won", meta={"note": value})
+        append_event(tmp_path, subject_id="00000000000000aa", from_stage="lead", to_stage="won", meta={"note": value})
 
 
 def test_append_rejects_disallowed_keys(tmp_path):
     with pytest.raises(LedgerError):
-        append_event(tmp_path, subject_id="opaque", from_stage="lead", to_stage="won", meta={"email": "redacted"})
+        append_event(tmp_path, subject_id="00000000000000aa", from_stage="lead", to_stage="won", meta={"email": "redacted"})
 
 
 def test_append_rejects_same_utc_day_duplicate(tmp_path):
-    append_event(tmp_path, subject_id="opaque", from_stage="lead", to_stage="won", ts=NOW)
+    append_event(tmp_path, subject_id="00000000000000aa", from_stage="lead", to_stage="won", ts=NOW)
     with pytest.raises(LedgerError):
-        append_event(tmp_path, subject_id="opaque", from_stage="lead", to_stage="won", ts=NOW + timedelta(hours=2))
+        append_event(tmp_path, subject_id="00000000000000aa", from_stage="lead", to_stage="won", ts=NOW + timedelta(hours=2))
 
 
 def test_read_window_counts_malformed_lines(tmp_path):
-    append_event(tmp_path, subject_id="inside", from_stage="lead", to_stage="won", ts=NOW)
-    append_event(tmp_path, subject_id="outside", from_stage="lead", to_stage="won", ts=NOW - timedelta(days=10))
+    append_event(tmp_path, subject_id="0000000000000001", from_stage="lead", to_stage="won", ts=NOW)
+    append_event(tmp_path, subject_id="0000000000000002", from_stage="lead", to_stage="won", ts=NOW - timedelta(days=10))
     with (tmp_path / "events.jsonl").open("a", encoding="utf-8") as handle:
         handle.write("not-json\n")
         handle.write(json.dumps({"subject_id": "broken"}) + "\n")
@@ -60,5 +60,26 @@ def test_read_window_counts_malformed_lines(tmp_path):
         since=NOW - timedelta(days=1),
         until=NOW + timedelta(days=1),
     )
-    assert [row["subject_id"] for row in window.rows] == ["inside"]
+    assert [row["subject_id"] for row in window.rows] == ["0000000000000001"]
     assert window.malformed == 2
+
+
+def test_hex_subject_with_long_digit_run_is_accepted(tmp_path):
+    """Caught live 2026-08-06: a real salted hash with 7+ consecutive digits
+    false-tripped the phone-like scan. Opaque 16-hex ids are shape-validated
+    and exempt; every OTHER field stays scanned."""
+    append_event(tmp_path, subject_id="1234567890abcdef",
+                 from_stage="lead", to_stage="won", ts=NOW)
+
+
+def test_non_hex_subject_id_is_rejected(tmp_path):
+    with pytest.raises(LedgerError):
+        append_event(tmp_path, subject_id="opaque-1",
+                     from_stage="lead", to_stage="won", ts=NOW)
+
+
+def test_meta_digit_run_is_still_rejected(tmp_path):
+    with pytest.raises(LedgerError):
+        append_event(tmp_path, subject_id="00000000000000ab",
+                     from_stage="lead", to_stage="won", ts=NOW,
+                     meta={"note": "call 2125551212"})

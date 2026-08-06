@@ -71,7 +71,7 @@ def test_golden_three_transition_ceil_cascade(tmp_path):
 def _cohort(state, count, conversions, *, age_days=20):
     entered = NOW - timedelta(days=age_days)
     for number in range(count):
-        subject = f"opaque-{number}"
+        subject = f"{number:016x}"
         append_event(state, subject_id=subject, from_stage="sourced", to_stage="contacted", ts=entered)
         if number < conversions:
             append_event(state, subject_id=subject, from_stage="contacted", to_stage="booked", ts=entered + timedelta(days=1))
