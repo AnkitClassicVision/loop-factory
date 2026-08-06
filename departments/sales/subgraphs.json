@@ -1,0 +1,289 @@
+{
+ "_doc": "Sales department machine topology (F2, from intent LOCKED 2026-08-06). Workspaces ARE the funnel stages (owner directive: each folder is one part of the loop, carrying its routing, DONE, and floor). v1 lint-only this phase: nodes declare ids + traceability, impls arrive in F3 per the script-vs-LLM triage in procedural-graph.md. done/stage fields feed surface compiler v2.",
+ "subgraphs": [
+  {
+   "id": "SG-RECEIVED",
+   "concept_refs": [
+    "C2",
+    "C10",
+    "C13"
+   ],
+   "stage": "received",
+   "done": {
+    "conditions": [
+     "lead exists as one row in the cohort ledger with source attribution (icaregrow, podcast_handoff, inbound, website_form, pfs_warm, pfs_cold)",
+     "identity deduplicated against every lane before the row lands (one human, one id)"
+    ],
+    "receipt": "events.jsonl row (opaque subject_id, from_stage null -> received)"
+   },
+   "not_applicable": {
+    "S1": "identity resolution IS this stage's job \u2014 implemented as the intake dedup contract (C10), not a separate guard node in the v1 lint-only graph",
+    "S2": "no contact targeting: intake only reads arrivals, never selects people to touch",
+    "S3": "no model calls in intake v1: deterministic parsers over HubSpot/Luma/email/scrape feeds",
+    "S4": "read-only stage: nothing dispatches",
+    "S5": "read-only stage: nothing dispatches",
+    "S6": "read-only stage: nothing dispatches",
+    "S7": "read-only stage: nothing dispatches",
+    "S8": "no cost-incurring nodes: subscription-only scripts under C8 caps"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C13",
+     "interview_ref": "Q7"
+    },
+    {
+     "id": "N2",
+     "concept_ref": "C12",
+     "interview_ref": "Q8"
+    },
+    {
+     "id": "N3",
+     "concept_ref": "C10",
+     "interview_ref": "Q1"
+    }
+   ]
+  },
+  {
+   "id": "SG-QUALIFIED",
+   "concept_refs": [
+    "C3",
+    "C10"
+   ],
+   "stage": "qualified",
+   "done": {
+    "conditions": [
+     "qualification bar decision recorded WITH evidence: services bar (owner/decision-maker at an ICP-fit optometry practice) OR seller bar (owner signaling exit interest within ~24 months)",
+     "the applied bar is named on the record \u2014 dual bars never blur"
+    ],
+    "receipt": "qualification record referencing the evidence"
+   },
+   "not_applicable": {
+    "S1": "operates on already-deduplicated ledger identities from SG-RECEIVED",
+    "S2": "scoring only; selects nobody for contact",
+    "S3": "v1 scoring is deterministic against the locked bars; a model-scored variant re-opens this guard in F3",
+    "S4": "read-only stage: nothing dispatches",
+    "S5": "read-only stage: nothing dispatches",
+    "S6": "read-only stage: nothing dispatches",
+    "S7": "read-only stage: nothing dispatches",
+    "S8": "no cost-incurring nodes v1"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C3",
+     "interview_ref": "Q4"
+    },
+    {
+     "id": "N2",
+     "concept_ref": "C3",
+     "interview_ref": "Q1"
+    }
+   ]
+  },
+  {
+   "id": "SG-CONVERSATION-LIVE",
+   "concept_refs": [
+    "C3",
+    "C5",
+    "C6"
+   ],
+   "stage": "conversation_live",
+   "done": {
+    "conditions": [
+     "two-way exchange within the last 7 days: a human reply or a live conversation (opens and clicks never count)",
+     "every draft produced here came from a verified-complete context packet (relationship history: episodes, calls, Circle activity, prior threads)",
+     "every draft passed the owner voice check before reaching the approval queue"
+    ],
+    "receipt": "thread/reply record + context-packet manifest + voice-check receipt"
+   },
+   "not_applicable": {
+    "S2": "candidate selection obeys the cross-lane suppression sensor in SG-SENSE; this stage only continues conversations it already owns",
+    "S4": "drafts land in the approval queue; the estate dispatch gateway owns sends (Q12)",
+    "S5": "drafts only \u2014 no dispatch at any autonomy level v1",
+    "S6": "drafts only \u2014 no dispatch at any autonomy level v1",
+    "S7": "drafts only \u2014 no dispatch at any autonomy level v1"
+   },
+   "nodes": [
+    {
+     "id": "S1",
+     "guard": "S1"
+    },
+    {
+     "id": "S3",
+     "guard": "S3"
+    },
+    {
+     "id": "S8",
+     "guard": "S8"
+    },
+    {
+     "id": "N1",
+     "model_capable": true,
+     "cost_incurring": true,
+     "concept_ref": "C5",
+     "interview_ref": "Q11"
+    },
+    {
+     "id": "N2",
+     "concept_ref": "C5",
+     "interview_ref": "Q11"
+    }
+   ]
+  },
+  {
+   "id": "SG-NERVOUS-PARKED",
+   "concept_refs": [
+    "C3",
+    "C2"
+   ],
+   "stage": "nervous_parked",
+   "done": {
+    "conditions": [
+     "exit happens exactly one way: a revive touch was executed (draft approved + sent via the estate gateway) OR an explicit kill reason is recorded",
+     "no row parks silently past its scheduled revive date"
+    ],
+    "receipt": "touch receipt or kill record with reason"
+   },
+   "not_applicable": {
+    "S1": "operates on deduplicated ledger identities",
+    "S2": "revive candidates are scheduled by park date, not selected by targeting",
+    "S3": "no model calls: revive drafting happens in SG-CONVERSATION-LIVE under its guards",
+    "S4": "read-only stage: revive sends run through SG-CONVERSATION-LIVE's queue",
+    "S5": "read-only stage",
+    "S6": "read-only stage",
+    "S7": "read-only stage",
+    "S8": "no cost-incurring nodes"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C3",
+     "interview_ref": "Q4"
+    }
+   ]
+  },
+  {
+   "id": "SG-BOOKED",
+   "concept_refs": [
+    "C3"
+   ],
+   "stage": "booked",
+   "done": {
+    "conditions": [
+     "calendar receipt exists with a confirmed time and attendee",
+     "the booking is linked to the ledger identity and its source attribution"
+    ],
+    "receipt": "calendar event id in the booking record"
+   },
+   "not_applicable": {
+    "S1": "operates on deduplicated ledger identities",
+    "S2": "no targeting: bookings arrive from conversations",
+    "S3": "no model calls: booking detection is a deterministic calendar join",
+    "S4": "read-only stage",
+    "S5": "read-only stage",
+    "S6": "read-only stage",
+    "S7": "read-only stage",
+    "S8": "no cost-incurring nodes"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C3",
+     "interview_ref": "Q4"
+    }
+   ]
+  },
+  {
+   "id": "SG-HELD",
+   "concept_refs": [
+    "C1",
+    "C10"
+   ],
+   "stage": "held",
+   "done": {
+    "conditions": [
+     "call attended, decision-maker present, >= 20 minutes (locked at readback)",
+     "held receipt carries the qualification bar met and the verified source attribution",
+     "the held event is appended to the cohort ledger the same day"
+    ],
+    "receipt": "held-call receipt (independent of the booking receipt)"
+   },
+   "not_applicable": {
+    "S1": "operates on deduplicated ledger identities",
+    "S2": "no targeting: verification only",
+    "S3": "no model calls: held verification is a deterministic calendar/notes join; Fathom contributes an intent flag + opaque id only, never content",
+    "S4": "read-only stage",
+    "S5": "read-only stage",
+    "S6": "read-only stage",
+    "S7": "read-only stage",
+    "S8": "no cost-incurring nodes"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C1",
+     "interview_ref": "Q1"
+    },
+    {
+     "id": "N2",
+     "concept_ref": "C10",
+     "interview_ref": "Q5"
+    }
+   ]
+  },
+  {
+   "id": "SG-SENSE",
+   "concept_refs": [
+    "C4",
+    "C5",
+    "C6",
+    "C8"
+   ],
+   "done": {
+    "conditions": [
+     "all four context-is-king gates ran today: cross-lane double-touch suppression, context-packet completeness, staleness truth on conversation_live, voice-check coverage",
+     "floors attainment compared against floors.yaml and every breach became an observation",
+     "kill_if and pause_if conditions evaluated with evidence"
+    ],
+    "receipt": "daily sense observations + run record bound to the run manifest"
+   },
+   "not_applicable": {
+    "S1": "reads ledger identities; resolves nothing",
+    "S2": "senses everyone, targets no one",
+    "S3": "no model calls: every sensor is deterministic (finite and enumerable = state machine)",
+    "S4": "watchdog plane: escalations only, via the human outbox",
+    "S5": "watchdog plane",
+    "S6": "watchdog plane",
+    "S7": "watchdog plane",
+    "S8": "no cost-incurring nodes"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "concept_ref": "C5",
+     "interview_ref": "Q11"
+    },
+    {
+     "id": "N2",
+     "concept_ref": "C4",
+     "interview_ref": "Q5"
+    },
+    {
+     "id": "N3",
+     "concept_ref": "C8",
+     "interview_ref": "Q10"
+    },
+    {
+     "id": "N4",
+     "concept_ref": "C6",
+     "interview_ref": "Q12"
+    }
+   ]
+  }
+ ],
+ "untraced_allowed": {
+  "runtime/runtime_node.py": "F0 scaffold template \u2014 replaced by real nodes in F3; kept as the authoring reference",
+  "runtime/sales_daily.sh": "F0 scaffold daily chain \u2014 rewired in F3 when runtime nodes exist; timer never enabled before F4 shadow proof"
+ }
+}

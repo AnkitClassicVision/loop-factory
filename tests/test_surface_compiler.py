@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from factory import graphs
-from factory.surface_compiler import check_surface, generate
+from factory.surface_compiler import SurfaceError, check_surface, generate
 
 
 @pytest.fixture
@@ -123,3 +123,50 @@ def test_generated_regions_never_contain_todo(fake_dept):
     assert "TBD" not in joined
     assert "TODO" not in joined
     assert "_No owner notes yet._" in joined
+
+
+def test_generate_renders_done_floor_and_conditional_router_column(fake_dept):
+    data = json.loads((fake_dept / "subgraphs.json").read_text(encoding="utf-8"))
+    data["subgraphs"][0]["stage"] = "alpha_stage"
+    data["subgraphs"][0]["done"] = {
+        "conditions": ["first condition", "second condition"],
+        "receipt": "alpha receipt",
+    }
+    (fake_dept / "subgraphs.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    generate(fake_dept)
+
+    alpha = (fake_dept / "01_alpha/CONTEXT.md").read_text(encoding="utf-8")
+    beta = (fake_dept / "02_beta/CONTEXT.md").read_text(encoding="utf-8")
+    router = (fake_dept / "ROUTER.md").read_text(encoding="utf-8")
+    assert "## DONE means\n\n- first condition\n- second condition\nReceipt: alpha receipt" in alpha
+    assert (
+        "## Floor\n\nThis stage holds the `alpha_stage` floor. Current values live in "
+        "`../floors.yaml` (machine-written; numbers are never copied here — two copies "
+        "guarantees one stale)."
+    ) in alpha
+    assert "## DONE means" not in beta
+    assert "## Floor" not in beta
+    assert "| Workspace folder | Subgraph id | Node count | Concept refs | DONE means |" in router
+    assert "| `01_alpha/` | `SG-ALPHA` | 2 | C1, C2 | first condition (+1 more) |" in router
+    assert "| `02_beta/` | `SG-BETA` | 1 | C3 | - |" in router
+
+
+def test_generate_rejects_empty_done_conditions_with_subgraph_name(fake_dept):
+    data = json.loads((fake_dept / "subgraphs.json").read_text(encoding="utf-8"))
+    data["subgraphs"][0]["done"] = {"conditions": [], "receipt": "alpha receipt"}
+    (fake_dept / "subgraphs.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    with pytest.raises(SurfaceError, match="SG-ALPHA"):
+        generate(fake_dept)
+
+
+def test_generate_without_v2_fields_preserves_v1_surface_shape(fake_dept):
+    generate(fake_dept)
+
+    joined = "\n".join(path.read_text(encoding="utf-8") for path in _surface_files(fake_dept))
+    router = (fake_dept / "ROUTER.md").read_text(encoding="utf-8")
+    assert "## DONE means" not in joined
+    assert "## Floor" not in joined
+    assert "DONE means" not in router
+    assert "| Workspace folder | Subgraph id | Node count | Concept refs |" in router

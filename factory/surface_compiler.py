@@ -39,6 +39,23 @@ def _load(dept_dir: Path) -> dict:
             raise SurfaceError(f"subgraphs.json: subgraph {index} has no string id")
         if not isinstance(subgraph.get("nodes", []), list):
             raise SurfaceError(f"subgraphs.json: {subgraph['id']} nodes must be a list")
+        if "stage" in subgraph and not isinstance(subgraph["stage"], str):
+            raise SurfaceError(f"subgraphs.json: {subgraph['id']} stage must be a string")
+        if "done" in subgraph:
+            done = subgraph["done"]
+            if not isinstance(done, dict):
+                raise SurfaceError(f"subgraphs.json: {subgraph['id']} done must be an object")
+            conditions = done.get("conditions")
+            if (
+                not isinstance(conditions, list)
+                or not conditions
+                or not all(isinstance(condition, str) for condition in conditions)
+            ):
+                raise SurfaceError(
+                    f"subgraphs.json: {subgraph['id']} done conditions must be a non-empty list of strings"
+                )
+            if not isinstance(done.get("receipt"), str):
+                raise SurfaceError(f"subgraphs.json: {subgraph['id']} done receipt must be a string")
     return data
 
 
@@ -64,15 +81,36 @@ def _node_impls(subgraph: dict) -> list[str]:
 
 def _renderings(data: dict) -> dict[Path, tuple[str, str]]:
     subgraphs = data["subgraphs"]
-    routes = [
-        f"| `{_workspace(i, sg)}/` | `{sg['id']}` | {len(sg.get('nodes', []))} | {_concepts(sg)} |"
-        for i, sg in enumerate(subgraphs, 1)
-    ]
-    route_lines = [
-        "# Workspace Router", "", "| Workspace folder | Subgraph id | Node count | Concept refs |",
-        "|---|---|---:|---|", *routes, "",
-        "a task matching no workspace STOPS rather than guessing.",
-    ]
+    # Keep the v1 router byte-identical unless at least one subgraph opts into done.
+    has_done = any("done" in subgraph for subgraph in subgraphs)
+    if has_done:
+        routes = []
+        for index, subgraph in enumerate(subgraphs, 1):
+            conditions = subgraph.get("done", {}).get("conditions", [])
+            done_summary = "-"
+            if conditions:
+                extra = len(conditions) - 1
+                done_summary = conditions[0] + (f" (+{extra} more)" if extra else "")
+            routes.append(
+                f"| `{_workspace(index, subgraph)}/` | `{subgraph['id']}` | "
+                f"{len(subgraph.get('nodes', []))} | {_concepts(subgraph)} | {done_summary} |"
+            )
+        route_lines = [
+            "# Workspace Router", "",
+            "| Workspace folder | Subgraph id | Node count | Concept refs | DONE means |",
+            "|---|---|---:|---|---|", *routes, "",
+            "a task matching no workspace STOPS rather than guessing.",
+        ]
+    else:
+        routes = [
+            f"| `{_workspace(i, sg)}/` | `{sg['id']}` | {len(sg.get('nodes', []))} | {_concepts(sg)} |"
+            for i, sg in enumerate(subgraphs, 1)
+        ]
+        route_lines = [
+            "# Workspace Router", "", "| Workspace folder | Subgraph id | Node count | Concept refs |",
+            "|---|---|---:|---|", *routes, "",
+            "a task matching no workspace STOPS rather than guessing.",
+        ]
     summary = [
         "# Department Agent Surface", "", "## Routing summary", "",
         *[f"- `{_workspace(i, sg)}/` routes to `{sg['id']}`." for i, sg in enumerate(subgraphs, 1)],
@@ -97,11 +135,27 @@ def _renderings(data: dict) -> dict[Path, tuple[str, str]]:
         context_lines = [
             f"# {subgraph['id']} Context", "", "## Purpose", "",
             f"Implement `{subgraph['id']}` for concept refs: {_concepts(subgraph)}.", "",
-            "## Node chain", "", *chain, "", "## Inputs", "",
-            "### L3", "", "- `charter.yaml`", "- `references/`", "", "### L4", "", *l4, "",
+            "## Node chain", "", *chain, "",
+        ]
+        if "done" in subgraph:
+            context_lines.extend([
+                "## DONE means", "",
+                *[f"- {condition}" for condition in subgraph["done"]["conditions"]],
+                f"Receipt: {subgraph['done']['receipt']}", "",
+            ])
+        if "stage" in subgraph:
+            context_lines.extend([
+                "## Floor", "",
+                f"This stage holds the `{subgraph['stage']}` floor. Current values live in "
+                "`../floors.yaml` (machine-written; numbers are never copied here — two copies "
+                "guarantees one stale).", "",
+            ])
+        context_lines.extend([
+            "## Inputs", "", "### L3", "", "- `charter.yaml`", "- `references/`", "",
+            "### L4", "", *l4, "",
             "## Outputs", "", *outputs, "", "## Verify", "",
             f"Verify against the `{subgraph['id']}` row in `../procedural-graph.md`.",
-        ]
+        ])
         context_path = Path(workspace) / "CONTEXT.md"
         rendered[context_path] = (
             "context", _markers("context", "\n".join(context_lines)) + "\n_No owner notes yet._\n"
