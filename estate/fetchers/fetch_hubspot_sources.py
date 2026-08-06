@@ -20,7 +20,15 @@ counts only — no emails, no names.
 
 Lane selectors (discovered 2026-08-06 against portal 23344341):
   - contact_role enum: decision_maker | champion | other
+  - hc_contact_role enum (HubSpot Cleaner LLM classifier): Decision Maker |
+    Champion | Influencer | Gatekeeper | End User | Unknown
   - icp_tier enum: tier_1 | tier_2 | tier_3 | unknown
+
+Role evidence (owner decision, Ankit 2026-08-06): human-set contact_role
+wins when present (2 contacts portal-wide); otherwise hc_contact_role is
+accepted as LLM-derived fallback evidence, normalized to snake_case so
+"Decision Maker" meets the qualify bar. Population at approval time:
+contact_role 2, hc_contact_role 13,371 (922 among form-converted).
   - bcat_exit_horizon (any value) marks exit-intake contacts
   - conversion names observed: "Meetings Link: ankit98/competitive-analysis",
     "Exit-Ready Planner — What is your optometry practice worth?: #planner"
@@ -58,6 +66,7 @@ REQUESTED_PROPERTIES = [
     "firstname",
     "lastname",
     "contact_role",
+    "hc_contact_role",
     "icp_tier",
     EXIT_MARKER_PROP,
     "first_conversion_event_name",
@@ -167,6 +176,11 @@ def _has_form_conversion(props) -> bool:
     return False
 
 
+def _normalize_role(value) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    return normalized or "unknown"
+
+
 def build_row(props, lane: str):
     """Map a HubSpot contact's properties to the frozen source-row shape.
 
@@ -183,10 +197,11 @@ def build_row(props, lane: str):
     )
     if not ts:
         return None
+    role = props.get("contact_role") or _normalize_role(props.get("hc_contact_role"))
     row = {
         "email": email,
         "name": name[:MAX_NAME_LEN],
-        "role": str(props.get("contact_role") or "unknown"),
+        "role": role,
         "ts": ts,
     }
     icp_fit = ICP_FIT_BY_TIER.get(str(props.get("icp_tier") or ""))

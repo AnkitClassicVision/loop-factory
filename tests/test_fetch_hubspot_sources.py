@@ -110,6 +110,23 @@ def test_icp_fit_mapping_and_role_default():
     )["exit_intent"] is True
 
 
+def test_role_falls_back_to_hc_classifier():
+    base = {"email": "x@y.example", "createdate": "2026-08-01T00:00:00Z"}
+    # human-set contact_role wins over the LLM classifier
+    assert fetcher.build_row(
+        {**base, "contact_role": "champion", "hc_contact_role": "Decision Maker"},
+        "icaregrow",
+    )["role"] == "champion"
+    # LLM fallback is normalized so "Decision Maker" meets the qualify bar
+    assert fetcher.build_row(
+        {**base, "hc_contact_role": "Decision Maker"}, "icaregrow"
+    )["role"] == "decision_maker"
+    assert fetcher.build_row(
+        {**base, "hc_contact_role": "End User"}, "icaregrow"
+    )["role"] == "end_user"
+    assert fetcher.build_row(base, "icaregrow")["role"] == "unknown"
+
+
 def test_pagination_truncation_flag():
     pages = {"icaregrow": [{"results": []} for _ in range(3)]}
     contacts, truncated = fetcher.fetch_lane_contacts(
