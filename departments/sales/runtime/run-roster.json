@@ -20,21 +20,26 @@
     },
     {
       "ordinal": 4,
-      "node": "held_sensor",
+      "node": "held_confirm_card",
       "required": true
     },
     {
       "ordinal": 5,
-      "node": "sense_gates",
+      "node": "held_sensor",
       "required": true
     },
     {
       "ordinal": 6,
-      "node": "floor_compiler_run",
+      "node": "sense_gates",
       "required": true
     },
     {
       "ordinal": 7,
+      "node": "floor_compiler_run",
+      "required": true
+    },
+    {
+      "ordinal": 8,
       "node": "conductor_tick",
       "required": false
     }

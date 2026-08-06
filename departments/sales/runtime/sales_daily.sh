@@ -32,6 +32,11 @@ export LOOP_FACTORY_RUN_ID
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/intake_sensor.py" --shadow --state-dir "${STATE_DIR}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/qualify_scorer.py" --shadow --state-dir "${STATE_DIR}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/booked_sensor.py" --shadow --state-dir "${STATE_DIR}"
+# Held-confirm loop: applies the owner's queue answers into confirmation
+# evidence, then asks (once per event) for any attended booked call the
+# source cannot attest. Runs before held_sensor so a fresh answer counts
+# the same day.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/held_confirm_card.py" --shadow --state-dir "${STATE_DIR}" --outbox "${OUTBOX}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/held_sensor.py" --shadow --state-dir "${STATE_DIR}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/sense_gates.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/floor_compiler_run.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"

@@ -201,6 +201,7 @@
    "id": "SG-HELD",
    "concept_refs": [
     "C1",
+    "C6",
     "C10"
    ],
    "stage": "held",
@@ -216,7 +217,7 @@
     "S1": "operates on deduplicated ledger identities",
     "S2": "no targeting: verification only",
     "S3": "no model calls: held verification is a deterministic calendar/notes join; Fathom contributes an intent flag + opaque id only, never content",
-    "S4": "read-only stage",
+    "S4": "read-only stage: the held-confirm ask is an escalation card via the human outbox (never a send); the estate dispatch gateway owns sends",
     "S5": "read-only stage",
     "S6": "read-only stage",
     "S7": "read-only stage",
@@ -233,6 +234,15 @@
      "id": "N2",
      "concept_ref": "C10",
      "interview_ref": "Q5"
+    },
+    {
+     "id": "N3",
+     "concept_ref": "C6",
+     "interview_ref": "Q12",
+     "impl": "runtime/held_confirm_card.py",
+     "emits_ask": true,
+     "return_path": "state/held_confirm_queue.jsonl",
+     "return_sla_hours": 48
     }
    ]
   },

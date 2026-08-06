@@ -79,6 +79,30 @@ def _qualification_bars(state: Path) -> dict[str, str]:
     return bars
 
 
+def _confirmations(state: Path) -> dict[str, str]:
+    """event_id -> decision_id for owner-confirmed held calls.
+
+    Written by held_confirm_card from the owner's queue answers. A confirmed
+    event is decision-maker-attested (>= 20 min held) by the owner; the
+    decision_id on the receipt traces to the card that carried the attestation.
+    """
+    confirmed: dict[str, str] = {}
+    path = state / "held_confirmations.jsonl"
+    if not path.exists():
+        return confirmed
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(row, dict) or row.get("confirmed") is not True:
+            continue
+        event_id, decision_id = row.get("event_id"), row.get("decision_id")
+        if isinstance(event_id, str) and event_id and isinstance(decision_id, str):
+            confirmed[event_id] = decision_id
+    return confirmed
+
+
 def _received_sources(state: Path) -> dict[str, str]:
     sources: dict[str, str] = {}
     for row in _rows(state, "arrival", "received"):
@@ -111,6 +135,7 @@ def _run(state: Path, current: datetime) -> dict:
     }
     held = {row["subject_id"] for row in _rows(state, "booked", "held")}
     bars, sources = _qualification_bars(state), _received_sources(state)
+    confirmations = _confirmations(state)
     held_count = 0
     unresolved = 0
     ineligible = 0
@@ -122,11 +147,19 @@ def _run(state: Path, current: datetime) -> dict:
         except (TypeError, ValueError):
             ineligible += 1
             continue
+        raw_event_id = event.get("event_id")
+        confirmed_by = (
+            confirmations.get(raw_event_id)
+            if isinstance(raw_event_id, str)
+            else None
+        )
         eligible_event = (
             event.get("attended") is True
-            and event.get("decision_maker_present") is True
-            and minutes >= 20
             and start < current
+            and (
+                confirmed_by is not None
+                or (event.get("decision_maker_present") is True and minutes >= 20)
+            )
         )
         if not eligible_event or subject_id not in booked or subject_id in held:
             ineligible += 1
@@ -142,10 +175,13 @@ def _run(state: Path, current: datetime) -> dict:
             state, subject_id=subject_id, from_stage="booked", to_stage="held",
             ts=current,
         )
-        _append_jsonl(state / "held.jsonl", {
+        receipt = {
             "subject_id": subject_id, "event_id": event_id, "minutes": minutes,
             "bar": bar, "source": source, "ts": current.isoformat(),
-        })
+        }
+        if confirmed_by is not None:
+            receipt["confirmed_by"] = confirmed_by
+        _append_jsonl(state / "held.jsonl", receipt)
         held.add(subject_id)
         held_count += 1
     status = "alarm" if unresolved else "ok"

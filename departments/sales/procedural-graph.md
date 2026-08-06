@@ -30,7 +30,7 @@ never edges.
 | 3 | SG-CONVERSATION-LIVE | conversation_live | two-way within 7d; drafts only from complete context packets, voice-checked | thread record + packet manifest + voice receipt | LLM (drafting) behind S1/S3/S8 guards; packet assembly SCRIPT |
 | 4 | SG-NERVOUS-PARKED | nervous_parked | exit only via executed revive touch OR explicit kill reason | touch receipt / kill record | SCRIPT: park scheduler + revive queue |
 | 5 | SG-BOOKED | booked | calendar receipt with time + attendee, linked to identity + attribution | calendar event id | SCRIPT: calendar join |
-| 6 | SG-HELD | held | attended, decision-maker present, >=20 min; bar + attribution on receipt; same-day ledger append | held-call receipt (independent of booking) | SCRIPT: calendar/notes join; Fathom intent FLAG only |
+| 6 | SG-HELD | held | attended, decision-maker present, >=20 min; bar + attribution on receipt; same-day ledger append | held-call receipt (independent of booking) | SCRIPT: calendar/notes join + owner held-confirm card (cards-v2: approve attests decision-maker + >=20 min, 48h SLA, silence never confirms); Fathom intent FLAG only |
 | 7 | SG-SENSE | — | all 4 gates ran; floors compared; kill/pause evaluated | daily observations + run record | SCRIPT: deterministic sensors, state-machine classification |
 
 ## Guards
@@ -52,7 +52,10 @@ conductor's job at the estate layer — a split-brain defect here.
   return path is the reply harvest; return_sla per escalation contract).
 - PARK/REVIVE loop: nervous_parked rows → revive due → draft via conversation
   loop OR kill with reason.
-- BOOK/HOLD loop: calendar joins → booking receipt → held receipt → ledger.
+- BOOK/HOLD loop: calendar joins → booking receipt → attended calendar pass →
+  held-confirm card (owner attests decision-maker + >=20 min via the outbox
+  queue; the confirmation row is the attestation artifact) → held receipt →
+  ledger.
 - SENSE loop (daily): 4 context-is-king gates, floors attainment vs
   floors.yaml, kill/pause watch → observations → compare → cards (make-sense +
   exact approvable actions).

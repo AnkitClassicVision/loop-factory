@@ -8,8 +8,8 @@ RUNTIME = Path(__file__).parents[1] / "runtime"
 SCRIPT = RUNTIME / "sales_daily.sh"
 ROSTER = RUNTIME / "run-roster.json"
 EXPECTED = [
-    "intake_sensor", "qualify_scorer", "booked_sensor", "held_sensor",
-    "sense_gates", "floor_compiler_run",
+    "intake_sensor", "qualify_scorer", "booked_sensor", "held_confirm_card",
+    "held_sensor", "sense_gates", "floor_compiler_run",
 ]
 POST_VERIFY = ["conductor_tick"]  # observer position; required:false (P4 lesson)
 

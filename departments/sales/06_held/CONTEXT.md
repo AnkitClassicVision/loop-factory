@@ -3,11 +3,12 @@
 
 ## Purpose
 
-Implement `SG-HELD` for concept refs: C1, C10.
+Implement `SG-HELD` for concept refs: C1, C6, C10.
 
 ## Node chain
 
 1. `runtime/held_sensor.py`
+2. `runtime/held_confirm_card.py`
 
 ## DONE means
 
@@ -34,6 +35,7 @@ This stage holds the `held` floor. Current values live in `../floors.yaml` (mach
 ## Outputs
 
 - `runtime/held_sensor.py`
+- `runtime/held_confirm_card.py`
 
 ## Verify
 
