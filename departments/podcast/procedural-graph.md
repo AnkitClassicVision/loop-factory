@@ -44,6 +44,7 @@ default until the owner reviews it.
 | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally; ask returns through N6 within the provisional 48-hour SLA | C12, C13, Q11 |
 | N11 | funnel_floor_sensor | Sense | SCRIPT | internal_read / shadow | six charter funnel floors + weekly outreach quota computed from FUNNEL-LEDGER evidence; missing ledger => every floor UNKNOWN (never assumed ok); breach classifies funnel_behind, blind gauge funnel_blind (owner amendment 2026-08-05) | C3, C4, Q3 |
 | N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | daily receipt-gated reconciliation runs before compare/dedup/escalation; missing or invalid receipt halts the chain | C3, Q3 |
+| N10 | expectation_reconcile | Sense | SCRIPT | internal_read / shadow | exit contract 0/2/1 (P0, 2026-08-05): 0 all expectations met; 2 findings verdict — observations recorded (expectation_blind/expectation_delta via N2), daily chain CONTINUES so compare/dedup processes them; 1 crash — node failure, chain stops. The former `\|\| true` silent bypass is removed and pinned by test_daily_failclosed | C3, C4, Q3 |
 | N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
 
 Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
