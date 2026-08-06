@@ -69,6 +69,8 @@ FAILURE_CLASSES = {
     # generic comparison raised on any expectation observation.
     ("expectation", "unknown"): ("expectation_blind", "high"),
     ("expectation", "alarm"): ("expectation_delta", "high"),
+    ("runmanifest", "alarm"): ("runmanifest_missing_steps", "high"),
+    ("runmanifest", "unknown"): ("runmanifest_unverified", "med"),
 }
 
 FAILURE_HINT_CLASSES = {
@@ -200,6 +202,14 @@ MEANINGS = {
         "what_it_means": "A step that declared an expected artifact has not produced it in time — work the process promised is missing.",
         "what_it_needs": "Ops must run the declared heal for each delta or repair the producing step; you only decide if a delta was intentional.",
     },
+    "runmanifest_missing_steps": {
+        "what_it_means": "A daily run declared steps in advance and at least one declared step has no matching completion record — work the run promised did not provably happen.",
+        "what_it_needs": "Ops must rerun or repair the missing step and confirm the roster is current; you decide nothing unless a step should leave the roster.",
+    },
+    "runmanifest_unverified": {
+        "what_it_means": "A daily run declared its steps but the checker could not produce a trustworthy verdict — the run may be fine, but nothing proves it.",
+        "what_it_needs": "Ops must repair the verifier's inputs (the run manifest or the run records) so a verdict can be computed; nothing needed from you.",
+    },
     "receipt_hollow": {
         "what_it_means": "A podcast job created an empty completion record that does not prove the work finished.",
         "what_it_needs": "Ops must rerun or repair the job so it produces a complete record; nothing needed from you unless the job itself should change.",
@@ -220,6 +230,7 @@ QUESTIONS = {
     "publishday": "Which expected publish artifact is missing, and who owns its recovery?",
     "manifest": "Which required guest-manifest fields must be completed before publish?",
     "expectation": "Which declared expectation has no matching artifact, and does its heal run or does the manifest need correcting?",
+    "runmanifest": "Which declared step has no completion record for this run, and is the fix a rerun or a roster correction?",
 }
 
 

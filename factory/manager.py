@@ -276,6 +276,53 @@ def sense_graph_escalations(state_dir) -> dict[str, Any]:
     }
 
 
+def sense_manifest_verdict(state_dir) -> dict[str, Any]:
+    """Read the verdict paired with the newest run manifest, if adopted."""
+    manifest_dir = Path(state_dir) / "run-manifests"
+    empty = {
+        "manifest_verdict_status": "none",
+        "manifest_verdict_counts": {},
+    }
+    if not manifest_dir.is_dir():
+        return empty
+
+    manifests = [
+        path
+        for path in manifest_dir.glob("*.json")
+        if not path.name.endswith(".verdict.json")
+    ]
+    if not manifests:
+        return empty
+
+    manifest = max(manifests, key=lambda path: path.stat().st_mtime)
+    verdict_path = manifest.with_name(f"{manifest.stem}.verdict.json")
+    if not verdict_path.exists():
+        return {
+            "manifest_verdict_status": "absent",
+            "manifest_verdict_counts": {},
+        }
+
+    try:
+        verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+        counts = {
+            key: len(verdict[key])
+            for key in ("missing", "unexpected", "duplicates", "reordered")
+        }
+        status = verdict["status"]
+        if not isinstance(status, str):
+            raise TypeError("verdict status must be a string")
+    except (KeyError, TypeError, ValueError, OSError):
+        return {
+            "manifest_verdict_status": "unknown",
+            "manifest_verdict_counts": {},
+        }
+
+    return {
+        "manifest_verdict_status": status,
+        "manifest_verdict_counts": counts,
+    }
+
+
 def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
                              now: str | datetime | None = None) -> dict:
     """One coordinated resolution for a bridged graph escalation (review B2).
@@ -487,6 +534,31 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
                      "budget ceilings are set but no usage telemetry path is "
                      "configured — pass --budget to the manager invocation",
                      observed=None, setpoint=None)
+        )
+
+    manifest_status = sensed.get("manifest_verdict_status")
+    if manifest_status == "red":
+        counts = sensed.get("manifest_verdict_counts") or None
+        findings.append(
+            _finding(
+                "runmanifest_red",
+                "warn",
+                "the last daily run's declared plan has steps with no "
+                "completion record — see run-manifests verdict",
+                observed=counts,
+                setpoint=None,
+            )
+        )
+    elif manifest_status in {"absent", "unknown"}:
+        findings.append(
+            _finding(
+                "runmanifest_unverified",
+                "warn",
+                "a run manifest exists but no trustworthy verdict does — the "
+                "verifier did not run or could not read it",
+                observed=None,
+                setpoint=None,
+            )
         )
 
     # release drift (hard rule 4: process change = map change + QA). The
@@ -958,6 +1030,7 @@ def run_manager_cycle(
     # escalated/killed graph run must never depend on the worker's telemetry
     # contract to reach a human.
     sensed.update(sense_graph_escalations(state_dir))
+    sensed.update(sense_manifest_verdict(state_dir))
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(

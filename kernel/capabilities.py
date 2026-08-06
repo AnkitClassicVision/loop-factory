@@ -27,6 +27,8 @@ _ALLOWED_ENV = frozenset(
         "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
         "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
         "OE_KERNEL_ONLY", "PLACEHOLDER_MODE",
+        # run identity minted by kernel.run_manifest — benign, never a credential
+        "LOOP_FACTORY_RUN_ID",
     }
 )
 

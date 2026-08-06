@@ -65,6 +65,22 @@ def test_expectation_alarm_maps_to_expectation_delta():
     assert candidates[0]["severity"] == "high"
 
 
+def test_runmanifest_alarm_maps_to_missing_steps():
+    rows = [_observation("runmanifest", "alarm")]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == [
+        "runmanifest_missing_steps"
+    ]
+    assert candidates[0]["severity"] == "high"
+
+
+def test_runmanifest_unknown_maps_to_unverified():
+    rows = [_observation("runmanifest", "unknown")]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == ["runmanifest_unverified"]
+    assert candidates[0]["severity"] == "med"
+
+
 def test_truly_unknown_sensor_status_pair_still_raises():
     with pytest.raises(
         ValueError,

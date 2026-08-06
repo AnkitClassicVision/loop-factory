@@ -156,3 +156,12 @@ def test_expectation_line_has_no_silent_bypass():
         "expectation_reconcile must not be silenced with || true; "
         "exit 2 is a findings verdict handled like dag_supervisor's alarm")
     assert "exp_rc" in text, "expected the rc-capture alarm-verdict pattern"
+
+
+def test_run_manifest_is_minted_before_nodes_and_verified_before_manager():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert text.index("run_manifest mint") < text.index("sense_estate.py")
+    assert "export LOOP_FACTORY_RUN_ID" in text
+    assert "ver_rc=0" in text
+    assert "|| ver_rc=$?" in text
+    assert text.index("run_manifest verify") < text.index("factory/manager.py")

@@ -16,8 +16,6 @@ SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
-mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
-
 append_heal_failure() {
     local fingerprint="$1" stage="$2" exit_code="$3" detail="$4" playbook="${5:-}"
     python3 - "${STATE_DIR}/heal_failures.jsonl" "${fingerprint}" "${playbook}" "${stage}" "${exit_code}" "${detail}" <<'PY'
@@ -115,6 +113,14 @@ if [ "${1:-}" = "--heal-phase-only" ]; then
     exit $?
 fi
 
+mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
+
+# P1: mint the run manifest BEFORE the first node (spec C2). Mint refusal is a
+# hard stop: a run that cannot declare its plan does not run (deny-by-default).
+mint_out="$(PYTHONPATH="${REPO}" python3 -m kernel.run_manifest mint --department "${DEPARTMENT}" --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --trigger daily)"
+LOOP_FACTORY_RUN_ID="$(json_object_field run_id <<<"${mint_out}")"
+export LOOP_FACTORY_RUN_ID
+
 # 1) Watchdog chain (SHADOW). Each node runs through the confinement launcher
 #    (factory/launch.py) so the department holds no credentials, and stays in
 #    shadow. These nodes are authored by a concurrent lane; referenced by path.
@@ -155,6 +161,15 @@ fi
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/compare_charter.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/fingerprint_dedup.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/escalate_outbox.py" --shadow
+
+# The verifier's observation reaches compare on the next daily run; the
+# manager consumes its verdict during this run. Exit 2 is an advisory verdict.
+ver_rc=0
+PYTHONPATH="${REPO}" python3 -m kernel.run_manifest verify --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --run-id "${LOOP_FACTORY_RUN_ID}" || ver_rc=$?
+if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
+    echo "run_manifest verify failed with rc=${ver_rc} (not a verdict)" >&2
+    exit "${ver_rc}"
+fi
 
 # 2) Manager cycle (deterministic; charter is the source of truth).
 python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
