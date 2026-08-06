@@ -40,6 +40,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,6 +54,17 @@ LOGGER = logging.getLogger(__name__)
 KINDS = frozenset({"escalation", "approval"})
 HASH_LIMIT = 200
 TEXT_LIMIT = 800
+# Owner rule after the 2026-08-05 card-polarity incident: Approve is always
+# safe-forward; stop actions must ride Respond/FIX with an explicitly typed word.
+CARD_POLARITY_STOP_VERBS = (
+    "pause|stop|halt|hold|cancel|delete|remove|kill|unschedule|abort|revoke|"
+    "suspend|disable|block|retract|withdraw"
+)
+CARD_POLARITY_MAPPING_RE = re.compile(
+    rf"\bapprove\b\s*(?:=|means\b|:|->|to\b|[—–-])\s*(?:the\s+)?"
+    rf"(?P<verb>{CARD_POLARITY_STOP_VERBS})\b",
+    re.IGNORECASE,
+)
 
 
 class ConfigError(ValueError):
@@ -300,6 +312,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     attempts = 0
     ping_successes = 0
     card_failures = 0
+    polarity_failures = 0
     changed = False
     missing_watch_paths: list[str] = []
 
@@ -348,6 +361,25 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 "department": watch["department"],
                 "kind": watch["kind"],
             }
+            human_text = "\n".join(
+                (
+                    values["title"],
+                    values["body"],
+                    row.get("eli5", "") if isinstance(row.get("eli5"), str) else "",
+                )
+            )
+            polarity_match = CARD_POLARITY_MAPPING_RE.search(human_text)
+            if polarity_match:
+                polarity_failures += 1
+                LOGGER.error(
+                    "card polarity violation for %s line %d: Approve must never mean "
+                    "'%s' — rephrase so Approve is the safe-forward action and the "
+                    "stop rides Respond with a typed word (owner rule 2026-08-05)",
+                    source,
+                    line_index + 1,
+                    polarity_match.group("verb").lower(),
+                )
+                break
             ping_argv = _render(config["ping"], values)
             card_argv = _render(config["card"], values) if config["card_enabled"] else []
             if dry_run:
@@ -419,7 +451,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             ", ".join(missing_watch_paths),
         )
         return 4
-    return 3 if card_failures or (attempts and ping_successes == 0) else 0
+    return 3 if polarity_failures or card_failures or (attempts and ping_successes == 0) else 0
 
 
 def main(argv: list[str] | None = None) -> int:

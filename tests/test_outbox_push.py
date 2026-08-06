@@ -133,6 +133,70 @@ def test_card_failure_leaves_row_unconsumed(tmp_path):
     assert not ledger.exists()
 
 
+def test_approve_mapped_to_pause_is_rejected_without_consuming_row(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "Approve = pause the launch"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+
+    result = _run(_config(tmp_path, watch, ping, card))
+
+    assert result.returncode == 3
+    assert not (tmp_path / "ping.jsonl").exists()
+    assert not (tmp_path / "card.jsonl").exists()
+    assert not (tmp_path / "cursor.json").exists()
+    assert "Approve must never mean 'pause'" in result.stderr
+    assert "owner rule 2026-08-05" in result.stderr
+
+
+def test_real_mixed_case_approve_pause_incident_is_rejected(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(
+        json.dumps({"eli5": "Approve = PAUSE the 10am publish"}) + "\n"
+    )
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+
+    result = _run(_config(tmp_path, watch, ping, card))
+
+    assert result.returncode == 3
+    assert not (tmp_path / "ping.jsonl").exists()
+    assert not (tmp_path / "card.jsonl").exists()
+
+
+def test_stop_verb_not_mapped_to_approve_is_allowed(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(
+        json.dumps(
+            {
+                "eli5": (
+                    "WHAT IT NEEDS: approve the catch-up actions; ops will pause "
+                    "the old timer"
+                )
+            }
+        )
+        + "\n"
+    )
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+
+    result = _run(_config(tmp_path, watch, ping, card))
+
+    assert result.returncode == 0
+    assert len(_calls(tmp_path / "ping.jsonl")) == 1
+    assert len(_calls(tmp_path / "card.jsonl")) == 1
+
+
+def test_approve_to_cancel_is_rejected(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "Approve to cancel the schedule"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+
+    result = _run(_config(tmp_path, watch, ping, card))
+
+    assert result.returncode == 3
+    assert not (tmp_path / "ping.jsonl").exists()
+    assert not (tmp_path / "card.jsonl").exists()
+    assert "Approve must never mean 'cancel'" in result.stderr
+
+
 def test_card_failure_retries_successfully_on_next_tick(tmp_path):
     watch = tmp_path / "outbox.jsonl"
     watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
