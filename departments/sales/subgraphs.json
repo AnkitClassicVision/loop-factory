@@ -30,7 +30,8 @@
     {
      "id": "N1",
      "concept_ref": "C13",
-     "interview_ref": "Q7"
+     "interview_ref": "Q7",
+     "impl": "runtime/intake_sensor.py"
     },
     {
      "id": "N2",
@@ -72,7 +73,8 @@
     {
      "id": "N1",
      "concept_ref": "C3",
-     "interview_ref": "Q4"
+     "interview_ref": "Q4",
+     "impl": "runtime/qualify_scorer.py"
     },
     {
      "id": "N2",
@@ -190,7 +192,8 @@
     {
      "id": "N1",
      "concept_ref": "C3",
-     "interview_ref": "Q4"
+     "interview_ref": "Q4",
+     "impl": "runtime/booked_sensor.py"
     }
    ]
   },
@@ -223,7 +226,8 @@
     {
      "id": "N1",
      "concept_ref": "C1",
-     "interview_ref": "Q1"
+     "interview_ref": "Q1",
+     "impl": "runtime/held_sensor.py"
     },
     {
      "id": "N2",
@@ -262,7 +266,8 @@
     {
      "id": "N1",
      "concept_ref": "C5",
-     "interview_ref": "Q11"
+     "interview_ref": "Q11",
+     "impl": "runtime/sense_gates.py"
     },
     {
      "id": "N2",
@@ -284,6 +289,9 @@
  ],
  "untraced_allowed": {
   "runtime/runtime_node.py": "F0 scaffold template \u2014 replaced by real nodes in F3; kept as the authoring reference",
-  "runtime/sales_daily.sh": "F0 scaffold daily chain \u2014 rewired in F3 when runtime nodes exist; timer never enabled before F4 shadow proof"
+  "runtime/sales_daily.sh": "daily chain orchestration (podcast-pattern); nodes it invokes are the graph impls; timer never enabled before F4 shadow proof + owner GO",
+  "runtime/floor_compiler_run.py": "thin sales twin of the generic floor-compiler wrapper (factory/floor_compiler.py holds the behavior); weekly-gated node in the daily chain",
+  "runtime/conductor_tick.py": "thin sales twin of the shadow conductor wrapper (factory/conductor.py holds the behavior); post-verify observer node",
+  "runtime/run-roster.json": "release-bound run-obligation roster consumed by kernel.run_manifest mint/verify; owner-reviewed data, not behavior \u2014 the behavior lives in the kernel (podcast precedent)"
  }
 }

@@ -20,6 +20,8 @@ def test_hopper_blind_escalation_leads_with_plain_language(tmp_path):
                 "state": "open",
                 "evidence": ["fixture://hopper"],
                 "one_question": technical_question,
+                "what_it_means": "The candidate-specific hopper gauge is blind.",
+                "what_it_needs": "Ops must restore this candidate's source.",
                 "escalated": False,
                 "escalated_at": None,
             }
@@ -35,3 +37,7 @@ def test_hopper_blind_escalation_leads_with_plain_language(tmp_path):
     assert not row["eli5"].startswith("hopper_blind")
     assert row["context"]["one_question"] == technical_question
     assert technical_question not in row["eli5"]
+    assert row["card"]["what_it_means"] == "The candidate-specific hopper gauge is blind."
+    assert row["card"]["what_it_needs"] == "Ops must restore this candidate's source."
+    assert row["card"]["fyi_only"] is True
+    assert escalate_outbox._load_outbox_markers(outbox_path)

@@ -1,35 +1,56 @@
 #!/usr/bin/env bash
 # GATED enable; SHADOW-only; standard loop-factory trigger.
-# Copy to departments/sales/runtime/sales_daily.sh, replace
-# sales and /mnt/d_drive/repos/loop-factory, review the commands, then explicitly enable its
-# systemd timer (templates/systemd/). Never auto-enabled by the factory.
+# Never auto-enabled by the factory. Shadow-only by design: a live flag is
+# never used.
 set -euo pipefail
 
-REPO="/mnt/d_drive/repos/loop-factory"
+REPO="${SALES_REPO_ROOT:-/mnt/d_drive/repos/loop-factory}"
 DEPARTMENT="sales"
-STATE_DIR="${REPO}/departments/${DEPARTMENT}/state"
+# Sensors import factory.* as a package; PYTHONPATH is on the kernel env
+# allowlist, so the confined launcher passes it through.
+export PYTHONPATH="${REPO}"
+STATE_DIR="${SALES_STATE_DIR:-${REPO}/departments/${DEPARTMENT}/state}"
+SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
+json_object_field() {
+    local field="$1"
+    python3 -c 'import json, sys; row=json.load(sys.stdin); assert isinstance(row, dict); value=row[sys.argv[1]]; assert isinstance(value, str) and value; print(value)' "${field}"
+}
+
 mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
 
-# 1) Pull adapter (department-specific, read-only): write the normalized batch
-#    the worker loop expects. Replace with your department's pull node.
-# python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/pull_adapter.py" --output "${STATE_DIR}/batch.jsonl"
+# P1: mint the run manifest BEFORE the first node. Mint refusal is a hard
+# stop: a run that cannot declare its plan does not run (deny-by-default).
+mint_out="$(PYTHONPATH="${REPO}" python3 -m kernel.run_manifest mint --department "${DEPARTMENT}" --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --trigger daily)"
+LOOP_FACTORY_RUN_ID="$(json_object_field run_id <<<"${mint_out}")"
+export LOOP_FACTORY_RUN_ID
 
-# 2) Worker loop (SHADOW: drafts and queues, never sends). Launched through the
-#    confinement launcher so the department holds no credentials.
-# python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/run_loop.py" --state-dir "${STATE_DIR}" --shadow
+# Sales proving-slice chain (SHADOW). Each node runs through the confinement
+# launcher so the department holds no credentials.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/intake_sensor.py" --shadow --state-dir "${STATE_DIR}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/qualify_scorer.py" --shadow --state-dir "${STATE_DIR}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/booked_sensor.py" --shadow --state-dir "${STATE_DIR}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/held_sensor.py" --shadow --state-dir "${STATE_DIR}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/sense_gates.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/floor_compiler_run.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 
-# 3) Manager cycle (deterministic; charter is the source of truth).
+
+# The verifier's observation reaches the manager during this run. Exit 2 is
+# an advisory verdict; every other nonzero result blocks the chain.
+ver_rc=0
+PYTHONPATH="${REPO}" python3 -m kernel.run_manifest verify --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --run-id "${LOOP_FACTORY_RUN_ID}" || ver_rc=$?
+if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
+    echo "run_manifest verify failed with rc=${ver_rc} (not a verdict)" >&2
+    exit "${ver_rc}"
+fi
+
+# Manager cycle (deterministic; charter is the source of truth).
 python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
 
-# 4) Publish pending approvals to the human-in-the-loop outbox.
+# Publish pending approvals to the human-in-the-loop outbox.
 python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
 
-# 5) Regenerate the estate feed, estate board, and this department's board.
-python3 -m factory.timersense --out "${REPO}/estate/state/timers.json" --tolerate-missing
-python3 -m factory.boardfeed --repo-root "${REPO}"
-python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
-# Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
-# Legacy department flag replaced by tabs: --department "${DEPARTMENT}"
+# Shadow conductor observes last (post-verify: required:false in the roster).
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"

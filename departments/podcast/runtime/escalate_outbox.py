@@ -121,6 +121,26 @@ def _load_outbox_markers(
                 and incident_state == "department_defect"
             )
         )
+        card = packet.get("card")
+        card_valid = card is None or (
+            isinstance(card, dict)
+            and isinstance(card.get("what_it_means"), str)
+            and isinstance(card.get("what_it_needs"), str)
+            and (
+                card.get("fyi_only") is True
+                and "approvable_actions" not in card
+                or (
+                    "fyi_only" not in card
+                    and isinstance(card.get("approvable_actions"), list)
+                    and all(
+                        isinstance(action, dict)
+                        and set(action) == {"action", "effect", "reply"}
+                        and all(isinstance(action[key], str) for key in action)
+                        for action in card["approvable_actions"]
+                    )
+                )
+            )
+        )
         structurally_valid = (
             isinstance(fingerprint, str)
             and _FINGERPRINT.fullmatch(fingerprint) is not None
@@ -135,6 +155,7 @@ def _load_outbox_markers(
             and isinstance(timestamp, str)
             and bool(timestamp)
             and packet.get("eli5") == _eli5(failure_class)
+            and card_valid
         )
         if not structurally_valid:
             _outbox_warning(path, line_number, "packet does not match podcast escalation schema")
@@ -185,6 +206,11 @@ def escalate_new_incidents(
                 incident.get("one_question", "What owner decision is required?")
             )
             issue = f"{incident.get('failure_class')}: {question}"
+            failure_class = str(incident.get("failure_class"))
+            fallback_meaning, fallback_needs = _plain_copy(failure_class)
+            meaning = str(incident.get("what_it_means") or fallback_meaning)
+            needs = str(incident.get("what_it_needs") or fallback_needs)
+            ops_repair = "ops" in needs.lower()
             durable_key = (fingerprint, marker)
 
             if durable_key in durable_markers:
@@ -207,8 +233,19 @@ def escalate_new_incidents(
                     "evidence": evidence,
                     "one_question": question,
                 },
+                meaning=meaning,
+                needs=needs,
+                **(
+                    {"fyi_only": True}
+                    if ops_repair
+                    else {"actions": [{
+                        "action": question,
+                        "effect": "the podcast owner decision is applied to this incident",
+                        "reply": f"approve podcast-{fingerprint}",
+                    }]}
+                ),
             )
-            _replace_latest_eli5(outbox_path, _eli5(str(incident.get("failure_class"))))
+            _replace_latest_eli5(outbox_path, _eli5(failure_class))
             durable_markers[durable_key] = timestamp
             incident[escalated_field] = True
             incident[escalated_at_field] = timestamp

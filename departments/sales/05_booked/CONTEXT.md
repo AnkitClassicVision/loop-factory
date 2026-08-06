@@ -7,7 +7,7 @@ Implement `SG-BOOKED` for concept refs: C3.
 
 ## Node chain
 
-_No implementation nodes declared._
+1. `runtime/booked_sensor.py`
 
 ## DONE means
 
@@ -32,7 +32,7 @@ This stage holds the `booked` floor. Current values live in `../floors.yaml` (ma
 
 ## Outputs
 
-- No implementation outputs declared
+- `runtime/booked_sensor.py`
 
 ## Verify
 

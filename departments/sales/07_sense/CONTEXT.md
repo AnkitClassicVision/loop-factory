@@ -7,7 +7,7 @@ Implement `SG-SENSE` for concept refs: C4, C5, C6, C8.
 
 ## Node chain
 
-_No implementation nodes declared._
+1. `runtime/sense_gates.py`
 
 ## DONE means
 
@@ -29,7 +29,7 @@ Receipt: daily sense observations + run record bound to the run manifest
 
 ## Outputs
 
-- No implementation outputs declared
+- `runtime/sense_gates.py`
 
 ## Verify
 

@@ -1122,7 +1122,48 @@ def main() -> None:
         spec.loader.exec_module(hil)
 
         def escalate_fn(issue, context=None):  # noqa: E306
-            hil.escalate(args.department, issue, args.outbox, context=context)
+            context = context or {}
+            code = str(context.get("finding") or "unknown")
+            detail = issue.split(": ", 1)[1] if ": " in issue else issue
+            if code == "budget_telemetry_missing":
+                card = {
+                    "meaning": "Budget ceilings are set but no usage data exists, so spend cannot be verified",
+                    "needs": "Wire the telemetry producer or confirm the path",
+                    "actions": [{
+                        "action": "Acknowledge until the P-next producer lands",
+                        "effect": "card stays parked, re-raised weekly",
+                        "reply": "approve ack-budget-telemetry",
+                    }],
+                }
+            elif code.startswith("budget_near:"):
+                card = {
+                    "meaning": detail,
+                    "needs": "Approve a spend pause or confirm continued operation",
+                    "actions": [{
+                        "action": "Pause spend",
+                        "effect": "new spend pauses pending owner review",
+                        "reply": "approve pause-spend",
+                    }],
+                }
+            elif code == "runmanifest_red":
+                card = {
+                    "meaning": detail,
+                    "needs": "Approve a rerun investigation",
+                    "actions": [{
+                        "action": "Rerun investigation",
+                        "effect": "ops investigates and reruns the unproven steps",
+                        "reply": "approve rerun-investigation",
+                    }],
+                }
+            else:
+                card = {
+                    "meaning": detail,
+                    "needs": "Ops review",
+                    "fyi_only": True,
+                }
+            hil.escalate(
+                args.department, issue, args.outbox, context=context, **card
+            )
 
     # dept_dir passes unconditionally: a CLI invocation whose department dir
     # cannot be resolved must surface drift_check_failed, never silently take

@@ -7,7 +7,7 @@ Implement `SG-HELD` for concept refs: C1, C10.
 
 ## Node chain
 
-_No implementation nodes declared._
+1. `runtime/held_sensor.py`
 
 ## DONE means
 
@@ -33,7 +33,7 @@ This stage holds the `held` floor. Current values live in `../floors.yaml` (mach
 
 ## Outputs
 
-- No implementation outputs declared
+- `runtime/held_sensor.py`
 
 ## Verify
 

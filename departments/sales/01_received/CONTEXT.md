@@ -7,7 +7,7 @@ Implement `SG-RECEIVED` for concept refs: C2, C10, C13.
 
 ## Node chain
 
-_No implementation nodes declared._
+1. `runtime/intake_sensor.py`
 
 ## DONE means
 
@@ -32,7 +32,7 @@ This stage holds the `received` floor. Current values live in `../floors.yaml` (
 
 ## Outputs
 
-- No implementation outputs declared
+- `runtime/intake_sensor.py`
 
 ## Verify
 

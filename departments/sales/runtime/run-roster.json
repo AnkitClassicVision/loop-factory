@@ -1,0 +1,42 @@
+{
+  "schema": "run-roster",
+  "rev": 1,
+  "department": "sales",
+  "nodes": [
+    {
+      "ordinal": 1,
+      "node": "intake_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 2,
+      "node": "qualify_scorer",
+      "required": true
+    },
+    {
+      "ordinal": 3,
+      "node": "booked_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 4,
+      "node": "held_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 5,
+      "node": "sense_gates",
+      "required": true
+    },
+    {
+      "ordinal": 6,
+      "node": "floor_compiler_run",
+      "required": true
+    },
+    {
+      "ordinal": 7,
+      "node": "conductor_tick",
+      "required": false
+    }
+  ]
+}

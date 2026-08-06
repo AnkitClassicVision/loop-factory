@@ -260,6 +260,16 @@ def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, An
             "observed_at": report["observed_at"],
             "max_age_seconds": report["max_age_seconds"],
         },
+        meaning=(
+            "The estate watchdog itself went quiet or a conductor heartbeat "
+            "is stale, so automated supervision cannot be trusted"
+        ),
+        needs="Inspect the stale heartbeat and restart the affected watchdog or conductor",
+        actions=[{
+            "action": "Inspect and restart",
+            "effect": "inspect the stale heartbeat and restart the affected watchdog or conductor",
+            "reply": "approve inspect-restart",
+        }],
     )
 
 

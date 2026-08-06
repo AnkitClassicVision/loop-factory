@@ -7,7 +7,7 @@ Implement `SG-QUALIFIED` for concept refs: C3, C10.
 
 ## Node chain
 
-_No implementation nodes declared._
+1. `runtime/qualify_scorer.py`
 
 ## DONE means
 
@@ -32,7 +32,7 @@ This stage holds the `qualified` floor. Current values live in `../floors.yaml` 
 
 ## Outputs
 
-- No implementation outputs declared
+- `runtime/qualify_scorer.py`
 
 ## Verify
 
