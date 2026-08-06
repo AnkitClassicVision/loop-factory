@@ -17,6 +17,7 @@ Implement `SG-WATCHDOG` for concept refs: C1, C3, C4, C12, C13, C16.
 8. `runtime/record.py`
 9. `runtime/expectation_reconcile.py`
 10. `runtime/floor_compiler_run.py`
+11. `runtime/conductor_tick.py`
 
 ## Inputs
 
@@ -41,6 +42,7 @@ Implement `SG-WATCHDOG` for concept refs: C1, C3, C4, C12, C13, C16.
 - `runtime/record.py`
 - `runtime/expectation_reconcile.py`
 - `runtime/floor_compiler_run.py`
+- `runtime/conductor_tick.py`
 
 ## Verify
 

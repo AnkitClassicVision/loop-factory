@@ -13,9 +13,24 @@ def _roster_nodes():
 
 
 def _daily_chain_nodes():
+    # Scan from mint to end-of-file: the conductor tick legitimately runs
+    # AFTER the manager/boards (observer position). Nodes after the
+    # run-manifest verify step must be required:false in the roster — the
+    # verifier would otherwise mark them missing every day.
     text = SCRIPT.read_text(encoding="utf-8")
-    chain = text[text.index("run_manifest mint") : text.index("factory/manager.py")]
+    chain = text[text.index("run_manifest mint"):]
     return re.findall(r"runtime/([a-z_]+)\.py", chain)
+
+
+def test_nodes_invoked_after_verify_are_not_required():
+    text = SCRIPT.read_text(encoding="utf-8")
+    tail = text[text.index("run_manifest verify"):]
+    tail_nodes = set(re.findall(r"runtime/([a-z_]+)\.py", tail))
+    for entry in _roster_nodes():
+        if entry["node"] in tail_nodes:
+            assert entry["required"] is False, (
+                f"{entry['node']!r} runs after the verify step; required:true "
+                "would make every verdict red")
 
 
 def test_every_required_roster_node_is_invoked_by_the_daily_chain():

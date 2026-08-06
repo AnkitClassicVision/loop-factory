@@ -174,3 +174,14 @@ def test_run_manifest_is_minted_before_nodes_and_verified_before_manager():
     assert "ver_rc=0" in text
     assert "|| ver_rc=$?" in text
     assert text.index("run_manifest verify") < text.index("factory/manager.py")
+
+
+def test_conductor_tick_is_the_last_runtime_node_invocation():
+    runtime_invocations = [
+        line
+        for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+        if "factory/launch.py" in line and "/runtime/" in line
+    ]
+
+    assert runtime_invocations
+    assert "runtime/conductor_tick.py" in runtime_invocations[-1]

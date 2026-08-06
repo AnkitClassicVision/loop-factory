@@ -3,18 +3,80 @@
   "rev": 1,
   "department": "podcast",
   "nodes": [
-    {"ordinal": 1, "node": "sense_estate", "required": true},
-    {"ordinal": 2, "node": "pipeline_sensor", "required": true},
-    {"ordinal": 3, "node": "publish_verifier", "required": true},
-    {"ordinal": 4, "node": "manifest_sensor", "required": true},
-    {"ordinal": 5, "node": "hopper_sensor", "required": true},
-    {"ordinal": 6, "node": "funnel_floor_sensor", "required": true},
-    {"ordinal": 7, "node": "floor_compiler_run", "required": true},
-    {"ordinal": 8, "node": "expectation_reconcile", "required": true},
-    {"ordinal": 9, "node": "comms_reconcile_sensor", "required": true},
-    {"ordinal": 10, "node": "dag_supervisor", "required": true},
-    {"ordinal": 11, "node": "compare_charter", "required": true},
-    {"ordinal": 12, "node": "fingerprint_dedup", "required": true},
-    {"ordinal": 13, "node": "escalate_outbox", "required": true}
+    {
+      "ordinal": 1,
+      "node": "sense_estate",
+      "required": true
+    },
+    {
+      "ordinal": 2,
+      "node": "pipeline_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 3,
+      "node": "publish_verifier",
+      "required": true
+    },
+    {
+      "ordinal": 4,
+      "node": "manifest_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 5,
+      "node": "hopper_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 6,
+      "node": "funnel_floor_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 7,
+      "node": "floor_compiler_run",
+      "required": true
+    },
+    {
+      "ordinal": 8,
+      "node": "expectation_reconcile",
+      "required": true
+    },
+    {
+      "ordinal": 9,
+      "node": "comms_reconcile_sensor",
+      "required": true
+    },
+    {
+      "ordinal": 10,
+      "node": "dag_supervisor",
+      "required": true
+    },
+    {
+      "ordinal": 11,
+      "node": "compare_charter",
+      "required": true
+    },
+    {
+      "ordinal": 12,
+      "node": "fingerprint_dedup",
+      "required": true
+    },
+    {
+      "ordinal": 13,
+      "node": "escalate_outbox",
+      "required": true
+    },
+    {
+      "ordinal": 14,
+      "node": "rotate_observations",
+      "required": false
+    },
+    {
+      "ordinal": 15,
+      "node": "conductor_tick",
+      "required": false
+    }
   ]
 }
