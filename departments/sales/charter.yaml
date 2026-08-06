@@ -1,0 +1,90 @@
+# sales department charter — TEMPLATE (F0 scaffold)
+#
+# F1 INTENT LOCK REQUIRED (human step, owner): the fields below are placeholders.
+# Standing this department means running the intent interview
+# (interview/INTERVIEW.md) and replacing every TODO with the department's real
+# intent. Nothing here is fabricated for you — the factory captures the owner's
+# judgment, it does not guess it.
+#
+# This charter is a GOVERNANCE FILE: human-owned, READ-ONLY to the department at
+# every autonomy level. Heals and managers may never edit it.
+department: sales
+version: v0.1
+status: F0_scaffold_awaiting_intent_lock
+owner: Ankit
+mission: TODO_F1
+
+autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
+
+setpoints:
+  operational: {metric: TODO_define_in_F1, target: 0}
+  outcome: {metric: TODO_define_in_F1, target: TBD_MEASURE_IN_SHADOW}
+  # TODO_F1: declare each board objective after the owner locks its meaning.
+  # objectives:
+  #   example_objective:
+  #     label: TODO_F1
+  #     setpoint: TODO_F1
+  #     minimum: TODO_F1
+  #     target: TODO_F1
+  #     unit: TODO_F1
+
+# Deterministic manager thresholds. The manager loads THESE (charter is the
+# source of truth); factory defaults apply only when a key is absent.
+thresholds:
+  weekly_touch_ceiling: 300
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 50
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+budget:
+  engine_policy: subscription_oauth_only   # owner decision 2026-07-23: OAuth/subscription
+  api_spend_rule: forbidden_escalate_instead  # plan lanes only; API spend escalates
+  weekly_ceilings:
+    model_calls: 900
+    dollars: 0
+    worker_minutes: 1200
+
+execution:  # owner decision (Ankit, 2026-07-23) — factory-wide defaults
+  headless: true                 # steps never depend on an interactive session
+  step_receipts: required        # every step proves completion with an executed
+                                 # artifact/output/receipt BEFORE the next step;
+                                 # missing receipt => manager + heal ladder fix,
+                                 # never advancement
+
+# Safety floors inherited from the factory standard; MUST NOT be weakened by a
+# heal. Fill department-specific funnels/subgraphs during F2 after intent lock.
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+
+escalation:
+  default: fully_automated_with_escalation   # run without a human until a gate or breach
+  human_gates:      # action classes that ALWAYS require a human decision
+    - external_send
+    - crm_write
+    - publish
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+
+kill_if: []          # TODO F1: kill (not pause) conditions in the owner's words
+
+funnels:
+  entries: []        # TODO F1/F2: governed subgraphs (see templates/subgraphs.json.tmpl)
+
+memory:
+  local: departments/sales/state
+  backends: []       # optional durable backends (s3, open_brain); local is always on

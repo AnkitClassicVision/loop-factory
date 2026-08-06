@@ -1,0 +1,9 @@
+entries:
+  - id: sales
+    owner: "Ankit"
+    surface: "department"
+    schedule: "TODO_F1"
+    health_check: "test -f departments/sales/state/STATE.json"
+    heartbeat_path: "departments/sales/state/heartbeats.jsonl"
+    state_dir: "departments/sales/state"
+    kill_switch: "systemctl --user disable --now sales-loop.timer"
