@@ -146,3 +146,13 @@ def test_success_and_recorded_refusal_keep_happy_path_without_failure_receipt(tm
     refusal = json.loads((state / "heals.jsonl").read_text().strip())
     assert refusal["result"] == "refused"
     assert failures == []
+
+
+def test_expectation_line_has_no_silent_bypass():
+    text = SCRIPT.read_text(encoding="utf-8")
+    expectation_lines = [l for l in text.splitlines() if "expectation_reconcile.py" in l]
+    assert expectation_lines, "expectation_reconcile invocation missing from daily chain"
+    assert not any("|| true" in l for l in expectation_lines), (
+        "expectation_reconcile must not be silenced with || true; "
+        "exit 2 is a findings verdict handled like dag_supervisor's alarm")
+    assert "exp_rc" in text, "expected the rc-capture alarm-verdict pattern"

@@ -63,6 +63,12 @@ FAILURE_CLASSES = {
     ("manifest", "fail"): ("manifest_incomplete", "high"),
     ("manifest", "warn"): ("manifest_gap", "med"),
     ("manifest", "unknown"): ("manifest_unknown", "med"),
+    # expectation_reconcile fails closed: no manifests, unreadable snapshot,
+    # or reconcile error is blindness; recorded deltas are contract gaps.
+    # Added in P0 when the || true bypass was removed — before this entry the
+    # generic comparison raised on any expectation observation.
+    ("expectation", "unknown"): ("expectation_blind", "high"),
+    ("expectation", "alarm"): ("expectation_delta", "high"),
 }
 
 FAILURE_HINT_CLASSES = {
@@ -186,6 +192,14 @@ MEANINGS = {
         "what_it_means": "The system cannot confirm whether all required guest details are complete.",
         "what_it_needs": "Ops must restore the guest-details check; nothing needed from you unless the podcast team reports missing information.",
     },
+    "expectation_blind": {
+        "what_it_means": "The checker that compares declared step expectations against reality has nothing to check — its manifests or its ground-truth snapshot are missing or unreadable.",
+        "what_it_needs": "Ops must restore the expectation manifests or the snapshot feed; nothing needed from you unless the expectation contract itself should change.",
+    },
+    "expectation_delta": {
+        "what_it_means": "A step that declared an expected artifact has not produced it in time — work the process promised is missing.",
+        "what_it_needs": "Ops must run the declared heal for each delta or repair the producing step; you only decide if a delta was intentional.",
+    },
     "receipt_hollow": {
         "what_it_means": "A podcast job created an empty completion record that does not prove the work finished.",
         "what_it_needs": "Ops must rerun or repair the job so it produces a complete record; nothing needed from you unless the job itself should change.",
@@ -205,6 +219,7 @@ QUESTIONS = {
     "pipeline": "Which unresolved or missing guest evidence is keeping the pipeline below target?",
     "publishday": "Which expected publish artifact is missing, and who owns its recovery?",
     "manifest": "Which required guest-manifest fields must be completed before publish?",
+    "expectation": "Which declared expectation has no matching artifact, and does its heal run or does the manifest need correcting?",
 }
 
 

@@ -39,6 +39,32 @@ def test_funnel_alarm_classifies_as_high_severity_candidate():
     )
 
 
+def test_expectation_unknown_maps_to_expectation_blind():
+    rows = [{
+        "ts": "2026-08-05T12:00:00+00:00", "sensor": "expectation",
+        "subject": "expectation-none", "status": "unknown",
+        "evidence": "/tmp/manifests",
+        "detail": "no expectation manifests found (fail closed)", "metrics": {},
+    }]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == ["expectation_blind"]
+    assert candidates[0]["severity"] == "high"
+    assert candidates[0]["what_it_means"]
+
+
+def test_expectation_alarm_maps_to_expectation_delta():
+    rows = [{
+        "ts": "2026-08-05T12:00:00+00:00", "sensor": "expectation",
+        "subject": "expectation-daily", "status": "alarm",
+        "evidence": "/tmp/receipt.json",
+        "detail": "2 expectation delta(s)",
+        "metrics": {"counts": {"ok": 1}, "deltas": []},
+    }]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == ["expectation_delta"]
+    assert candidates[0]["severity"] == "high"
+
+
 def test_truly_unknown_sensor_status_pair_still_raises():
     with pytest.raises(
         ValueError,

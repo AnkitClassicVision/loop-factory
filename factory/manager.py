@@ -188,6 +188,12 @@ def sense(
 
     budget_used: dict[str, Any] = {}
     budget_unreadable = False
+    # Red-team operator catch: a configured ceiling with no usage feed must
+    # never read as healthy zero spend. Distinguish the three honest states:
+    # unconfigured (no path wired), missing (path wired, file absent), and
+    # unreadable (file present, corrupt).
+    budget_unconfigured = budget_path is None
+    budget_missing = False
     if budget_path and Path(budget_path).exists():
         try:
             budget_used = json.loads(Path(budget_path).read_text(encoding="utf-8"))
@@ -196,6 +202,8 @@ def sense(
             # breach, never silently read as a healthy zero-spend baseline.
             budget_used = {}
             budget_unreadable = True
+    elif budget_path:
+        budget_missing = True
 
     return {
         "now": now_dt.isoformat(),
@@ -211,6 +219,8 @@ def sense(
         "conversions": conversions,
         "budget_used": budget_used,
         "budget_unreadable": budget_unreadable,
+        "budget_telemetry_missing": budget_missing,
+        "budget_telemetry_unconfigured": budget_unconfigured,
     }
 
 
@@ -455,6 +465,27 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         findings.append(
             _finding("budget_telemetry_unreadable", "breach",
                      "budget telemetry exists but could not be parsed — spend is unverifiable",
+                     observed=None, setpoint=None)
+        )
+
+    # breach: a ceiling exists but its usage feed is wired and absent —
+    # spend is unverifiable, which is a guard failure, not a zero.
+    if t["budget_ceilings"] and sensed.get("budget_telemetry_missing"):
+        findings.append(
+            _finding("budget_telemetry_missing", "breach",
+                     "budget ceilings are set but the usage telemetry file is "
+                     "absent — spend is unverifiable (wire the producer or fix "
+                     "the path)",
+                     observed=None, setpoint=None)
+        )
+    # warn: ceilings exist and no telemetry path is wired at all — visible
+    # pressure without an estate-wide alarm storm for departments that have
+    # not adopted the budget feed yet.
+    if t["budget_ceilings"] and sensed.get("budget_telemetry_unconfigured"):
+        findings.append(
+            _finding("budget_telemetry_unconfigured", "warn",
+                     "budget ceilings are set but no usage telemetry path is "
+                     "configured — pass --budget to the manager invocation",
                      observed=None, setpoint=None)
         )
 
@@ -976,6 +1007,10 @@ def main() -> None:
     parser.add_argument("--autonomy-state", default=None,
                         help="override; the charter is the source of truth when present")
     parser.add_argument("--outbox", default=None, help="human-in-the-loop outbox to escalate into")
+    parser.add_argument("--budget", default=None,
+                        help="usage telemetry JSON ({kind: used}) compared "
+                             "against the charter's weekly ceilings; a wired "
+                             "path whose file is absent is a breach")
     parser.add_argument("--resolve-graph-run", default=None, metavar="RUN_ID",
                         help="record a human resolution for a bridged graph "
                              "escalation (clears BOTH ledgers, coordinated) "
@@ -1023,6 +1058,7 @@ def main() -> None:
         state_dir, autonomy_state=autonomy, thresholds=thresholds,
         escalate_fn=escalate_fn, department=args.department,
         dept_dir=root / "departments" / args.department,
+        budget_path=args.budget,
     )
     print(json.dumps({
         "department": args.department,

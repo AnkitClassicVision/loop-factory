@@ -9,6 +9,7 @@ import pytest
 
 from departments.podcast.runtime import escalate_outbox
 from departments.podcast.runtime import fingerprint_dedup
+from departments.podcast.runtime import manifest_sensor
 from departments.podcast.runtime import record
 
 
@@ -309,3 +310,17 @@ def test_forged_foreign_outbox_marker_does_not_suppress_escalation(
     assert rows[-1]["department"] == "podcast"
     assert rows[-1]["context"]["fingerprint"] == key
     assert "ignored malformed escalation outbox row 2" in capsys.readouterr().err
+
+
+def test_manifest_sensor_emit_failure_propagates(tmp_path, monkeypatch):
+    """A node whose runs-v2 append fails must FAIL the node (runbook rule:
+    a step without its receipt cannot advance). Pinned during P0."""
+    monkeypatch.setattr(manifest_sensor, "_run", lambda *a, **k: [])
+
+    def boom(*args, **kwargs):
+        raise OSError("simulated runs-v2 append failure")
+
+    monkeypatch.setattr(manifest_sensor.runrecord, "emit_record", boom)
+
+    with pytest.raises(OSError, match="simulated runs-v2 append failure"):
+        manifest_sensor.run(tmp_path, tmp_path)
