@@ -45,6 +45,8 @@ FAILURE_CLASSES = {
     ("hopper", "unknown"): ("hopper_blind", "high"),
     ("funnel", "alarm"): ("funnel_behind", "high"),
     ("funnel", "unknown"): ("funnel_blind", "med"),
+    ("floors", "alarm"): ("floors_attention", "med"),
+    ("floors", "unknown"): ("floors_unconfigured", "med"),
     ("ledger", "fail"): ("ledger_failed", "high"),
     ("receipt", "unknown"): ("receipt_unknown", "med"),
     ("log", "unknown"): ("log_unknown", "med"),
@@ -121,6 +123,14 @@ MEANINGS = {
     "funnel_blind": {
         "what_it_means": "The daily guest pipeline count has no trustworthy information to read, so it cannot tell whether future episodes are on track.",
         "what_it_needs": "Ops must restore the guest and booking records; nothing needed from you unless the tracking process should change.",
+    },
+    "floors_attention": {
+        "what_it_means": "The funnel floor compiler either moved a floor (working as designed, shown for your awareness) or froze because its input data cannot be trusted — the detail says which.",
+        "what_it_needs": "Ops reviews the compiler detail; you act only if a floor move looks wrong or a freeze persists.",
+    },
+    "floors_unconfigured": {
+        "what_it_means": "No funnel goals are declared in the charter, so no floors are being derived; the hand-set charter floors still stand.",
+        "what_it_needs": "Nothing, until you choose to declare funnel end goals in the charter.",
     },
     "ledger_failed": {
         "what_it_means": "The record of podcast message sends shows a failure.",
@@ -221,6 +231,7 @@ QUESTIONS = {
     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
     "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
     "funnel": "Which guest pipeline number missed its line, and what catch-up action will restore it?",
+    "floors": "Did a floor move for a data-backed reason, or is the compiler frozen or unconfigured, and why?",
     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
     "receipt": "What blocked this unit from producing a fresh execution receipt?",
     "log": "Which versioned repair playbook should handle this logged failure?",

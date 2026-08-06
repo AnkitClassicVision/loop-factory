@@ -81,6 +81,20 @@ def test_runmanifest_unknown_maps_to_unverified():
     assert candidates[0]["severity"] == "med"
 
 
+def test_floors_alarm_maps_to_floors_attention():
+    rows = [_observation("floors", "alarm")]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == ["floors_attention"]
+    assert candidates[0]["severity"] == "med"
+
+
+def test_floors_unknown_maps_to_floors_unconfigured():
+    rows = [_observation("floors", "unknown")]
+    candidates = compare_charter.compare_observations(rows, {})
+    assert [c["failure_class"] for c in candidates] == ["floors_unconfigured"]
+    assert candidates[0]["severity"] == "med"
+
+
 def test_truly_unknown_sensor_status_pair_still_raises():
     with pytest.raises(
         ValueError,

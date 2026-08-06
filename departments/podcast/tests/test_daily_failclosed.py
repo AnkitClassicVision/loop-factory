@@ -158,6 +158,15 @@ def test_expectation_line_has_no_silent_bypass():
     assert "exp_rc" in text, "expected the rc-capture alarm-verdict pattern"
 
 
+def test_floor_compiler_runs_between_floor_sensor_and_expectation_reconcile():
+    text = SCRIPT.read_text(encoding="utf-8")
+    funnel_index = text.index("runtime/funnel_floor_sensor.py")
+    compiler_index = text.index("runtime/floor_compiler_run.py")
+    expectation_index = text.index("runtime/expectation_reconcile.py")
+
+    assert funnel_index < compiler_index < expectation_index
+
+
 def test_run_manifest_is_minted_before_nodes_and_verified_before_manager():
     text = SCRIPT.read_text(encoding="utf-8")
     assert text.index("run_manifest mint") < text.index("sense_estate.py")
