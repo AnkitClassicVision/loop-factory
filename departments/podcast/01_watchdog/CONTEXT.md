@@ -19,6 +19,13 @@ Implement `SG-WATCHDOG` for concept refs: C1, C3, C4, C12, C13, C16.
 10. `runtime/floor_compiler_run.py`
 11. `runtime/conductor_tick.py`
 
+## DONE means
+
+- every estate unit in the charter inventory was sensed this run (a missing unit is a silent-gap FAIL)
+- every non-ok observation classified through the finite transition table and deduplicated to one open thread per fingerprint
+- escalation cards carry the one question + evidence + fingerprint, delivered_count stays 0 in shadow
+Receipt: observations.jsonl rows + escalation outbox rows + run record
+
 ## Inputs
 
 ### L3

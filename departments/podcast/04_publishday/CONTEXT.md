@@ -9,6 +9,11 @@ Implement `SG-PUBLISHDAY` for concept refs: C1, C3, C10, C16.
 
 1. `runtime/publish_verifier.py`
 
+## DONE means
+
+- publish-day artifacts verified by 10:30 ET or an exact missing-proof block recorded
+Receipt: publish verification observation + run record
+
 ## Inputs
 
 ### L3

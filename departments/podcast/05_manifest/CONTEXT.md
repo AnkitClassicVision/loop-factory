@@ -9,6 +9,12 @@ Implement `SG-MANIFEST` for concept refs: C6, C7, C10, C15.
 
 1. `runtime/manifest_sensor.py`
 
+## DONE means
+
+- every guest/episode manifest checked for completeness against the declared expectation manifests
+- every gap became an expectation delta with its declared heal
+Receipt: expectation receipts + observations + run record
+
 ## Inputs
 
 ### L3

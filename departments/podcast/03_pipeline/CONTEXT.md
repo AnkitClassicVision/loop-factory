@@ -9,6 +9,12 @@ Implement `SG-PIPELINE` for concept refs: C1, C3, C4, C15.
 
 1. `runtime/pipeline_sensor.py`
 
+## DONE means
+
+- guest pipeline counts measured from FUNNEL-LEDGER evidence, never from stage labels
+- every floor breach or blind gauge became an observation the compare chain processed
+Receipt: pipeline/funnel observations + run record
+
 ## Inputs
 
 ### L3

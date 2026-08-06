@@ -70,7 +70,15 @@
      "id": "N14",
      "impl": "runtime/conductor_tick.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every estate unit in the charter inventory was sensed this run (a missing unit is a silent-gap FAIL)",
+     "every non-ok observation classified through the finite transition table and deduplicated to one open thread per fingerprint",
+     "escalation cards carry the one question + evidence + fingerprint, delivered_count stays 0 in shadow"
+    ],
+    "receipt": "observations.jsonl rows + escalation outbox rows + run record"
+   }
   },
   {
    "id": "SG-DAG-SUPERVISION",
@@ -96,7 +104,14 @@
      "id": "N1",
      "impl": "runtime/dag_supervisor.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "the pipeline's hashed DAG projection validated fresh (stale or missing projection is an alarm, never a skip)",
+     "every silent skip, forged skip artifact, or hash mismatch became a dag_receipt_violation incident"
+    ],
+    "receipt": "dag-projection validation observation + run record"
+   }
   },
   {
    "id": "SG-PIPELINE",
@@ -125,7 +140,14 @@
      "impl": "runtime/pipeline_sensor.py",
      "execution": "daily_shared_chain_before_other_sensors_and_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "guest pipeline counts measured from FUNNEL-LEDGER evidence, never from stage labels",
+     "every floor breach or blind gauge became an observation the compare chain processed"
+    ],
+    "receipt": "pipeline/funnel observations + run record"
+   }
   },
   {
    "id": "SG-PUBLISHDAY",
@@ -151,7 +173,13 @@
      "impl": "runtime/publish_verifier.py",
      "execution": "daily_shared_chain_before_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "publish-day artifacts verified by 10:30 ET or an exact missing-proof block recorded"
+    ],
+    "receipt": "publish verification observation + run record"
+   }
   },
   {
    "id": "SG-MANIFEST",
@@ -180,7 +208,14 @@
      "impl": "runtime/manifest_sensor.py",
      "execution": "daily_shared_chain_before_hopper_sensor_and_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every guest/episode manifest checked for completeness against the declared expectation manifests",
+     "every gap became an expectation delta with its declared heal"
+    ],
+    "receipt": "expectation receipts + observations + run record"
+   }
   },
   {
    "id": "SG-HEAL",
@@ -217,7 +252,14 @@
      "id": "N9",
      "impl": "runtime/record.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every open incident offered exactly one allowlisted playbook or a recorded refusal (unknown classes refuse, never improvise)",
+     "every heal stayed propose-only in shadow with its receipt appended"
+    ],
+    "receipt": "heals.jsonl receipts + run record"
+   }
   }
  ],
  "untraced_allowed": {

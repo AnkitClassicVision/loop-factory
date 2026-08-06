@@ -9,6 +9,12 @@ Implement `SG-DAG-SUPERVISION` for concept refs: C1, C2, C11, C16, C19.
 
 1. `runtime/dag_supervisor.py`
 
+## DONE means
+
+- the pipeline's hashed DAG projection validated fresh (stale or missing projection is an alarm, never a skip)
+- every silent skip, forged skip artifact, or hash mismatch became a dag_receipt_violation incident
+Receipt: dag-projection validation observation + run record
+
 ## Inputs
 
 ### L3

@@ -12,6 +12,12 @@ Implement `SG-HEAL` for concept refs: C5, C11, C12, C14.
 3. `runtime/heal_verify.py`
 4. `runtime/record.py`
 
+## DONE means
+
+- every open incident offered exactly one allowlisted playbook or a recorded refusal (unknown classes refuse, never improvise)
+- every heal stayed propose-only in shadow with its receipt appended
+Receipt: heals.jsonl receipts + run record
+
 ## Inputs
 
 ### L3
