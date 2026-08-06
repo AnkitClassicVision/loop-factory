@@ -125,6 +125,21 @@ def funnel_config(charter: dict) -> dict | None:
             value = row[key]
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise CharterError(f"charter funnel.transitions[{index}].{key} must be a non-negative integer")
+    # ORDER CONTRACT (fail-closed): the list is upstream-first — each `to`
+    # must be the next transition's `from`, and the last `to` must be the
+    # end_goal stage. A broken chain would compile silently WRONG floors
+    # (caught live 2026-08-06: a downstream-first list inverted the cascade).
+    for index in range(len(transitions) - 1):
+        if transitions[index]["to"] != transitions[index + 1]["from"]:
+            raise CharterError(
+                f"charter funnel.transitions[{index}].to "
+                f"({transitions[index]['to']!r}) must equal "
+                f"transitions[{index + 1}].from ({transitions[index + 1]['from']!r}) "
+                "— the list is upstream-first and must chain without breaks")
+    if transitions[-1]["to"] != end_goal["stage"]:
+        raise CharterError(
+            f"charter funnel.transitions[-1].to ({transitions[-1]['to']!r}) "
+            f"must equal end_goal.stage ({end_goal['stage']!r})")
     return funnel
 
 

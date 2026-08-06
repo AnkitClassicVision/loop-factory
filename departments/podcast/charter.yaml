@@ -276,3 +276,18 @@ memory:
   local: departments/podcast/state
   backends: []            # HubSpot is the ESTATE's business truth, not a department memory backend
   never_recorded: [credentials, phi, raw_message_bodies]
+
+# Funnel goals + transition priors — OWNER AMENDMENT (Ankit, 2026-08-06, via Claude Code
+# session loop-brain-reconcile: "Signed — apply it"). Priors from the charter 60/70/60
+# planning assumptions + r62 measured physics; the compiler replaces priors with matured
+# measured rates (30/10 minimums) and alarms every floor move. Humans-only file, forever.
+funnel:
+  end_goal: {stage: published, per_week: 1}
+  # ORDER CONTRACT: upstream-first — each transition's `to` is the next line's
+  # `from`, and the last `to` is the end_goal stage. The loader rejects breaks.
+  transitions:
+    - {from: invited, to: replied, prior_rate: 0.6, buffer: 0.15, lead_days: 5, maturity_days: 14, stock_buffer: 0.2}
+    - {from: replied, to: prep_done, prior_rate: 0.7, buffer: 0.15, lead_days: 7, maturity_days: 14, stock_buffer: 0.2}
+    - {from: prep_done, to: booked, prior_rate: 0.6, buffer: 0.15, lead_days: 7, maturity_days: 21, stock_buffer: 0.3}
+    - {from: booked, to: recorded, prior_rate: 0.85, buffer: 0.1, lead_days: 14, maturity_days: 28, stock_buffer: 0.5}
+    - {from: recorded, to: published, prior_rate: 0.9, buffer: 0.1, lead_days: 14, maturity_days: 21, stock_buffer: 0.5}

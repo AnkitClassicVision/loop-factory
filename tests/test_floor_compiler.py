@@ -166,3 +166,16 @@ def test_funnel_config_rejects_invalid_values_and_unknown_keys(mutation):
         value["transitions"][0]["surprise"] = True
     with pytest.raises(CharterError):
         funnel_config({"funnel": value})
+
+
+def test_funnel_config_rejects_broken_or_downstream_first_chain():
+    # Caught live 2026-08-06: a downstream-first list compiled silently
+    # INVERTED floors. The loader must fail closed on any chain break.
+    value = _funnel()
+    value["transitions"] = list(reversed(value["transitions"]))
+    with pytest.raises(CharterError, match="upstream-first"):
+        funnel_config({"funnel": value})
+    value = _funnel()
+    value["transitions"][-1]["to"] = "elsewhere"
+    with pytest.raises(CharterError, match="end_goal.stage"):
+        funnel_config({"funnel": value})
