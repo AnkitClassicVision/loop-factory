@@ -6,6 +6,20 @@ interview into a complete, governed, self-managing department (loops + manager
 for ANY agent working in this repo (Codex, Claude, others). CLAUDE.md mirrors
 it for Claude Code.
 
+## READ `HANDOFF.md` FIRST
+
+Before planning or touching code, read `HANDOFF.md` at the repo root. It carries
+the current state of live work: what is done, what is in flight, what is NOT
+done, the standing constraints for that work, the mistakes already made and the
+lessons from them, and the ONE next pickup action. It points at the specs and
+artifacts rather than restating them, so it is cheap to read and it is the
+fastest way to avoid redoing settled work or repeating a logged mistake.
+
+Update `HANDOFF.md` when you finish a work session or when the state it
+describes stops being true. Keep it lean: reference files, do not duplicate
+them. Newest job at the top. `~/handoffs/YYYY-MM-DD-<slug>.md` remains the
+full-detail archive; `HANDOFF.md` is the current-state entry point.
+
 ## What this repo is / is not
 
 - The FACTORY lives in `factory/`, `kernel/`, `interview/`, `templates/`,
