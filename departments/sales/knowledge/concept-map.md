@@ -1,6 +1,6 @@
 # Sales Department — Concept Map (F2)
 
-Derives ONLY from `../interview/intent.md` (INTENT LOCKED by Ankit,
+Derives ONLY from `../interview/intent-interview.md` (INTENT LOCKED by Ankit,
 2026-08-06). Every concept cites its interview question. Every subgraph,
 charter field, and (in F3) runtime node traces back here. Change to any
 concept's MEANING reopens the interview — never patched in place.

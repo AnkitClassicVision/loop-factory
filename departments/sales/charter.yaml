@@ -2,7 +2,7 @@
 #
 # GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
 # level. Heals and managers may never edit it. Derives ONLY from
-# interview/intent.md (INTENT LOCKED by Ankit, 2026-08-06, Claude Code session
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-08-06, Claude Code session
 # loop-brain-reconcile — readback r1 clean, gap fills as recommended).
 department: sales
 version: v1.0
