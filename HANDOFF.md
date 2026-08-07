@@ -37,16 +37,30 @@ cleared; Ankit picked "both, telemetry then cadence" current-turn.
   (gated below); its enable is Ankit's:
   `systemctl --user enable --now hubspot-cleaner-daily.timer`.
 
-**Not done / gates**
-- ICP-enrich timer deliberately NOT created: `enrich_agent.py` /
-  `enrich_batch.py` are fetch/write helpers around a model — no headless
-  engine exists. Build the fetch→classify→write loop (subscription engine
-  only) before any timer.
-- Cleaner enable gated on the pre-existing incremental 400 defect
-  (changed/flagged bucket searches) + a manual dry-run.
-- Unchanged from held-confirm handoff: Perplexity key rotation, 9 companyless
-  wave contacts, verdict blocking flip, conductor cutover, P5 promotion,
-  podcast S3/S4 sales taxonomy.
+**Both gates CLEARED later the same day (Ankit "do it all" directive):**
+- Cleaner 400 defect fixed, measured not guessed: `hc_flag_status` never
+  existed (setup-hubspot-properties is dry-run by default; flag lifecycle is
+  contact-only). 14 contact flag properties created with `--apply`; runner
+  guard skips buckets filtering on portal-absent properties
+  (hubspot_cleaner `aa40592`, 3 tests, suite 184 green). Acceptance: full
+  incremental dry-run rc=0, zero "Bucket search failed".
+  **hubspot-cleaner-daily.timer ENABLED**, proven under systemd.
+- Headless ICP-enrich loop built (`scripts/enrich_headless.py`,
+  hubspot_cleaner `6acfecf`): Tier 1 of LLM_ENRICHMENT_SPEC — fetch →
+  classify via Claude SUBSCRIPTION CLI (opus) → strict validation →
+  conservative write (hc_llm_* always; hc_contact_role only >= 0.6; never
+  funnel/priority overrides). Proof: 15/15 classified+written, 0 rejected,
+  write verified by HubSpot read-back, conservative role policy held.
+  **icp-enrich-daily.timer ENABLED** (08:00, after 07:30 cleaner).
+- Three timers now live: sales-loop *:00/30 (first autonomous fire green,
+  epoch 13), hubspot-cleaner-daily 07:30, icp-enrich-daily 08:00.
+  Receipts: `hubspot_cleaner/knowledge/enrichment_runs.jsonl`.
+
+**Still open (unchanged from held-confirm handoff):** Perplexity key
+rotation, 9 companyless wave contacts, verdict blocking flip, conductor
+cutover, P5 promotion, podcast S3/S4 sales taxonomy. Enrich Tiers 2-4
+(web/Perplexity/LinkedIn) deliberately unbuilt — v1 sets needs_review
+instead of escalating tiers.
 
 ### Lessons
 
@@ -59,10 +73,11 @@ cleared; Ankit picked "both, telemetry then cadence" current-turn.
 
 ### ONE next pickup action
 
-Fix the cleaner incremental 400 defect (hubspot_cleaner repo,
-changed/flagged bucket searches) so Ankit can enable
-`hubspot-cleaner-daily.timer` — OR, if Ankit prefers funnel motion first,
-build the headless ICP-enrich loop. Ask which.
+Tomorrow morning after 08:05, verify the first autonomous cleaner (07:30)
+and enrich (08:00) fires: `journalctl --user -u hubspot-cleaner-daily.service -u icp-enrich-daily.service --since 07:00`
+plus the newest row of `hubspot_cleaner/knowledge/enrichment_runs.jsonl`.
+Then the next value gate is funnel motion: the 9 companyless wave contacts
+(needs owner approval to create company records) or Perplexity key rotation.
 
 ---
 
