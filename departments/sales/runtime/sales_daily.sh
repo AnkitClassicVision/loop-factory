@@ -51,6 +51,12 @@ if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
     exit "${ver_rc}"
 fi
 
+# Budget telemetry: derive budget_used.json from the run ledger BEFORE the
+# manager reads it. Soft-fail on purpose — the producer deletes its output on
+# any refusal, and the manager tick (the enforcement surface) must still run
+# to raise budget_telemetry_missing against the absent file.
+python3 "${REPO}/factory/budget_telemetry.py" --department "${DEPARTMENT}" --state-dir "${STATE_DIR}" --out "${STATE_DIR}/budget_used.json" || echo "budget_telemetry refused (rc=$?) — manager will breach on missing telemetry" >&2
+
 # Manager cycle (deterministic; charter is the source of truth).
 python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
 

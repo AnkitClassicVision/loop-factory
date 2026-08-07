@@ -57,8 +57,9 @@ conductor's job at the estate layer — a split-brain defect here.
   queue; the confirmation row is the attestation artifact) → held receipt →
   ledger.
 - SENSE loop (daily): 4 context-is-king gates, floors attainment vs
-  floors.yaml, kill/pause watch → observations → compare → cards (make-sense +
-  exact approvable actions).
+  floors.yaml, kill/pause watch → observations → budget telemetry (factory
+  producer derives budget_used.json from runs-v2.jsonl; absent file = breach,
+  never zero) → compare → cards (make-sense + exact approvable actions).
 - DRIVE loop (weekly, via floor compiler): measured rates replace priors →
   floors move (alarm-after) → gaps between floors and received-lane reality
   become drive cards for the owned lanes.
