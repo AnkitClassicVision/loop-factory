@@ -96,6 +96,20 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 ### Current state
 
 **Done**
+- **U5 LANDED and live.** `711914a` on podcast branch `feat/one-true-master`, not
+  pushed. The `.delivered` marker now records sha256 of the escalation body;
+  suppression happens only on a digest match; a digest that cannot be computed
+  returns non-zero instead of reading as delivered; `append_abnormal_status_once`
+  no longer refuses to append once a delivery has happened. The loop timers run
+  the working tree, so this deployed on the next fire. Proven green against the
+  live file with the negative control still reproducing against HEAD.
+  Tooling committed separately as `5aebb5b` in loop-factory.
+- U5 took two Ringer rounds. Round 2 (codex, PASS attempt 1, 64s, 32k tokens) was
+  **rejected in review**: its `sha256sum ... | awk` pipeline left `body_digest`
+  empty when the digest tool failed, and an absent marker is empty too, so the
+  equality test suppressed an alert nobody saw. Check gained scenario s7, round 3
+  (codex, PASS attempt 1, 80s, 40k tokens) rebuilt from HEAD with that finding in
+  the spec. The worker never saw round 2's patch: findings travel, code does not.
 - Spec approved and committed: `6e7e6eb`, master, **not pushed**. Owner decisions
   D1 to D5 with provenance are in the spec's decisions table.
 - Ringer job `loop-drive-contract` round 1 (read-only audit) COMPLETE, 3/3 lanes
@@ -114,7 +128,7 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 
 **In-flight:** nothing.
 
-**Not done:** all 7 units. Zero production code changed. Nothing pushed.
+**Not done:** U1, U2a-c, U3, U4, U6, U7 — 6 of 7 units. Nothing pushed (both repos).
 
 ### Mistakes and lessons
 
@@ -124,6 +138,8 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 | Specced 3 revise iterations when the working code does 2 | caught pre-ship | never change a working number for symmetry |
 | Specced "no loop creates a draft" and "gates need return-shape upgrades" | both wrong; the audit corrected them | **the recurring one:** measure the code before asserting its shape in a spec |
 | Passed `--add-dir A --add-dir B` to claude-lean | lost the plan-setting lane, 2 attempts, 0 tokens | variadic flags eat a trailing positional; use `--flag=value` through any template you do not control |
+| Wrote the U5 check before knowing the fix would introduce hashing, so nothing covered "digest cannot be computed" | one extra round, ~40k tokens; a green check on a patch that silently drops alerts | when a fix swaps mechanism (existence → hash), ask what NEW way the mechanism can fail and add that scenario before accepting the patch. The old failure modes were covered; the new one was invented by the fix |
+| Told Ankit the Jul-17 Ringer build "writes per-run pages instead of accumulating one page per job", inside a decision he then made | wrong claim shaped an owner decision; corrected same turn | **the recurring one again:** a dry-run's printed paths are not the artifact contract. One `grep -rl artifacts/live` over both trees settled it in seconds and said the opposite |
 
 Two heuristics worth keeping: a sub-5-second failure with zero token spend is a
 harness fault, so read the rendered command in the raw worker log instead of
@@ -143,7 +159,14 @@ Both entries are captured in OB_mybcat under `mistake_ledger_v1`
   API-billed lanes are forbidden; escalate instead of spending.
 - Shadow before any live send. Review before fix, never the same worker for both.
 - Workers never commit, push, or send.
-- Build order: U5, then U1 + U6 in parallel, then U4, then U2a-c, then U3, then U7.
+- **`~/.config/ringer/config.toml` is shared, live, and edited by other sessions.**
+  On 2026-08-07 it was repointed at 10:01 to a second Ringer checkout and every
+  podcast loop died on `engines.codex.bin must use the trusted engines/codex-oauth.sh
+  wrapper` (production-publish 10:13); another actor repaired it at 10:30. If a Ringer
+  run fails instantly on an engine error, check that file's mtime before debugging
+  anything else, and run with `--config <copy>` rather than editing it underneath
+  whoever else is working.
+- Build order: U5 (done), then U1 + U6 in parallel, then U4, then U2a-c, then U3, then U7.
   U4 is blocked by U1 (re-entry keys on the new verdicts). U3 and U7 are last
   because they change what can edit copy and what can block a send.
 
@@ -156,12 +179,19 @@ four gates plus a plumbing task. Measure before speccing it.
 
 ### ONE next pickup action
 
-Compile round 2 of Ringer job `loop-drive-contract` as a fix swarm for **U5**: make
-the `.delivered` marker key on a content hash of the escalation body. The check must
-reproduce the bug first (write an ESCALATE, deliver it, overwrite with different
-text, confirm no delivery under current code) before proving the fixed code delivers
-a changed body and still suppresses an identical one. Pitch engines to Ankit before
-launching; round 1 needs no rerun.
+Compile round 4 of Ringer job `loop-drive-contract` as a fix swarm for **U1 + U6**,
+the two units that can run in parallel now that U5 has landed. U1 is the run verdict
+(a run succeeds only if it moved a funnel number or proved no legal move existed);
+U6 gives a cross-loop gate an owner (`BLOCKED: <owning loop>` plus a repair task
+inside `detection_latency_hours: 26`). Read the spec's U1 and U6 sections first —
+each already names its proof and its negative test.
+
+Write and PROVE the checks before compiling the manifest: red on today's code, green
+on a reference implementation, and red on the obvious cheat. That discipline is what
+caught round 2's silent-drop path. Two lanes, disjoint file ownership (U1 and U6
+must not both edit the same file, so establish ownership before writing the specs).
+Engines: codex is 2/2 first-try on this job's code-fix lanes, so no need to re-ask
+unless the mix stops working.
 
 ### Files
 
@@ -172,10 +202,12 @@ launching; round 1 needs no rerun.
 | `ringer/loop-drive-contract/checks/audit_check.py` | round 1 validator, proven 18/18 |
 | `ringer/loop-drive-contract/manifest-r1-gate-audit.json` | round 1, 3 lanes |
 | `ringer/loop-drive-contract/manifest-r1b-lane-a-rerun.json` | lane A rerun, fixed flags |
-| `/mnt/d_drive/ringer-work/loop-drive-contract-r1{,b}/` | lane reports and raw worker logs |
+| `ringer/loop-drive-contract/checks/u5_marker_check.py` | U5 validator: reproduces the bug against HEAD before it accepts a fix. Proven on 4 fixtures. Reuse its two-phase shape for U1/U6 |
+| `ringer/loop-drive-contract/build_r2.py`, `build_r3.py` | U5 manifest generators; r3 carries the round-2 finding in the spec |
+| `/mnt/d_drive/ringer-work/loop-drive-contract-r{1,1b,2,3}/` | lane reports, patches, raw worker logs |
 | `/mnt/d_drive/ringer-state/artifacts/live/loop-drive-contract.html` | Ringside artifact page |
 | `departments/podcast/charter.yaml` | objectives, floors, funnel quotas, engine policy |
-| `/mnt/d_drive/repos/podcast/scripts/run_podcast_loop.sh` | the loop runner (U5 target at :183) |
+| `/mnt/d_drive/repos/podcast/scripts/run_podcast_loop.sh` | the loop runner; U5 landed here (`711914a`) |
 | `/mnt/d_drive/repos/podcast/scripts/obe_draft_voice_qa.py` | the working 2-iteration repair loop (U2 reuses it) |
 | `/mnt/d_drive/repos/podcast/server/pipeline/referral_touch_automation.py` | the only runner-wired draft creator (U2a generalizes it) |
 | `~/handoffs/2026-08-06-loop-drive-contract.md` | full-detail archival handoff |
