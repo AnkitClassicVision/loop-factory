@@ -35,6 +35,15 @@ The contract under test (locked by the coordinator, restated in the worker spec)
 Precedence is CAPPED > BLOCKED > DROVE > EXHAUSTED > FAILED: every verdict that
 must stop re-entry outranks one that may continue, so U4 can key on the verdict
 alone without re-deriving the ceilings.
+
+SUPERSEDED IN PART BY U0 (see u0_corroboration_check.py). U0 kept the shape above
+but moved corroboration out of the receipt and onto the command line, because the
+worker writes the receipt: `blocked_by` now comes only from `--blocked-by`, a send
+claim needs `--sends-proof` behind it, `cap.ceiling` must name a real charter
+ceiling, repo-path evidence must resolve, and `quota.met` in the receipt is
+ignored in favour of `--quota-target` against proven sends. The fixtures below
+supply those flags; a case that expects a success verdict without them is
+asserting the pre-U0 contract and would be testing nothing.
 """
 from __future__ import annotations
 
@@ -101,11 +110,14 @@ def block(
 
 
 def cited(alias: str) -> dict:
+    # U0 requires repo-path evidence to resolve to a real file, so the fixture cites
+    # one that always exists. A missing path would make these cases fall to FAILED
+    # for the wrong reason and quietly stop testing what they claim to test.
     return {
         "alias": alias,
         "eligible": False,
         "disqualifier": "inside the 4-day per-contact cadence floor",
-        "evidence": "episodes/_loop_receipts/guest-acquisition-candidate-ledger.json:contacted_at",
+        "evidence": "scripts/run_podcast_loop.sh:contacted_at",
     }
 
 
@@ -118,14 +130,18 @@ def eligible(alias: str) -> dict:
 
 
 class Case:
-    def __init__(self, name: str, receipt: str, expect: str, why: str) -> None:
+    def __init__(self, name: str, receipt: str, expect: str, why: str,
+                 extra: list[str] | None = None) -> None:
         self.name = name
         self.receipt = receipt
         self.expect = expect
         self.why = why
+        # U0 moved corroboration out of the receipt and onto the command line, so a
+        # case that expects a success verdict has to supply the runner's evidence.
+        self.extra = extra or []
 
 
-def cases() -> list[Case]:
+def cases(sends_proof: Path) -> list[Case]:
     return [
         Case(
             "failed_one_eligible_candidate",
@@ -156,20 +172,30 @@ def cases() -> list[Case]:
             receipt_text(block(sends=2, candidates=[eligible("cand-1")])),
             "DROVE",
             "sends greater than zero is the only thing that counts as driving",
+            extra=["--sends-proof", str(sends_proof)],
+        ),
+        Case(
+            "sends_without_proof_is_not_drove",
+            receipt_text(block(sends=2, candidates=[eligible("cand-1")])),
+            "FAILED",
+            "U0: a send claim with no artifact behind it cannot buy DROVE",
         ),
         Case(
             "capped_outranks_drove",
             receipt_text(
-                block(sends=3, candidates=[eligible("cand-1")], cap={"ceiling": "sends_per_day", "limit": 12})
+                block(sends=3, candidates=[eligible("cand-1")],
+                      cap={"ceiling": "outbound_per_day", "limit": 12})
             ),
             "CAPPED",
             "a named ceiling must outrank DROVE or re-entry would run past the ceiling",
+            extra=["--sends-proof", str(sends_proof)],
         ),
         Case(
             "blocked_names_the_owning_loop",
-            receipt_text(block(sends=0, candidates=[eligible("cand-1")], blocked_by="health")),
+            receipt_text(block(sends=0, candidates=[eligible("cand-1")])),
             "BLOCKED",
             "an upstream gate owned by another loop is not this loop's failure",
+            extra=["--blocked-by", "health"],
         ),
         Case(
             "worker_authored_ok_is_overwritten",
@@ -187,10 +213,12 @@ def cases() -> list[Case]:
     ]
 
 
-def run_verdict(worktree: Path, receipt: Path, apply: bool) -> subprocess.CompletedProcess[str]:
+def run_verdict(worktree: Path, receipt: Path, apply: bool,
+                extra: list[str] | None = None) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, "scripts/obe_loop_verdict.py", "--receipt", str(receipt)]
     if apply:
         cmd.append("--apply")
+    cmd.extend(extra or [])
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(worktree))
 
 
@@ -221,10 +249,12 @@ def check_verdict_module(worktree: Path, tmp: Path) -> list[str]:
             "must be computed by a deterministic step, not chosen by the worker."
         ]
 
-    for index, case in enumerate(cases()):
+    sends_proof = tmp / "sends-proof.json"
+    sends_proof.write_text(json.dumps({"sends": 3, "sent": True}), encoding="utf-8")
+    for index, case in enumerate(cases(sends_proof)):
         receipt = tmp / f"case-{index}-{case.name}.md"
         receipt.write_text(case.receipt, encoding="utf-8")
-        result = run_verdict(worktree, receipt, apply=False)
+        result = run_verdict(worktree, receipt, apply=False, extra=case.extra)
         got, detail = parse_verdict(result)
         if got is None:
             failures.append(f"FAIL [{case.name}/output_contract]: {detail}")
@@ -278,17 +308,21 @@ def check_verdict_module(worktree: Path, tmp: Path) -> list[str]:
         )
 
     # re-entry guidance must ride along, so U4 can key on the verdict alone.
-    for verdict, want_reentry, blk in (
-        ("FAILED", True, block(sends=0, candidates=[eligible("c")])),
-        ("EXHAUSTED", False, block(sends=0, candidates=[cited("c")])),
-        ("CAPPED", False, block(sends=1, cap={"ceiling": "sends_per_day", "limit": 12})),
-        ("BLOCKED", False, block(sends=0, candidates=[eligible("c")], blocked_by="health")),
-        ("DROVE", True, block(sends=1, candidates=[eligible("c")], quota_met=False)),
-        ("DROVE", False, block(sends=9, candidates=[cited("c")], quota_met=True)),
+    proof = ["--sends-proof", str(sends_proof)]
+    for verdict, want_reentry, blk, flags in (
+        ("FAILED", True, block(sends=0, candidates=[eligible("c")]), []),
+        ("EXHAUSTED", False, block(sends=0, candidates=[cited("c")]), []),
+        ("CAPPED", False, block(sends=1, cap={"ceiling": "outbound_per_day", "limit": 12}), proof),
+        ("BLOCKED", False, block(sends=0, candidates=[eligible("c")]), ["--blocked-by", "health"]),
+        # U0: re-entry keys on PROVEN sends against the charter target, never on the
+        # receipt's own quota.met, so the target arrives as a flag.
+        ("DROVE", True, block(sends=1, candidates=[eligible("c")]), proof + ["--quota-target", "9"]),
+        ("DROVE", False, block(sends=9, candidates=[cited("c")], quota_met=True),
+         proof + ["--quota-target", "2"]),
     ):
         receipt = tmp / f"reentry-{verdict}-{want_reentry}.md"
         receipt.write_text(receipt_text(blk), encoding="utf-8")
-        result = run_verdict(worktree, receipt, apply=False)
+        result = run_verdict(worktree, receipt, apply=False, extra=flags)
         try:
             payload = json.loads(
                 [ln for ln in result.stdout.strip().splitlines() if ln.strip().startswith("{")][-1]
@@ -306,7 +340,7 @@ def check_verdict_module(worktree: Path, tmp: Path) -> list[str]:
             failures.append(
                 f"FAIL [reentry_{verdict}_{want_reentry}]: reentry_allowed was "
                 f"{payload['reentry_allowed']}, expected {want_reentry} for {verdict} "
-                f"(quota met={blk['quota']['met']})."
+                f"(flags={flags})."
             )
     return failures
 

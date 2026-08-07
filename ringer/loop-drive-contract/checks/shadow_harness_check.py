@@ -103,6 +103,16 @@ def normalize_fixture(runner: Path) -> str | None:
     the commit the two rejected/accepted patches were written against.
     """
     text = runner.read_text(encoding="utf-8")
+    # Make the fixture hermetic. 98fc703 hardcodes REPO, so the fixture would resolve
+    # obe_loop_verdict.py and friends from the LIVE checkout, which keeps moving; a
+    # later unit changing those helpers would silently rewrite what this fixture
+    # tests. The override landed in cfc502d and is unrelated to call reachability.
+    text = text.replace(
+        'REPO="/mnt/d_drive/repos/podcast"',
+        'REPO="${PODCAST_REPO:-/mnt/d_drive/repos/podcast}"',
+        1,
+    )
+    runner.write_text(text, encoding="utf-8")
     lines = text.splitlines(keepends=True)
     for index, line in enumerate(lines):
         if not line.startswith("1. Receipt at ${RECEIPT}") or '{\\"sends\\"' in line:
