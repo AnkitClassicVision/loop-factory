@@ -1,7 +1,67 @@
 # HANDOFF: current state, read this first
 
-_Updated 2026-08-06 by Claude Code. One job per entry, newest at top. Keep it lean:
+_Updated 2026-08-07 by Claude Code. One job per entry, newest at top. Keep it lean:
 reference files, do not restate them._
+
+---
+
+## Sales budget telemetry + scheduler cadence (2026-08-07)
+
+### Goal
+
+Clear the two owner gates from the held-confirm handoff: the manager's standing
+`budget_telemetry_missing` breach, then the scheduler cadence decision. Both
+cleared; Ankit picked "both, telemetry then cadence" current-turn.
+
+### Current state
+
+**Done (commits 8ee50fc + 1307f82 + d9937aa; release 12c286d688055e5a, drift-clean, not pushed)**
+- `factory/budget_telemetry.py` (department-agnostic, deterministic) derives
+  `budget_used.json` from `runs-v2.jsonl` over the manager's rolling 7-day
+  window; kernel BudgetBroker ledger merges per-kind max when present
+  (`telemetry_ok` property added to the broker). Fail-closed: any evidence
+  failure DELETES the output so the breach stands — stale numbers never pass
+  as fresh. Metered-lane model calls abort as unpriceable spend. 12 tests;
+  full train per change card
+  `departments/sales/creation/change-card-2026-08-07-budget-telemetry.md`
+  (840 factory + 33 sales tests, live-copy shadow, re-pin --flip, qa clean).
+- **Live proof epoch 11:** findings `["pace_under"]` only — breach gone,
+  escalations 0, zero external actions.
+- **Cadence decided (Ankit, current-turn):** sales chain every 30 min
+  (`sales-loop.timer`, matches podcast); cleaner daily 07:30 + ICP enrich
+  08:00. Units in `~/.config/systemd/user/` (sales-loop.{service,timer},
+  hubspot-cleaner-daily.{service,timer}), all **installed DISABLED** per
+  factory convention; registry `estate/registry.d/sales.yaml` schedule set.
+  Enable commands are Ankit's:
+  `systemctl --user enable --now sales-loop.timer` (dry-run already green),
+  `systemctl --user enable --now hubspot-cleaner-daily.timer` (gated below).
+
+**Not done / gates**
+- ICP-enrich timer deliberately NOT created: `enrich_agent.py` /
+  `enrich_batch.py` are fetch/write helpers around a model — no headless
+  engine exists. Build the fetch→classify→write loop (subscription engine
+  only) before any timer.
+- Cleaner enable gated on the pre-existing incremental 400 defect
+  (changed/flagged bucket searches) + a manual dry-run.
+- Unchanged from held-confirm handoff: Perplexity key rotation, 9 companyless
+  wave contacts, verdict blocking flip, conductor cutover, P5 promotion,
+  podcast S3/S4 sales taxonomy.
+
+### Lessons
+
+- The producer's failure mode IS the alarm: on refusal it deletes its output
+  and lets the manager's missing-telemetry breach fire, and the chain
+  soft-fails past it so the manager (the enforcement surface) always runs.
+- A live-copy shadow (`SALES_STATE_DIR=<copy>`) shadows the NODES only — the
+  manager records to `--root`'s live state by design; expect the epoch to
+  advance and the drift escalation to land in the real outbox pre-re-pin.
+
+### ONE next pickup action
+
+Fix the cleaner incremental 400 defect (hubspot_cleaner repo,
+changed/flagged bucket searches) so Ankit can enable
+`hubspot-cleaner-daily.timer` — OR, if Ankit prefers funnel motion first,
+build the headless ICP-enrich loop. Ask which.
 
 ---
 
