@@ -95,21 +95,34 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 
 ### Current state
 
-**Done**
-- **U5 LANDED and live.** `711914a` on podcast branch `feat/one-true-master`, not
-  pushed. The `.delivered` marker now records sha256 of the escalation body;
-  suppression happens only on a digest match; a digest that cannot be computed
-  returns non-zero instead of reading as delivered; `append_abnormal_status_once`
-  no longer refuses to append once a delivery has happened. The loop timers run
-  the working tree, so this deployed on the next fire. Proven green against the
-  live file with the negative control still reproducing against HEAD.
-  Tooling committed separately as `5aebb5b` in loop-factory.
-- U5 took two Ringer rounds. Round 2 (codex, PASS attempt 1, 64s, 32k tokens) was
-  **rejected in review**: its `sha256sum ... | awk` pipeline left `body_digest`
-  empty when the digest tool failed, and an absent marker is empty too, so the
-  equality test suppressed an alert nobody saw. Check gained scenario s7, round 3
-  (codex, PASS attempt 1, 80s, 40k tokens) rebuilt from HEAD with that finding in
-  the spec. The worker never saw round 2's patch: findings travel, code does not.
+**Done — 4 of 7 spec units plus 2 additions, all on podcast branch `feat/one-true-master`, not pushed**
+
+| commit | what |
+|---|---|
+| `711914a` | **U5** escalation marker keys on a content digest; fail-closed when the digest cannot be computed |
+| `98fc703` | **U1** verdict computed from the receipt's `loop-drive-v1` block, not typed by the worker |
+| `d154226` | **U6** a cross-loop block resolves to its owning loop, opens a repair task with a 26h deadline, escalates a department defect on day two |
+| `cfc502d` | **emergency fix.** U1 put raw JSON with 36 unescaped `"` into a double-quoted bash assignment in the worker prompt; bash ended the string early and the runner died under `set -u`. Every loop firing after 98fc703 would have failed. `bash -n` passes it clean |
+| `2d1ce70` | **shadow harness** `scripts/loop_shadow_run.py` — runs the REAL runner with Ringer, Telegram, the Linear card and secret_exec stubbed |
+| `3dd741c` | **U0** (not in the original spec, owner-approved 2026-08-07) no success verdict without corroboration the runner observed |
+
+loop-factory tooling: `64d2512`, `fd300ef`, `54c94f9`. `loopfactory.py check` clean.
+
+**Every unit took two Ringer rounds.** Round one passed its executed check and was
+rejected in review, four times running: `--apply` ate the receipt title; the repair
+opener sat past the `exit 1` it needed to precede; the digest pipeline masked its own
+exit status. Each time the check gained the missing assertion, proven red then green,
+before the rebuild ran. **The pattern:** a check written from the DEFECT's failure
+modes misses the ones the FIX invents.
+
+**The shadow harness is the answer to that pattern** and it earned its place on first
+run by finding `cfc502d` about thirty minutes after I introduced it. Its meta-check
+(`shadow_harness_check.py`) grades a harness by handing it the rejected r5 tree and
+the accepted r5b tree — identical but for where one call sits — and requiring it to
+tell them apart by RUNNING them. A grep-shaped harness fails that check.
+**Every remaining unit edits the runner's control flow, so every remaining check must
+drive the harness, not grep the script.**
+
 - Spec approved and committed: `6e7e6eb`, master, **not pushed**. Owner decisions
   D1 to D5 with provenance are in the spec's decisions table.
 - Ringer job `loop-drive-contract` round 1 (read-only audit) COMPLETE, 3/3 lanes
@@ -128,7 +141,9 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 
 **In-flight:** nothing.
 
-**Not done:** U1, U2a-c, U3, U4, U6, U7 — 6 of 7 units. Nothing pushed (both repos).
+**Not done:** U4, U2a-c, U3, U7. Nothing pushed (both repos). No live loop has yet
+executed the new verdict path — the checks prove it against the live file, which is
+not the same as watching a real loop emit a real block.
 
 ### Mistakes and lessons
 
@@ -139,6 +154,8 @@ Spec (authoritative, 7 units, each with an executed proof and a negative test):
 | Specced "no loop creates a draft" and "gates need return-shape upgrades" | both wrong; the audit corrected them | **the recurring one:** measure the code before asserting its shape in a spec |
 | Passed `--add-dir A --add-dir B` to claude-lean | lost the plan-setting lane, 2 attempts, 0 tokens | variadic flags eat a trailing positional; use `--flag=value` through any template you do not control |
 | Wrote the U5 check before knowing the fix would introduce hashing, so nothing covered "digest cannot be computed" | one extra round, ~40k tokens; a green check on a patch that silently drops alerts | when a fix swaps mechanism (existence → hash), ask what NEW way the mechanism can fail and add that scenario before accepting the patch. The old failure modes were covered; the new one was invented by the fix |
+| Put raw JSON with 36 unescaped `"` into a double-quoted bash assignment (U1's worker prompt) | **broke every live loop for ~30 min**; `bash -n` passes it clean | a shell string containing an example payload must be escaped or heredoc'd. More important: **only executing the script finds this class**. It is why the shadow harness exists |
+| Wrote each unit's check from the DEFECT's failure modes, four times | four extra Ringer rounds, ~180k worker tokens | when a fix swaps mechanism, ask what NEW way the mechanism can fail before freezing the check |
 | Told Ankit the Jul-17 Ringer build "writes per-run pages instead of accumulating one page per job", inside a decision he then made | wrong claim shaped an owner decision; corrected same turn | **the recurring one again:** a dry-run's printed paths are not the artifact contract. One `grep -rl artifacts/live` over both trees settled it in seconds and said the opposite |
 
 Two heuristics worth keeping: a sub-5-second failure with zero token spend is a
@@ -179,19 +196,22 @@ four gates plus a plumbing task. Measure before speccing it.
 
 ### ONE next pickup action
 
-Compile round 4 of Ringer job `loop-drive-contract` as a fix swarm for **U1 + U6**,
-the two units that can run in parallel now that U5 has landed. U1 is the run verdict
-(a run succeeds only if it moved a funnel number or proved no legal move existed);
-U6 gives a cross-loop gate an owner (`BLOCKED: <owning loop>` plus a repair task
-inside `detection_latency_hours: 26`). Read the spec's U1 and U6 sections first —
-each already names its proof and its negative test.
+**Do not start U4, U2a-c, U3 or U7 from the spec as written.** Ankit's instruction
+2026-08-07: stop after U0 and have Fable plan the rest. A Fable design review already
+found the sequencing defect that produced U0, and rated **U2a the most dangerous
+remaining unit** — it is where a read/propose-only lane grows a real Gmail write,
+behind the D2 autosend that removed the human APPROVE, at the moment U1/U4 give the
+worker a quota-shaped incentive to send. Fable's planning pass (order, disjoint file
+ownership per unit, the decisions to lock before each spec, the exact check
+assertions, and what to CUT) was in flight when this was written; read its output
+before writing any spec.
 
-Write and PROVE the checks before compiling the manifest: red on today's code, green
-on a reference implementation, and red on the obvious cheat. That discipline is what
-caught round 2's silent-drop path. Two lanes, disjoint file ownership (U1 and U6
-must not both edit the same file, so establish ownership before writing the specs).
-Engines: codex is 2/2 first-try on this job's code-fix lanes, so no need to re-ask
-unless the mix stops working.
+Standing requirements for whatever comes next, learned the hard way:
+- every remaining unit edits `run_podcast_loop.sh` control flow, so every check must
+  execute the runner through `scripts/loop_shadow_run.py`, not grep it;
+- prove each check red on the defect, green on a correct fix, and red on the obvious
+  cheat, BEFORE a worker runs;
+- review every passing patch anyway. Four for four so far.
 
 ### Files
 
