@@ -30,11 +30,12 @@ cleared; Ankit picked "both, telemetry then cadence" current-turn.
 - **Cadence decided (Ankit, current-turn):** sales chain every 30 min
   (`sales-loop.timer`, matches podcast); cleaner daily 07:30 + ICP enrich
   08:00. Units in `~/.config/systemd/user/` (sales-loop.{service,timer},
-  hubspot-cleaner-daily.{service,timer}), all **installed DISABLED** per
-  factory convention; registry `estate/registry.d/sales.yaml` schedule set.
-  Enable commands are Ankit's:
-  `systemctl --user enable --now sales-loop.timer` (dry-run already green),
-  `systemctl --user enable --now hubspot-cleaner-daily.timer` (gated below).
+  hubspot-cleaner-daily.{service,timer}); registry
+  `estate/registry.d/sales.yaml` schedule set. **sales-loop.timer ENABLED by
+  Ankit current-turn 2026-08-07** — first run under the unit green (epoch 12,
+  findings pace_under only, 1.5s). hubspot-cleaner-daily.timer stays DISABLED
+  (gated below); its enable is Ankit's:
+  `systemctl --user enable --now hubspot-cleaner-daily.timer`.
 
 **Not done / gates**
 - ICP-enrich timer deliberately NOT created: `enrich_agent.py` /
