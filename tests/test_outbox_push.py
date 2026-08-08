@@ -83,6 +83,23 @@ def test_new_rows_pushed_once_and_second_tick_uses_offset(tmp_path):
     )
 
 
+def test_escalation_card_uses_approve_and_respond_proposal_grammar(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"question": "Keep this handling?"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"][0]["kind"] = "escalation"
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    body = _calls(tmp_path / "card.jsonl")[0][1]
+    assert "APPROVE (keep or accept this handling as-is)" in body
+    assert "FIX: <change> (request a change or retirement" in body
+    assert "external_send" not in body
+    assert "stale evidence" not in body
+
+
 def test_duplicate_row_content_is_skipped_by_hash(tmp_path):
     row = json.dumps({"eli5": "same"})
     watch = tmp_path / "outbox.jsonl"

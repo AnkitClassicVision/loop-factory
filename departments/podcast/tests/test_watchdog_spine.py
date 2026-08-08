@@ -220,6 +220,63 @@ def test_log_read_error_is_unknown_with_exception_detail(tmp_path, monkeypatch):
     assert observation["metrics"]["log_read_errors"] == 1
 
 
+def test_newest_clean_log_overrides_historical_error(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [{
+            "name": "podcast-prep-sweep",
+            "expected_cadence": "15min",
+            "stale_after_minutes": 30,
+            "log_glob": "prep-sweep-*.log",
+        }],
+    )
+    old_log = tmp_path / "logs" / "prep-sweep-old.log"
+    new_log = tmp_path / "logs" / "prep-sweep-new.log"
+    old_log.write_text("fatal historical failure\n", encoding="utf-8")
+    new_log.write_text("healthy\n", encoding="utf-8")
+    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
+    os.utime(old_log, ((now - timedelta(minutes=2)).timestamp(),) * 2)
+    os.utime(new_log, (now.timestamp(),) * 2)
+
+    observation = sense_estate.collect_observations(
+        estate, now=now, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["status"] == "ok"
+    assert observation["metrics"]["log_files_checked"] == 1
+    assert observation["metrics"]["log_error_files"] == 0
+    assert old_log.read_text(encoding="utf-8") == "fatal historical failure\n"
+
+
+def test_newest_error_log_still_fails_closed(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [{
+            "name": "podcast-prep-sweep",
+            "expected_cadence": "15min",
+            "stale_after_minutes": 30,
+            "log_glob": "prep-sweep-*.log",
+        }],
+    )
+    old_log = tmp_path / "logs" / "prep-sweep-old.log"
+    new_log = tmp_path / "logs" / "prep-sweep-new.log"
+    old_log.write_text("healthy\n", encoding="utf-8")
+    new_log.write_text("traceback in current cycle\n", encoding="utf-8")
+    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
+    os.utime(old_log, ((now - timedelta(minutes=2)).timestamp(),) * 2)
+    os.utime(new_log, (now.timestamp(),) * 2)
+
+    observation = sense_estate.collect_observations(
+        estate, now=now, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["status"] == "fail"
+    assert observation["sensor"] == "log"
+    assert observation["metrics"]["log_files_checked"] == 1
+    assert observation["metrics"]["log_error_files"] == 1
+    assert observation["evidence"] == str(new_log)
+
+
 def test_hollow_receipt_fails_as_receipt_hollow(tmp_path):
     estate = _estate(
         tmp_path,
@@ -825,6 +882,66 @@ def test_subject_without_current_observation_does_not_accrue_health():
 
     assert incidents[key]["state"] == "open"
     assert incidents[key]["consecutive_healthy"] == 0
+
+
+def test_sensor_label_flip_recovers_on_third_distinct_healthy_cycle():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+
+    for day in range(23, 26):
+        observation = {
+            **_observation(ts=f"2026-07-{day}T12:00:00+00:00"),
+            "sensor": "aggregate",
+        }
+        incidents, _ = fingerprint_dedup.merge_candidates(
+            [_candidate()], incidents, observations=[observation]
+        )
+
+    assert incidents[key]["state"] == "resolved"
+    assert incidents[key]["consecutive_healthy"] == 3
+    assert incidents[key]["resolution"] == "observed_healthy_3_cycles"
+
+
+def test_changed_sensor_current_failure_never_counts_as_healthy():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    observation = {
+        **_observation("fail", "2026-07-23T12:00:00+00:00"),
+        "sensor": "aggregate",
+    }
+    candidate = {
+        **_candidate("2026-07-23T12:00:00+00:00"),
+        "sensor": "aggregate",
+        "failure_class": "aggregate_failed",
+    }
+
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [candidate], incidents, observations=[observation]
+    )
+
+    assert incidents[key]["state"] == "open"
+    assert incidents[key]["consecutive_healthy"] == 0
+
+
+def test_newer_unrelated_observation_does_not_hide_subject_health():
+    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+    key = next(iter(incidents))
+    healthy = {
+        **_observation(ts="2026-07-23T12:00:00+00:00"),
+        "sensor": "aggregate",
+    }
+    unrelated = {
+        **_observation(ts="2026-07-23T13:00:00+00:00"),
+        "sensor": "timer",
+        "subject": "another-loop",
+    }
+
+    incidents, _ = fingerprint_dedup.merge_candidates(
+        [], incidents, observations=[healthy, unrelated]
+    )
+
+    assert incidents[key]["state"] == "open"
+    assert incidents[key]["consecutive_healthy"] == 1
 
 
 def test_record_refuses_epoch_that_does_not_increase(tmp_path):

@@ -231,7 +231,30 @@ def merge_candidates(
     merged = dict(incidents or {})
     stats = {"new": 0, "deduplicated": 0, "department_defects": 0}
     timestamp = now or datetime.now(timezone.utc).isoformat()
-    for candidate in candidates:
+    observation_rows = observations or []
+    current_observations: dict[str, dict[str, Any]] = {}
+    for row in observation_rows:
+        subject = str(row.get("subject", ""))
+        current = current_observations.get(subject)
+        if current is None or _timestamp_key(row.get("ts", "")) >= _timestamp_key(
+            current.get("ts", "")
+        ):
+            current_observations[subject] = row
+
+    current_candidates = candidates
+    if observation_rows:
+        current_candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                (observation := current_observations.get(str(candidate["subject"])))
+                is not None
+                and _timestamp_key(candidate.get("ts", ""))
+                == _timestamp_key(observation.get("ts", ""))
+            )
+        ]
+
+    for candidate in current_candidates:
         sensor = str(candidate["sensor"])
         subject = str(candidate["subject"])
         failure_class = str(candidate["failure_class"])
@@ -304,30 +327,18 @@ def merge_candidates(
         current["consecutive_healthy"] = 0
         merged[key] = current
 
-    candidate_identities = {
-        (str(candidate["sensor"]), str(candidate["subject"]))
-        for candidate in candidates
-    }
-    observation_rows = observations or []
-    newest_observation_ts = max(
-        (str(row.get("ts", "")) for row in observation_rows),
-        key=_timestamp_key,
-        default=None,
-    )
-    current_observations = {
-        (str(row.get("sensor", "")), str(row.get("subject", ""))): row
-        for row in observation_rows
-        if str(row.get("ts", "")) == newest_observation_ts
+    failing_subjects = {
+        str(candidate["subject"]) for candidate in current_candidates
     }
     for key, stored in list(merged.items()):
         if stored.get("state") not in {"open", "department_defect"}:
             continue
         incident = dict(stored)
         incident.setdefault("consecutive_healthy", 0)
-        identity = (str(incident.get("sensor", "")), str(incident.get("subject", "")))
-        observation = current_observations.get(identity)
+        subject = str(incident.get("subject", ""))
+        observation = current_observations.get(subject)
         healthy = (
-            identity not in candidate_identities
+            subject not in failing_subjects
             and observation is not None
             and observation.get("status") == "ok"
         )

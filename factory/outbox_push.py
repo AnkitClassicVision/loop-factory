@@ -253,6 +253,13 @@ def _last_json_object(output: str) -> dict[str, Any] | None:
     return last
 
 
+def _card_identifier(card: dict[str, Any] | None) -> str | None:
+    identifier = card.get("identifier") if isinstance(card, dict) else None
+    if not isinstance(identifier, str) or not identifier.strip():
+        return None
+    return identifier.strip()
+
+
 def _append_ledger(
     path: str,
     *,
@@ -266,10 +273,10 @@ def _append_ledger(
     urgency: Any = "normal",
     due: Any = None,
     has_due: bool = False,
-) -> None:
-    identifier = card.get("identifier") if isinstance(card, dict) else None
+) -> bool:
+    identifier = _card_identifier(card)
     url = card.get("url") if isinstance(card, dict) else None
-    tracked = isinstance(identifier, str) and bool(identifier)
+    tracked = identifier is not None
     now = datetime.now(timezone.utc).isoformat()
     ledger_row = {
         "ts": now,
@@ -299,17 +306,18 @@ def _append_ledger(
             handle.write(json.dumps(ledger_row, sort_keys=True) + "\n")
     except OSError as exc:
         LOGGER.warning("card ledger could not be appended: %s", exc)
-        return
+        return False
     if not tracked:
         LOGGER.warning(
             "card sender output had no usable identifier; ledger row is untracked"
         )
+    return tracked
 
 
 def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     cursor_path = Path(config["cursor_file"])
     cursor = _load_cursor(cursor_path)
-    attempts = 0
+    ping_attempts = 0
     ping_successes = 0
     card_failures = 0
     polarity_failures = 0
@@ -348,14 +356,24 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             # row's own summary line; human-action body LEADS with YOUR MOVE and the
             # exact reply strings (approval grammar itself stays human-only).
             summary_line = " ".join(_row_summary(row).split())[:80] or f"{watch['kind']} row"
+            if watch["kind"] == "escalation":
+                reply_instructions = (
+                    "Reply with first line: APPROVE (keep or accept this handling "
+                    "as-is), or FIX: <change> (request a change or retirement; add "
+                    "notes on the lines below)."
+                )
+            else:
+                reply_instructions = (
+                    "Reply with first line: APPROVE (confirm/apply), SKIP (dismiss), "
+                    "or FIX: <what to change> (add notes on the lines below)."
+                )
             values = {
                 "text": text,
                 "title": f"[{watch['department']}] {watch['kind']}: {summary_line}",
                 "body": (
                     "## YOUR MOVE (10 seconds)\n"
                     f"{summary_line}\n"
-                    "Reply with first line: APPROVE (confirm/apply), SKIP (dismiss), "
-                    "or FIX: <what to change> (add notes on the lines below).\n\n"
+                    f"{reply_instructions}\n\n"
                     "## Detail\n" + text
                 ),
                 "department": watch["department"],
@@ -387,12 +405,14 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 if card_argv:
                     LOGGER.warning("dry-run card argv: %r", card_argv)
                 continue
-            attempts += 1
-            if not _send(ping_argv):
-                LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
-                # Ping failures stop before cursor mutation, so the row retries in order.
-                break
-            ping_successes += 1
+            bound_notification = bool(card_argv and config["buzz"])
+            if not bound_notification:
+                ping_attempts += 1
+                if not _send(ping_argv):
+                    LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
+                    # Ping failures stop before cursor mutation, so the row retries in order.
+                    break
+                ping_successes += 1
             if card_argv:
                 ledger_file = config.get("ledger_file")
                 card_success, card_stdout = _send_captured(card_argv)
@@ -406,10 +426,19 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                     break
                 else:
                     card = _last_json_object(card_stdout)
-                    identifier = card.get("identifier") if isinstance(card, dict) else None
+                    identifier = _card_identifier(card)
+                    if bound_notification and identifier is None:
+                        card_failures += 1
+                        LOGGER.error(
+                            "card sender returned no usable identifier for %s line %d",
+                            source,
+                            line_index + 1,
+                        )
+                        break
+                    ledger_tracked = False
                     if ledger_file:
                         # Ledger append behavior is unchanged once card delivery succeeds.
-                        _append_ledger(
+                        ledger_tracked = _append_ledger(
                             ledger_file,
                             digest=digest,
                             department=watch["department"],
@@ -424,7 +453,15 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                             due=row.get("due"),
                             has_due="due" in row,
                         )
-                    if isinstance(identifier, str) and identifier and config["buzz"]:
+                    if bound_notification and not ledger_tracked:
+                        card_failures += 1
+                        LOGGER.error(
+                            "bound notification requires a tracked ledger row for %s line %d",
+                            source,
+                            line_index + 1,
+                        )
+                        break
+                    if identifier is not None and config["buzz"]:
                         buzz_values = {**values, "card": identifier}
                         buzz_argv = _render(config["buzz"], buzz_values)
                         if not _send(buzz_argv):
@@ -451,7 +488,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             ", ".join(missing_watch_paths),
         )
         return 4
-    return 3 if polarity_failures or card_failures or (attempts and ping_successes == 0) else 0
+    return 3 if polarity_failures or card_failures or (ping_attempts and ping_successes == 0) else 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -297,7 +297,9 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
     elif artifact_kind:
         unknowns.append(f"no {artifact_kind} matched configured evidence: {artifact_location}")
 
-    log_files = artifacts if artifact_kind == "log" else []
+    # Historical logs remain audit evidence, but only the newest matching log
+    # represents the unit's current health.
+    log_files = [newest] if artifact_kind == "log" and artifacts else []
     error_logs: list[Path] = []
     for path in log_files:
         try:
