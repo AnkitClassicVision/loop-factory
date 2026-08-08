@@ -196,15 +196,33 @@ four gates plus a plumbing task. Measure before speccing it.
 
 ### ONE next pickup action
 
-**Do not start U4, U2a-c, U3 or U7 from the spec as written.** Ankit's instruction
-2026-08-07: stop after U0 and have Fable plan the rest. A Fable design review already
-found the sequencing defect that produced U0, and rated **U2a the most dangerous
-remaining unit** — it is where a read/propose-only lane grows a real Gmail write,
-behind the D2 autosend that removed the human APPROVE, at the moment U1/U4 give the
-worker a quota-shaped incentive to send. Fable's planning pass (order, disjoint file
-ownership per unit, the decisions to lock before each spec, the exact check
-assertions, and what to CUT) was in flight when this was written; read its output
-before writing any spec.
+**Present Fable's plan to Ankit and get sign-off before building anything.**
+Ankit's instruction 2026-08-07: stop after U0 and have Fable plan the rest. That
+plan has now LANDED and its three actionable claims are verified; both live in
+`~/handoffs/2026-08-07-loop-drive-contract-fable-plan.md`. Do not start U4, U2a-c,
+U3 or U7 from the spec as written, and start no sending unit (U2a, U2b, U3) without
+Ankit's sign-off — those are the ones that can put email in front of a guest.
+
+Fable's plan in one paragraph: Wave 1 = U4 + U2a + U7-module in parallel with
+disjoint file ownership; Wave 2 = U2b, with U2c folded into U2b's check instead of
+specced as a unit; Wave 3 = U7 flagship producer, then U3. Bound U3's patch surface
+to the `TEMPLATES` dict in `server/pipeline/outreach.py` and defer its patch
+EXECUTOR until a real fingerprint reaches 2. Exclude the flagship gate from U7's
+first cut. Fable rates **U2a the most dangerous remaining unit** — a read/propose-only
+lane grows a real Gmail write, behind the D2 autosend that removed the human
+APPROVE, at the moment U1/U4 give the worker a quota-shaped incentive to send.
+
+Three measurements taken before the plan is acted on:
+- no worker-minutes meter exists anywhere (only U0's ceiling enum names it), so U4
+  must BUILD the estate-wide weekly ledger, not read one;
+- `process/proofs/source_room_authority_manifest.json` is stamped 2026-06-25, mtime
+  Jul 1, and no production loop refreshes it — a `source_truth_resolved_before_intake`
+  gate keyed on 7-day staleness (`source_room.py:51`) would block guest acquisition
+  permanently. Resolve this before U7's spec freezes that gate's input;
+- `flagship_required_for_human_communication_output` is not checkable today (voice-QA
+  receipt records no model; action artifact schema forbids extra keys at
+  `referral_touch_automation.py:169-171`; codex lane records `model ''` /
+  `model_source 'unpinned'`). U7 = four gates + a plumbing task + one late gate.
 
 Standing requirements for whatever comes next, learned the hard way:
 - every remaining unit edits `run_podcast_loop.sh` control flow, so every check must
