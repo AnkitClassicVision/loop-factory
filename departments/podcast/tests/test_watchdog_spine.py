@@ -938,12 +938,12 @@ def test_changed_sensor_current_failure_never_counts_as_healthy():
     key = next(iter(incidents))
     observation = {
         **_observation("fail", "2026-07-23T12:00:00+00:00"),
-        "sensor": "aggregate",
+        "sensor": "log",
     }
     candidate = {
         **_candidate("2026-07-23T12:00:00+00:00"),
-        "sensor": "aggregate",
-        "failure_class": "aggregate_failed",
+        "sensor": "log",
+        "failure_class": "log_error",
     }
 
     incidents, _ = fingerprint_dedup.merge_candidates(
@@ -959,7 +959,7 @@ def test_newer_unrelated_observation_does_not_hide_subject_health():
     key = next(iter(incidents))
     healthy = {
         **_observation(ts="2026-07-23T12:00:00+00:00"),
-        "sensor": "aggregate",
+        "sensor": "timer",
     }
     unrelated = {
         **_observation(ts="2026-07-23T13:00:00+00:00"),
