@@ -3,7 +3,7 @@
 Configuration YAML::
 
     cursor_file: path/to/cursor.json
-    ledger_file: path/to/card_ledger.jsonl  # optional
+    ledger_file: path/to/card_ledger.jsonl  # required when senders.buzz is configured
     watches:
       - path: path/to/decisions_outbox.jsonl
         department: department-label
@@ -19,6 +19,9 @@ Configuration YAML::
         - "{title}"
         - --body
         - "{body}"
+        # Optional once approved in live config:
+        # - --dedupe-key
+        # - "{dedupe_key}"
       buzz:
         - buzz-command
         - --card
@@ -27,7 +30,7 @@ Configuration YAML::
 
 Sender values are argv templates, never shell commands. Ping templates may use
 ``{text}``, ``{department}``, and ``{kind}``; card templates may use
-``{title}``, ``{body}``, ``{department}``, and ``{kind}``; optional buzz
+``{title}``, ``{body}``, ``{dedupe_key}``, ``{department}``, and ``{kind}``; optional buzz
 templates may use ``{card}``, ``{text}``, ``{department}``, and ``{kind}``.
 
 Exit codes: 2 for invalid configuration, 3 for a sender delivery failure,
@@ -108,6 +111,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
         not isinstance(ledger_file, str) or not ledger_file
     ):
         raise ConfigError("ledger_file must be a non-empty path when configured")
+    if buzz and ledger_file is None:
+        raise ConfigError("ledger_file is required when senders.buzz is configured")
     clean_watches = []
     for index, watch in enumerate(watches):
         if not isinstance(watch, dict):
@@ -205,6 +210,7 @@ def _render(template: list[str], values: dict[str, str]) -> list[str]:
         .replace("{title}", values.get("title", ""))
         .replace("{body}", values.get("body", ""))
         .replace("{card}", values.get("card", ""))
+        .replace("{dedupe_key}", values.get("dedupe_key", ""))
         .replace("{department}", values["department"])
         .replace("{kind}", values["kind"])
         for item in template
@@ -317,8 +323,7 @@ def _append_ledger(
 def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     cursor_path = Path(config["cursor_file"])
     cursor = _load_cursor(cursor_path)
-    ping_attempts = 0
-    ping_successes = 0
+    any_ping_failure = False
     card_failures = 0
     polarity_failures = 0
     changed = False
@@ -347,6 +352,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 LOGGER.error("%s line %d is not a JSON object", source, line_index + 1)
                 break
             digest = hashlib.sha256(f"{watch_path}{raw}".encode()).hexdigest()
+            row_digest = hashlib.sha256(raw.encode()).hexdigest()
             if digest in state["last_hashes"]:
                 state["offset_lines"] = line_index + 1
                 changed = True
@@ -378,6 +384,12 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 ),
                 "department": watch["department"],
                 "kind": watch["kind"],
+                "dedupe_key": (
+                    f"loop-factory-fyi:{watch['department']}"
+                    if isinstance(row.get("card"), dict)
+                    and row["card"].get("fyi_only") is True
+                    else row_digest
+                ),
             }
             human_text = "\n".join(
                 (
@@ -407,12 +419,11 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 continue
             bound_notification = bool(card_argv and config["buzz"])
             if not bound_notification:
-                ping_attempts += 1
                 if not _send(ping_argv):
+                    any_ping_failure = True
                     LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
                     # Ping failures stop before cursor mutation, so the row retries in order.
                     break
-                ping_successes += 1
             if card_argv:
                 ledger_file = config.get("ledger_file")
                 card_success, card_stdout = _send_captured(card_argv)
@@ -488,7 +499,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             ", ".join(missing_watch_paths),
         )
         return 4
-    return 3 if polarity_failures or card_failures or (ping_attempts and ping_successes == 0) else 0
+    return 3 if polarity_failures or card_failures or any_ping_failure else 0
 
 
 def main(argv: list[str] | None = None) -> int:

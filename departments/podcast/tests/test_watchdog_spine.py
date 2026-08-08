@@ -248,6 +248,35 @@ def test_newest_clean_log_overrides_historical_error(tmp_path):
     assert old_log.read_text(encoding="utf-8") == "fatal historical failure\n"
 
 
+def test_equal_mtime_uses_lexically_later_log_as_current_evidence(tmp_path):
+    estate = _estate(
+        tmp_path,
+        [{
+            "name": "podcast-prep-sweep",
+            "expected_cadence": "15min",
+            "stale_after_minutes": 30,
+            "log_glob": "prep-sweep-*.log",
+        }],
+    )
+    earlier_log = tmp_path / "logs" / "prep-sweep-2026-07-21.log"
+    later_log = tmp_path / "logs" / "prep-sweep-2026-07-22.log"
+    earlier_log.write_text("fatal historical failure\n", encoding="utf-8")
+    later_log.write_text("healthy\n", encoding="utf-8")
+    now = datetime(2026, 7, 22, 12, tzinfo=timezone.utc)
+    os.utime(earlier_log, (now.timestamp(),) * 2)
+    os.utime(later_log, (now.timestamp(),) * 2)
+
+    observation = sense_estate.collect_observations(
+        estate, now=now, systemctl_runner=_healthy_systemctl
+    )[0]
+
+    assert observation["status"] == "ok"
+    assert observation["metrics"]["evidence_path"] == str(later_log)
+    assert observation["metrics"]["log_files_checked"] == 1
+    assert observation["metrics"]["log_error_files"] == 0
+    assert earlier_log.read_text(encoding="utf-8") == "fatal historical failure\n"
+
+
 def test_newest_error_log_still_fails_closed(tmp_path):
     estate = _estate(
         tmp_path,
@@ -884,17 +913,19 @@ def test_subject_without_current_observation_does_not_accrue_health():
     assert incidents[key]["consecutive_healthy"] == 0
 
 
-def test_sensor_label_flip_recovers_on_third_distinct_healthy_cycle():
-    incidents, _ = fingerprint_dedup.merge_candidates([_candidate()])
+@pytest.mark.parametrize("opening_sensor", ["receipt", "log"])
+def test_sensor_label_flip_recovers_on_third_distinct_healthy_cycle(opening_sensor):
+    opening_candidate = {**_candidate(), "sensor": opening_sensor}
+    incidents, _ = fingerprint_dedup.merge_candidates([opening_candidate])
     key = next(iter(incidents))
 
     for day in range(23, 26):
         observation = {
             **_observation(ts=f"2026-07-{day}T12:00:00+00:00"),
-            "sensor": "aggregate",
+            "sensor": "timer",
         }
         incidents, _ = fingerprint_dedup.merge_candidates(
-            [_candidate()], incidents, observations=[observation]
+            [], incidents, observations=[observation]
         )
 
     assert incidents[key]["state"] == "resolved"

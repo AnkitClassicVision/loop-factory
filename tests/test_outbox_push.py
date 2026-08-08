@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
-
-from factory import outbox_push
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +32,18 @@ def _card_sender_output(tmp_path: Path, name: str, output: str) -> Path:
         f"p=pathlib.Path({str(tmp_path / (name + '.jsonl'))!r})\n"
         "with p.open('a') as f: f.write('called\\n')\n"
         f"sys.stdout.write({output!r})\n",
+        encoding="utf-8",
+    )
+    return script
+
+
+def _selective_ping_sender(tmp_path: Path) -> Path:
+    script = tmp_path / "selective_ping.py"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        f"p=pathlib.Path({str(tmp_path / 'selective_ping.jsonl')!r})\n"
+        "with p.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "raise SystemExit(1 if 'retry me' in sys.argv[1] else 0)\n",
         encoding="utf-8",
     )
     return script
@@ -110,6 +121,40 @@ def test_duplicate_row_content_is_skipped_by_hash(tmp_path):
     assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)]["offset_lines"] == 2
 
 
+def test_fyi_rows_share_stable_department_dedupe_key(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(
+        json.dumps({"eli5": "first FYI", "card": {"fyi_only": True}}) + "\n"
+        + json.dumps({"eli5": "second FYI", "card": {"fyi_only": True}}) + "\n"
+    )
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    assert [call[-1] for call in _calls(tmp_path / "card.jsonl")] == [
+        "loop-factory-fyi:label",
+        "loop-factory-fyi:label",
+    ]
+
+
+def test_real_decision_uses_unique_row_digest_as_dedupe_key(tmp_path):
+    raw = json.dumps({"question": "Approve this decision?"})
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(raw + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    expected = hashlib.sha256(raw.encode()).hexdigest()
+    assert _calls(tmp_path / "card.jsonl")[0][-1] == expected
+
+
 def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tmp_path):
     watch = tmp_path / "outbox.jsonl"
     watch.write_text(json.dumps({"eli5": "first"}) + "\n")
@@ -129,6 +174,28 @@ def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tm
     texts = [call[0] for call in _calls(tmp_path / "ping.jsonl")]
     assert sum("first" in text for text in texts) == 1
     assert sum("second" in text for text in texts) == 1
+
+
+def test_mixed_watch_ping_failure_forces_exit_three_and_preserves_failed_row(tmp_path):
+    failed_watch = tmp_path / "failed.jsonl"
+    successful_watch = tmp_path / "successful.jsonl"
+    failed_watch.write_text(json.dumps({"eli5": "retry me"}) + "\n")
+    successful_watch.write_text(json.dumps({"eli5": "consume me"}) + "\n")
+    ping = _selective_ping_sender(tmp_path)
+    card = _sender(tmp_path, "card")
+    config = _config(tmp_path, failed_watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"].append(
+        {"path": str(successful_watch), "department": "label", "kind": "approval"}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 3
+
+    cursor = json.loads((tmp_path / "cursor.json").read_text())
+    assert cursor[str(failed_watch)]["offset_lines"] == 0
+    assert cursor[str(successful_watch)]["offset_lines"] == 1
+    assert len(_calls(tmp_path / "selective_ping.jsonl")) == 2
 
 
 def test_card_failure_leaves_row_unconsumed(tmp_path):

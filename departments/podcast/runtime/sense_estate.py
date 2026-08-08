@@ -259,7 +259,7 @@ def _timer_observation(item: dict[str, Any], context: dict[str, Any]) -> dict[st
             artifacts = [ledger]
 
     if artifact_kind and artifacts:
-        newest = max(artifacts, key=lambda path: path.stat().st_mtime)
+        newest = max(artifacts, key=lambda path: (path.stat().st_mtime, str(path)))
         age_minutes = max(0.0, (now.timestamp() - newest.stat().st_mtime) / 60)
         metrics.update(
             {

@@ -66,6 +66,8 @@ def _config(
     }
     if ledger_file is not None:
         value["ledger_file"] = str(ledger_file)
+    elif buzz is not None:
+        value["ledger_file"] = str(tmp_path / "ledger.jsonl")
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(value), encoding="utf-8")
     return path
@@ -297,9 +299,15 @@ def test_bound_path_without_ledger_fails_before_buzz(tmp_path):
     card = _sender(tmp_path, "card", output='{"identifier":"ANK-91"}\n')
     buzz = _sender(tmp_path, "buzz")
 
-    result = _run(_config(tmp_path, watch, ping, card, buzz=buzz))
+    config = _config(tmp_path, watch, ping, card, buzz=buzz)
+    data = yaml.safe_load(config.read_text())
+    data.pop("ledger_file")
+    config.write_text(yaml.safe_dump(data))
+    result = _run(config)
 
-    assert result.returncode == 3
+    assert result.returncode == 2
+    assert "ledger_file is required when senders.buzz is configured" in result.stderr
+    assert _calls(tmp_path / "card.jsonl") == []
     assert _calls(tmp_path / "ping.jsonl") == []
     assert _calls(tmp_path / "buzz.jsonl") == []
 
