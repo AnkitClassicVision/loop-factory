@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
-
-from factory import outbox_push
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,8 +30,21 @@ def _card_sender_output(tmp_path: Path, name: str, output: str) -> Path:
     script.write_text(
         "import pathlib, sys\n"
         f"p=pathlib.Path({str(tmp_path / (name + '.jsonl'))!r})\n"
-        "with p.open('a') as f: f.write('called\\n')\n"
+        "import json\n"
+        "with p.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
         f"sys.stdout.write({output!r})\n",
+        encoding="utf-8",
+    )
+    return script
+
+
+def _selective_ping_sender(tmp_path: Path) -> Path:
+    script = tmp_path / "selective_ping.py"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        f"p=pathlib.Path({str(tmp_path / 'selective_ping.jsonl')!r})\n"
+        "with p.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "raise SystemExit(1 if 'retry me' in sys.argv[1] else 0)\n",
         encoding="utf-8",
     )
     return script
@@ -83,6 +95,23 @@ def test_new_rows_pushed_once_and_second_tick_uses_offset(tmp_path):
     )
 
 
+def test_escalation_card_uses_approve_and_respond_proposal_grammar(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"question": "Keep this handling?"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"][0]["kind"] = "escalation"
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    body = _calls(tmp_path / "card.jsonl")[0][1]
+    assert "APPROVE (keep or accept this handling as-is)" in body
+    assert "FIX: <change> (request a change or retirement" in body
+    assert "external_send" not in body
+    assert "stale evidence" not in body
+
+
 def test_duplicate_row_content_is_skipped_by_hash(tmp_path):
     row = json.dumps({"eli5": "same"})
     watch = tmp_path / "outbox.jsonl"
@@ -91,6 +120,44 @@ def test_duplicate_row_content_is_skipped_by_hash(tmp_path):
     assert _run(_config(tmp_path, watch, ping, card)).returncode == 0
     assert len(_calls(tmp_path / "ping.jsonl")) == 1
     assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)]["offset_lines"] == 2
+
+
+def test_fyi_rows_share_stable_department_dedupe_key(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(
+        json.dumps({"eli5": "first FYI", "card": {"fyi_only": True}}) + "\n"
+        + json.dumps({"eli5": "second FYI", "card": {"fyi_only": True}}) + "\n"
+    )
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    assert [call[-1] for call in _calls(tmp_path / "card.jsonl")] == [
+        "loop-factory-fyi:label",
+        "loop-factory-fyi:label",
+    ]
+    title, body = _calls(tmp_path / "card.jsonl")[0][:2]
+    assert title == "[label] fyi: first FYI"
+    assert all(action in body for action in ("ACKNOWLEDGE", "SNOOZE 24H", "RETIRE"))
+    assert all(word not in body for word in ("APPROVE", "SKIP", "FIX"))
+
+
+def test_real_decision_uses_unique_row_digest_as_dedupe_key(tmp_path):
+    raw = json.dumps({"question": "Approve this decision?"})
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(raw + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 0
+    expected = hashlib.sha256(raw.encode()).hexdigest()
+    assert _calls(tmp_path / "card.jsonl")[0][-1] == expected
 
 
 def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tmp_path):
@@ -114,15 +181,145 @@ def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tm
     assert sum("second" in text for text in texts) == 1
 
 
-def test_card_failure_does_not_block_cursor(tmp_path):
+def test_mixed_watch_ping_failure_forces_exit_three_and_preserves_failed_row(tmp_path):
+    failed_watch = tmp_path / "failed.jsonl"
+    successful_watch = tmp_path / "successful.jsonl"
+    failed_watch.write_text(json.dumps({"eli5": "retry me"}) + "\n")
+    successful_watch.write_text(json.dumps({"eli5": "consume me"}) + "\n")
+    ping = _selective_ping_sender(tmp_path)
+    card = _sender(tmp_path, "card")
+    config = _config(tmp_path, failed_watch, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"].append(
+        {"path": str(successful_watch), "department": "label", "kind": "approval"}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    assert _run(config).returncode == 3
+
+    cursor = json.loads((tmp_path / "cursor.json").read_text())
+    assert cursor[str(failed_watch)]["offset_lines"] == 0
+    assert cursor[str(successful_watch)]["offset_lines"] == 1
+    assert len(_calls(tmp_path / "selective_ping.jsonl")) == 2
+
+
+def test_card_failure_leaves_row_unconsumed(tmp_path):
     watch = tmp_path / "outbox.jsonl"
     watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
     ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
-    config = _config(tmp_path, watch, ping, card)
+    cursor = tmp_path / "cursor.json"
+    cursor.write_text(
+        json.dumps({str(watch): {"offset_lines": 0, "last_hashes": []}}) + "\n"
+    )
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+
+    assert _run(config).returncode == 3
+    assert json.loads(cursor.read_text())[str(watch)] == {
+        "offset_lines": 0,
+        "last_hashes": [],
+    }
+    assert not ledger.exists()
+
+
+def test_card_failure_retries_successfully_on_next_tick(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+
+    assert _run(config).returncode == 3
+
+    working_card = _card_sender_output(
+        tmp_path,
+        "working_card",
+        '{"identifier":"ANK-456","url":"https://example.test/ANK-456"}\n',
+    )
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"][1] = str(working_card)
+    config.write_text(yaml.safe_dump(data))
+
     assert _run(config).returncode == 0
-    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)]["offset_lines"] == 1
-    assert _run(config).returncode == 0
-    assert len(_calls(tmp_path / "ping.jsonl")) == 1
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    assert len(state["last_hashes"]) == 1
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-456"
+    assert len(_calls(tmp_path / "ping.jsonl")) == 2
+
+
+def test_ledger_failure_without_buzz_retries_card_with_same_dedupe_key(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "persist this card"}) + "\n")
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("not a directory")
+    ledger = blocked_parent / "ledger.jsonl"
+    cursor = tmp_path / "cursor.json"
+    cursor.write_text(
+        json.dumps({str(watch): {"offset_lines": 0, "last_hashes": []}}) + "\n"
+    )
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(
+        tmp_path,
+        "stable_card",
+        '{"identifier":"ANK-654","url":"https://example.test/ANK-654"}\n',
+    )
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    first = _run(config)
+
+    assert first.returncode == 3
+    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)][
+        "offset_lines"
+    ] == 0
+    assert "card ledger persistence failed" in first.stderr
+
+    blocked_parent.unlink()
+    blocked_parent.mkdir()
+    second = _run(config)
+
+    assert second.returncode == 0
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    card_calls = _calls(tmp_path / "stable_card.jsonl")
+    assert len(card_calls) == 2
+    assert card_calls[0][-1] == card_calls[1][-1]
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-654"
+
+
+def test_buzz_failure_after_card_and_ledger_consumes_row(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "buzz later"}) + "\n")
+    ledger = tmp_path / "ledger.jsonl"
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(
+        tmp_path,
+        "card_for_buzz",
+        '{"identifier":"ANK-789","url":"https://example.test/ANK-789"}\n',
+    )
+    buzz = _sender(tmp_path, "bad_buzz", 1)
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    data["senders"]["buzz"] = [
+        sys.executable,
+        str(buzz),
+        "{card}",
+        "{action_mode}",
+    ]
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(config)
+
+    assert result.returncode == 0
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    assert len(state["last_hashes"]) == 1
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-789"
+    assert "buzz sender failed" in result.stderr
 
 
 def test_sensitive_fields_excluded_and_text_truncated(tmp_path):
@@ -140,11 +337,35 @@ def test_sensitive_fields_excluded_and_text_truncated(tmp_path):
     assert all(secret not in value for value in card_args)
 
 
-def test_missing_watch_file_is_tolerated(tmp_path):
+def test_single_missing_watch_file_is_a_stall(tmp_path):
     ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
-    result = _run(_config(tmp_path, tmp_path / "missing.jsonl", ping, card))
-    assert result.returncode == 0
+    missing = tmp_path / "missing.jsonl"
+    result = _run(_config(tmp_path, missing, ping, card))
+    assert result.returncode == 4
+    assert str(missing) in result.stderr
     assert not (tmp_path / "cursor.json").exists()
+
+
+def test_missing_watch_file_is_tolerated_when_another_watch_is_present(tmp_path):
+    missing = tmp_path / "missing.jsonl"
+    present = tmp_path / "present.jsonl"
+    present.write_text(json.dumps({"eli5": "existing watch processed"}) + "\n")
+    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
+    config = _config(tmp_path, missing, ping, card)
+    data = yaml.safe_load(config.read_text())
+    data["watches"].append(
+        {"path": str(present), "department": "label", "kind": "approval"}
+    )
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(config)
+
+    assert result.returncode == 0
+    assert len(_calls(tmp_path / "ping.jsonl")) == 1
+    assert "existing watch processed" in _calls(tmp_path / "ping.jsonl")[0][0]
+    assert json.loads((tmp_path / "cursor.json").read_text())[str(present)][
+        "offset_lines"
+    ] == 1
 
 
 def test_invalid_config_exits_two(tmp_path):
