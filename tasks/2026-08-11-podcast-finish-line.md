@@ -108,16 +108,18 @@ is a threshold. If only heartbeats, it is a new sensor.
 - Charters, autonomy states and promotion thresholds stay human-only.
 - No second unit until the first has produced a real artifact.
 
-## The one open question for Ankit
+## ANSWERED: the first-draft gate (Ankit, 2026-08-10)
 
-He chose "ride the existing autosend lane now", which means a QA-passed draft
-sends with no APPROVE, behind a SKIP window. U11 creates the first draft a loop
-has ever written to a real person.
+**Hold the first THREE drafts for his eyes, then revert to the autosend lane.**
 
-**Question:** should the FIRST live draft be held for his eyes (produced without
-the autosend marker, so it lands as an approve-required card), or go straight
-into the autosend lane like every other podcast outreach draft?
+Implementation, and it must be counted by evidence rather than by a flag someone
+can forget to flip: the producer omits the autosend marker while the count of
+drafts it has ever created is under 3, so those land as approve-required cards.
+From the 4th onward it behaves exactly like every other podcast outreach draft.
 
-Cost of holding: one approval from him, and a one-line difference in what the
-producer writes. Cost of not holding: the first letter a machine ever wrote to a
-prospective guest goes out without a human reading it.
+The count comes from the producer's own ledger of created drafts, not from a
+config toggle and not from a date. U11's proof must show draft 1 landing as
+approve-required and a simulated 4th landing with the autosend marker; watch both.
+
+Rationale, his: three letters is enough to see a pattern in the copy, one is
+luck.
