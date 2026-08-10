@@ -198,6 +198,64 @@ def drive_module(repo: Path, out: Path, case: str) -> dict | None:
         return None
 
 
+def check_cli(repo: Path, out: Path) -> None:
+    """The CLI is the ONLY thing the runner calls. It must actually run the producer.
+
+    The r11 build shipped a main() that read an existing receipt and mapped its
+    status to an exit code — it never called run_guest_outreach_draft, and it did
+    not accept the --ledger the runner passes, so every real invocation would have
+    died on an argparse usage error and been read as a clean stop. Neither half of
+    this check executed the CLI, which is how it got through.
+    """
+    cli_dir = out / "cli"
+    cli_dir.mkdir(parents=True, exist_ok=True)
+    receipt = cli_dir / "receipt.json"
+    if receipt.exists():
+        receipt.unlink()
+    truth = cli_dir / "source-truth.json"
+    truth.write_text(json.dumps({
+        "schema": "source-truth-revalidation/v1",
+        "generated_at": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(),
+        "blocking_gaps": []}), encoding="utf-8")
+    candidates = cli_dir / "candidates.json"
+    candidates.write_text(json.dumps([{
+        "alias": "cli-warm", "temperature": "warm", "channel": "email",
+        "podcast_status": "new_inbound", "email_present": True,
+        "cleared_by_human": False, "to": "guest@example.invalid",
+        "subject": "quick question", "body": "Hey there, short note."}]), encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, "-m", "server.pipeline.guest_outreach_draft",
+         "--receipt", str(receipt), "--ledger", str(cli_dir / "ledger.json"),
+         "--source-truth", str(truth), "--candidates", str(candidates)],
+        capture_output=True, text=True, timeout=300, cwd=str(repo),
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(repo),
+             "PLACEHOLDER_MODE": "1"},
+    )
+    if not receipt.is_file():
+        fail("cli", "the CLI wrote no receipt — it did not run the producer. This is the exact "
+                    "entry point the runner calls; a CLI that only reads a receipt can never draft.",
+             f"rc={done.returncode} stderr={done.stderr[-300:]}")
+        return
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        fail("cli", f"the CLI receipt is unreadable: {exc}")
+        return
+    if payload.get("schema") != "obe.guest.outreach.draft.v1":
+        fail("cli", "the CLI receipt carries the wrong schema", payload.get("schema"))
+    if done.returncode not in (0, 2):
+        fail("cli", "the CLI must exit 0 (drafted) or 2 (clean stop), never 1 or a usage error",
+             f"rc={done.returncode} stderr={done.stderr[-200:]}")
+    if payload.get("status") == "drafted" and done.returncode != 0:
+        fail("cli", "a drafted receipt must exit 0", done.returncode)
+    if payload.get("sent") is not False:
+        fail("cli", "the CLI must never report sent", payload)
+    if payload.get("status") not in {"drafted", "gate_blocked", "capped", "no_candidate"}:
+        fail("cli", "the CLI produced no recognized status — it did not execute the producer", payload)
+
+
 def check_module(repo: Path, out: Path) -> None:
     module = repo / "server/pipeline/guest_outreach_draft.py"
     if not module.is_file():
@@ -308,6 +366,44 @@ def producer_calls(report: dict) -> list[dict]:
     return [c for c in report.get("external_calls", []) if c.get("kind", "").startswith("guest-producer")]
 
 
+def check_seam(repo: Path, out: Path) -> None:
+    """THE SEAM TEST. The one assertion that catches an interface mismatch.
+
+    Every other assertion in this file tests one side of the runner/producer
+    boundary. This one runs the REAL runner building the REAL argv and invoking
+    the REAL producer CLI (under PLACEHOLDER_MODE, so no provider is touched).
+    Proven 2026-08-10: with the runner missing --source-truth, the producer exits
+    2 and writes NO receipt, while the run still exits 0. That is the defect that
+    reached production, and nothing else in this check could see it.
+    """
+    report = run_scenario(repo, "guest-producer-seam", out)
+    if not report:
+        return
+    calls = [c for c in report.get("external_calls", []) if c.get("kind") == "guest-producer-live"]
+    if not calls:
+        fail("seam", "the real producer CLI was never executed; the seam is untested", report)
+        return
+    receipt_dir = Path(report["receipt"]).parent if report.get("receipt") else None
+    drafts = list(receipt_dir.glob("*.draft.json")) if receipt_dir else []
+    if not drafts:
+        fail("seam",
+             "the producer wrote NO receipt. The runner's argv and the producer's required "
+             "arguments do not match, so it died in argparse. Its usage exit (2) is the same "
+             "status as an honest 'no eligible candidate', so this reads as a healthy no-op "
+             "forever. THE RECEIPT IS THE AUTHORITY, not the exit code.",
+             {"producer_rc": calls[0].get("rc"), "exit": report.get("exit_code")})
+        return
+    payload = json.loads(drafts[0].read_text(encoding="utf-8"))
+    if payload.get("drafts_created") != 1 or payload.get("status") != "drafted":
+        fail("seam", "the seam ran but produced no draft", payload)
+    if payload.get("sent") is not False:
+        fail("seam", "the producer must never report a send", payload)
+    if report.get("verdict") != "DROVE":
+        fail("seam", "a run that created a draft must compute DROVE", report.get("verdict"))
+    if not report.get("tree_unchanged"):
+        fail("seam", "the seam run wrote into the driven tree", report)
+
+
 def check_runner(repo: Path, out: Path) -> None:
     report = run_scenario(repo, "guest-producer-drafted", out)
     if report:
@@ -370,7 +466,9 @@ def main() -> int:
 
     if not args.runner_only:
         check_module(repo, out)
+        check_cli(repo, out)
     if not args.module_only:
+        check_seam(repo, out)
         check_runner(repo, out)
 
     if FAILURES:
