@@ -6,9 +6,9 @@ wrapper runs the executed check, stages ONLY the declared owned paths, refuses
 any other tracked change, and exports the patch outside the worktree (passing
 tasks get their worktree deleted).
 
-  --mode --module-only   U2a: drives server/pipeline/guest_outreach_draft.py
+  --mode module   U2a: drives server/pipeline/guest_outreach_draft.py
                          directly with a fake Gmail service and the real gates.
-  --mode --runner-only   U2b: executes the real runner through the shadow
+  --mode runner   U2b: executes the real runner through the shadow
                          harness for the three producer scenarios.
 """
 from __future__ import annotations
@@ -34,7 +34,10 @@ def git(worktree: Path, *args: str):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--worktree", default=".", type=Path)
-    parser.add_argument("--mode", required=True, choices=["--module-only", "--runner-only"])
+    # Values must not start with "--": argparse would read the next token as a
+    # flag and fail with "expected one argument". That defect cost two worker
+    # lanes ~253k tokens on 2026-08-10 before it was classified.
+    parser.add_argument("--mode", required=True, choices=["module", "runner"])
     parser.add_argument("--owned", action="append", required=True)
     parser.add_argument("--patch", type=Path)
     parser.add_argument("--summary", type=Path, default=Path("fix-summary.md"))
@@ -46,7 +49,8 @@ def main() -> int:
     failures: list[str] = []
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
-    if args.mode == "--runner-only":
+    check_flag = "--module-only" if args.mode == "module" else "--runner-only"
+    if args.mode == "runner":
         syntax = subprocess.run(["bash", "-n", str(worktree / "scripts/run_podcast_loop.sh")],
                                 capture_output=True, text=True)
         if syntax.returncode != 0:
@@ -55,13 +59,13 @@ def main() -> int:
     if not failures:
         with tempfile.TemporaryDirectory(prefix="wave2-") as tmp:
             done = subprocess.run(
-                [sys.executable, str(CHECK), "--repo", str(worktree), args.mode, "--out", tmp],
+                [sys.executable, str(CHECK), "--repo", str(worktree), check_flag, "--out", tmp],
                 capture_output=True, text=True, timeout=1800, env=env)
             sys.stdout.write(done.stdout)
             if done.stderr.strip():
                 sys.stdout.write(done.stderr[-500:])
             if done.returncode != 0:
-                failures.append(f"FAIL [u2a_producer_check {args.mode}]: see the executed-check output above")
+                failures.append(f"FAIL [u2a_producer_check {check_flag}]: see the executed-check output above")
 
     if args.exported_summary:
         if not args.summary.is_file():
@@ -95,7 +99,7 @@ def main() -> int:
             print(item)
         print(f"\n{len(failures)} failure(s). Exit 1.")
         return 1
-    print(f"PASS [wave2 {args.mode}]: executed check green, patch exported, ownership clean")
+    print(f"PASS [wave2 {check_flag}]: executed check green, patch exported, ownership clean")
     return 0
 
 

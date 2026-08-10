@@ -202,8 +202,8 @@ Assumptions."""
 
 
 LANES = [
-    ("u2a", "producer", "codex", 2400, ["server/pipeline/guest_outreach_draft.py"], "--module-only"),
-    ("u2b", "wiring", "codex", 2400, ["scripts/run_podcast_loop.sh"], "--runner-only"),
+    ("u2a", "producer", "codex", 2400, ["server/pipeline/guest_outreach_draft.py"], "module"),
+    ("u2b", "wiring", "codex", 2400, ["scripts/run_podcast_loop.sh"], "runner"),
 ]
 
 tasks = []

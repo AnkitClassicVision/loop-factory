@@ -1,0 +1,33 @@
+{
+  "run_name": "loop-drive-contract",
+  "workdir": "/mnt/d_drive/ringer-work/loop-drive-contract-r10b",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "r10b-u2a-verify",
+      "engine": "local-shell",
+      "task_type": "code-fix",
+      "timeout_s": 1200,
+      "spec": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-drive-contract/checks/wave2_export_check.py --worktree /mnt/d_drive/ringer-work/loop-drive-contract-r10/r10-u2a-producer --mode module --owned server/pipeline/guest_outreach_draft.py --patch /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.patch --summary /mnt/d_drive/ringer-work/loop-drive-contract-r10/r10-u2a-producer/fix-summary.md --exported-summary /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.summary.md",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/loop-drive-contract/checks/wave2_patch_gate.py --patch /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.patch --summary /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.summary.md --allowed server/pipeline/guest_outreach_draft.py --require ceilings --require delete_draft --require gate_runner",
+      "expect_files": [
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.patch",
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2a-verify.summary.md"
+      ],
+      "verified": "the preserved r10 producer worktree passes the full module check (cold never drafts, a voice-rejected draft is deleted, both charter ceilings bite) and its patch, confined to the one owned file, exports with a complete summary"
+    },
+    {
+      "key": "r10b-u2b-verify",
+      "engine": "local-shell",
+      "task_type": "code-fix",
+      "timeout_s": 1800,
+      "spec": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-drive-contract/checks/wave2_export_check.py --worktree /mnt/d_drive/ringer-work/loop-drive-contract-r10/r10-u2b-wiring --mode runner --owned scripts/run_podcast_loop.sh --patch /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.patch --summary /mnt/d_drive/ringer-work/loop-drive-contract-r10/r10-u2b-wiring/fix-summary.md --exported-summary /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.summary.md",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/loop-drive-contract/checks/wave2_patch_gate.py --patch /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.patch --summary /mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.summary.md --allowed scripts/run_podcast_loop.sh --require guest_outreach_draft --require sends-proof",
+      "expect_files": [
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.patch",
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r10b/r10b-u2b-verify.summary.md"
+      ],
+      "verified": "the preserved r10 wiring worktree passes the runner check by executing the real runner through the shadow harness for all three producer exit codes, and its patch is confined to the runner script"
+    }
+  ]
+}
