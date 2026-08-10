@@ -138,11 +138,11 @@ def check_u9(repo: Path, out: Path) -> None:
     # One warm (referral/inbound source), one cold (sourced), one held, one recently touched.
     inbox.write_text(json.dumps({"schema": "candidate-inbox-v1", "candidates": [
         {"name": "Warm One", "email": "warm@example.invalid", "fit_score": 9,
-         "confidence": "high", "source": "referral", "evidence": "referred by a past guest",
-         "note": "", "first_seen": "2026-08-01"},
+         "confidence": "high", "source": "guest-acquisition-receipt", "evidence": "receipt.md#A1",
+         "note": "referred by a past guest; accepted", "first_seen": "2026-08-01"},
         {"name": "Cold One", "email": "cold@example.invalid", "fit_score": 9,
-         "confidence": "high", "source": "sourced-list", "evidence": "found via directory",
-         "note": "", "first_seen": "2026-08-01"},
+         "confidence": "high", "source": "guest-acquisition-receipt", "evidence": "receipt.md#A1",
+         "note": "found via a directory scrape", "first_seen": "2026-08-01"},
         {"name": "Held One", "email": "held@example.invalid", "fit_score": 9,
          "confidence": "high", "source": "inbound", "evidence": "applied via site",
          "note": "", "first_seen": "2026-08-01"},
@@ -151,11 +151,20 @@ def check_u9(repo: Path, out: Path) -> None:
          "note": "", "first_seen": "2026-08-01"}]}), encoding="utf-8")
     ledger.write_text(json.dumps({"schema": "funnel-ledger/v1", "people": [
         {"id": "p3", "name": "Held One", "stage": "new_inbound", "hold": "until October",
-         "last_touch": None, "evidence": "", "provenance": "", "kind": "guest",
+         "last_touch": {"at": None, "direction": None, "source": None},
+         "evidence": "", "provenance": "", "kind": "guest",
          "first_seen": "2026-08-01", "updated_at": "2026-08-01"},
         {"id": "p4", "name": "Fresh Touch", "stage": "new_inbound", "hold": None,
-         "last_touch": "2026-08-09", "evidence": "", "provenance": "", "kind": "guest",
-         "first_seen": "2026-08-01", "updated_at": "2026-08-09"}]}), encoding="utf-8")
+         "last_touch": {"at": "2026-08-09", "direction": "outbound", "source": "gmail"},
+         "evidence": "", "provenance": "", "kind": "guest",
+         "first_seen": "2026-08-01", "updated_at": "2026-08-09"},
+        # NEVER TOUCHED, in the live shape. The most eligible state there is.
+        # Measured 2026-08-10: a feeder that reads this as "recently touched"
+        # excludes every real candidate forever behind a legitimate-looking zero.
+        {"id": "p1", "name": "Warm One", "stage": "new_inbound", "hold": None,
+         "last_touch": {"at": None, "direction": None, "source": None},
+         "evidence": "", "provenance": "", "kind": "guest",
+         "first_seen": "2026-08-01", "updated_at": "2026-08-01"}]}), encoding="utf-8")
 
     result = out / "candidates.json"
     if result.exists():
