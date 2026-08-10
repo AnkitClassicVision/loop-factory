@@ -55,6 +55,24 @@ Fix: pass `--reentry "$REENTRY_ATTEMPT"`.
 **New assertion required:** a scenario that re-enters and then drafts must end
 with `REENTRY: 1` (or higher), not 0.
 
+## F4 [HIGH, found while red-proving F2] — the guest branch bypasses U4 entirely
+
+Executing the r10 wiring through the harness on the new
+`guest-producer-reenter-then-draft` scenario produced: `exit_code 0`,
+`verdict FAILED`, `reentry_allowed true`, `ringer_invocations 1`.
+
+The new guest-acquisition branch sits ahead of the re-entry `while` loop and
+ends every path with its own `exit 0`. For guest-acquisition — the loop the
+whole re-entry contract exists for — that means: no re-entry ever runs, and a
+FAILED verdict exits SUCCESSFULLY. It silently undoes U4 for the one loop that
+matters most, one day after U4 landed.
+
+Fix: the guest branch must not own the exit. It runs where the referral post-QA
+action runs (inside the `"QA: PASS")` case, AFTER the re-entry loop has settled
+the verdict), and it must leave the runner's existing exit paths intact. If a
+draft is created, the recomputed verdict is what decides the exit, exactly as
+every other loop's is.
+
 ## F3 [MEDIUM] — the HubSpot BCC is dropped
 
 The producer calls `create_draft(..., bcc=None)`. The referral primitive it was

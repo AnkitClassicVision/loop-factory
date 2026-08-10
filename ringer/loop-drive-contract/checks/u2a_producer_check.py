@@ -90,8 +90,10 @@ class FakeGmail:
     def __init__(self):
         self.drafts_created = []
         self.drafts_deleted = []
+        self.bccs = []
     def create_draft(self, *, to, subject, body, bcc=None):
-        CALLS.append({"op": "create", "to_len": len(to)})
+        CALLS.append({"op": "create", "to_len": len(to), "bcc": bcc})
+        self.bccs.append(bcc)
         draft_id = f"draft-{len(self.drafts_created) + 1}"
         self.drafts_created.append(draft_id)
         return draft_id
@@ -136,11 +138,24 @@ def voice_fail(draft_id):
             "receipt_path": str(outdir / "voice-receipt.json")}
 
 gmail = FakeGmail()
+
+# r10 review F1: the producer must NOT author its own source-truth evidence.
+# The caller supplies the revalidation receipt; a stale one must block.
+fresh_truth = outdir / "source-truth-fresh.json"
+fresh_truth.write_text(json.dumps({
+    "schema": "source-truth-revalidation/v1",
+    "generated_at": datetime.now(timezone.utc).isoformat(), "blocking_gaps": []}))
+stale_truth = outdir / "source-truth-stale.json"
+stale_truth.write_text(json.dumps({
+    "schema": "source-truth-revalidation/v1",
+    "generated_at": "2026-06-25T00:00:00+00:00", "blocking_gaps": []}))
+
 kwargs = dict(gmail_service=gmail, gate_runner=gate_runner_real,
               ledger_path=outdir / "ledger.json", receipt_path=outdir / "receipt.json",
+              source_truth_path=(stale_truth if case == "stale-source-truth" else fresh_truth),
               now=datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc))
 
-if case == "warm-drafts":
+if case in ("warm-drafts", "stale-source-truth"):
     result = run_guest_outreach_draft(candidates=[WARM], voice_gate=voice_pass, **kwargs)
 elif case == "cold-blocked":
     result = run_guest_outreach_draft(candidates=[COLD], voice_gate=voice_pass, **kwargs)
@@ -198,6 +213,24 @@ def check_module(repo: Path, out: Path) -> None:
             fail("module:warm-drafts", "this module must NEVER report a send; sending belongs to the executor", r)
         if len(got["created"]) != 1:
             fail("module:warm-drafts", "exactly one Gmail draft must be created", got["created"])
+        bccs = [c.get("bcc") for c in got["calls"] if c.get("op") == "create"]
+        if not bccs or not bccs[0] or "bcc.hubspot.com" not in str(bccs[0]):
+            fail("module:warm-drafts",
+                 "the draft carries no HubSpot BCC, so the touch would never reach the CRM. Reuse the "
+                 "HUBSPOT_BCC constant the referral path already defaults to; do not hardcode it twice.",
+                 bccs)
+
+    got = drive_module(repo, out, "stale-source-truth")
+    if got:
+        r = got["result"]
+        if got["created"]:
+            fail("module:stale-source-truth",
+                 "a STALE source-truth receipt still produced a draft. The gate can only be real if its "
+                 "input comes from the caller; a manifest the producer writes itself always looks fresh.",
+                 got["created"])
+        if r.get("status") != "gate_blocked" or "source_truth" not in json.dumps(r).lower():
+            fail("module:stale-source-truth",
+                 "status must be gate_blocked naming source_truth_resolved_before_intake", r)
 
     for case, gate_word in (("cold-blocked", "channel"), ("nominated-blocked", "nominated")):
         got = drive_module(repo, out, case)
@@ -303,6 +336,19 @@ def check_runner(repo: Path, out: Path) -> None:
             fail("runner:gate-blocked", "the escalation leaks an email-shaped address", sink[:160])
         if report.get("verdict") == "DROVE":
             fail("runner:gate-blocked", "a blocked letter is not a send and must not compute DROVE", report)
+
+    # r10 review F2: a re-entered run that drafts must keep its REENTRY count.
+    report = run_scenario(repo, "guest-producer-reenter-then-draft", out)
+    if report:
+        if report.get("ringer_invocations") != 2:
+            fail("runner:reenter-then-draft", "the run must actually have re-entered once", report)
+        if report.get("reentry") in (0, None):
+            fail("runner:reenter-then-draft",
+                 "the receipt was stamped REENTRY: 0 after a genuine re-entry. The guest branch must pass "
+                 "--reentry \"$REENTRY_ATTEMPT\", not a hardcoded 0 — this is r8 finding 5 returning "
+                 "through a new call site.", report)
+        if report.get("exit_code") != 0:
+            fail("runner:reenter-then-draft", "a successful draft after a re-entry must exit 0", report)
 
     report = run_scenario(repo, "guest-producer-crash", out)
     if report:
