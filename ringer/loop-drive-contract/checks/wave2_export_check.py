@@ -37,7 +37,7 @@ def main() -> int:
     # Values must not start with "--": argparse would read the next token as a
     # flag and fail with "expected one argument". That defect cost two worker
     # lanes ~253k tokens on 2026-08-10 before it was classified.
-    parser.add_argument("--mode", required=True, choices=["module", "runner"])
+    parser.add_argument("--mode", required=True, choices=["module", "runner", "u8", "u9"])
     parser.add_argument("--owned", action="append", required=True)
     parser.add_argument("--patch", type=Path)
     parser.add_argument("--summary", type=Path, default=Path("fix-summary.md"))
@@ -49,7 +49,12 @@ def main() -> int:
     failures: list[str] = []
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
-    check_flag = "--module-only" if args.mode == "module" else "--runner-only"
+    if args.mode in ("u8", "u9"):
+        CHECK_SCRIPT = HERE / "u8_u9_inputs_check.py"
+        check_flag = f"--{args.mode}-only"
+    else:
+        CHECK_SCRIPT = CHECK
+        check_flag = "--module-only" if args.mode == "module" else "--runner-only"
     if args.mode == "runner":
         syntax = subprocess.run(["bash", "-n", str(worktree / "scripts/run_podcast_loop.sh")],
                                 capture_output=True, text=True)
@@ -59,13 +64,13 @@ def main() -> int:
     if not failures:
         with tempfile.TemporaryDirectory(prefix="wave2-") as tmp:
             done = subprocess.run(
-                [sys.executable, str(CHECK), "--repo", str(worktree), check_flag, "--out", tmp],
+                [sys.executable, str(CHECK_SCRIPT), "--repo", str(worktree), check_flag, "--out", tmp],
                 capture_output=True, text=True, timeout=1800, env=env)
             sys.stdout.write(done.stdout)
             if done.stderr.strip():
                 sys.stdout.write(done.stderr[-500:])
             if done.returncode != 0:
-                failures.append(f"FAIL [u2a_producer_check {check_flag}]: see the executed-check output above")
+                failures.append(f"FAIL [{CHECK_SCRIPT.stem} {check_flag}]: see the executed-check output above")
 
     if args.exported_summary:
         if not args.summary.is_file():
