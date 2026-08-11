@@ -50,7 +50,17 @@ record = os.environ["U17_RECORD"]
 
 
 def is_script(name):
-    return any(str(arg).endswith(name) for arg in argv)
+    """Match only the script THIS invocation runs, not any path in the line.
+
+    An interpreter's first argument is the script it executes; everything after
+    is that script's own arguments. Matching anywhere in argv fires on the outer
+    secret_exec call — whose command line naturally mentions the feeder further
+    along — and records an environment captured before any injection has
+    happened. That reads as "the runner passes nothing" no matter what the
+    runner does, and the only way to satisfy it is to hide the feeder's path
+    from the outer command line, which is a checker defect deforming production.
+    """
+    return bool(argv) and str(argv[0]).endswith(name)
 
 
 if is_script("guest_candidate_feed.py"):
@@ -166,6 +176,13 @@ def check(worktree: Path) -> None:
             f'GUEST_FUNNEL_LEDGER={json.dumps(str(root / "ledger.json"))}',
             f'GUEST_CANDIDATES={json.dumps(str(root / "candidates.json"))}',
             f'GUEST_SOURCE_TRUTH={json.dumps(str(root / "source-truth.json"))}',
+            # The runner computes this near the top, before the loop branches.
+            # It must be defined here too: the script runs under `set -u`, so a
+            # missing variable aborts the fragment, and the honest reading of
+            # that abort is "this check did not set the stage", not "the script
+            # is wrong". Leaving it out once already pushed a worker into
+            # hardcoding a fallback home path into production to survive.
+            f'GMAIL_FULL_TOKEN={json.dumps(str(root / "gmail-token.json"))}',
             'REENTRY_ATTEMPT=1',
             'DATE_TAG=2026-08-11',
             f'RECEIPT_DIR={json.dumps(str(root))}',
