@@ -149,19 +149,44 @@ class FakeUnipile:
         return {"items": []}
 
 
+def queue_fixture() -> list[dict]:
+    """The feeder's awaiting_identity verdict — WHO to resolve and on WHICH channel.
+
+    Audit finding 2026-08-11: the generator re-read the raw inbox and re-decided
+    routing with its own is_warm call, so two implementations independently
+    decided who needs identity resolution and the feeder's hold/stage/cadence
+    gates protected nobody here. The queue is now the ONLY admission ticket:
+    not queued means never searched. The reachable record is deliberately absent.
+    """
+    return [
+        {"alias": None, "name_for": WARM_NAME, "channel": "email"},
+        {"alias": None, "name_for": COLD_NAME, "channel": "linkedin"},
+        {"alias": None, "name_for": AMBIGUOUS_NAME, "channel": "email"},
+    ]
+
+
+def bind_queue(cli) -> list[dict]:
+    from scripts.guest_candidate_feed import alias_for, normalized_name
+    queue = []
+    for entry in queue_fixture():
+        queue.append({"alias": alias_for(normalized_name(entry["name_for"])),
+                      "channel": entry["channel"]})
+    return queue
+
+
 def check(worktree: Path) -> None:
     cli = load(worktree, "scripts/identity_proposals.py", "u20_identity_proposals")
     if cli is None:
         return
     if not hasattr(cli, "build_proposals"):
         fail("no_seam",
-             "scripts/identity_proposals.py exposes no build_proposals(inbox, *, hubspot_client, "
+             "scripts/identity_proposals.py exposes no build_proposals(inbox, queue, *, hubspot_client, "
              "unipile_client); there is no way to drive it without calling live APIs")
         return
 
     hubspot, unipile = FakeHubSpot(), FakeUnipile()
     try:
-        report = cli.build_proposals(inbox_fixture(), hubspot_client=hubspot,
+        report = cli.build_proposals(inbox_fixture(), bind_queue(cli), hubspot_client=hubspot,
                                      unipile_client=unipile)
     except Exception as exc:  # noqa: BLE001
         fail("build_raised", f"{exc.__class__.__name__}: {exc}")
@@ -256,7 +281,7 @@ def check(worktree: Path) -> None:
             return [{"name": WARM_NAME, "email": RIGHT_EMAIL,
                      "company": "Harbor Vision", "city": "Ohio"}]
 
-    limited = cli.build_proposals(inbox_fixture(), hubspot_client=RateLimited(),
+    limited = cli.build_proposals(inbox_fixture(), bind_queue(cli), hubspot_client=RateLimited(),
                                   unipile_client=FakeUnipile())
     kept = [entry for entry in (limited.get("proposals") or [])
             if str(entry.get("name", "")).lower() == WARM_NAME.lower()]
@@ -296,7 +321,7 @@ def check(worktree: Path) -> None:
             raise RuntimeError("unipile 401")
 
     try:
-        degraded = cli.build_proposals(inbox_fixture(), hubspot_client=Angry(),
+        degraded = cli.build_proposals(inbox_fixture(), bind_queue(cli), hubspot_client=Angry(),
                                        unipile_client=FakeUnipile())
     except Exception as exc:  # noqa: BLE001
         fail("failure_propagated",
@@ -323,6 +348,14 @@ def check_cli(worktree: Path) -> None:
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         (root / "inbox.json").write_text(json.dumps(inbox_fixture()), encoding="utf-8")
+        from scripts.guest_candidate_feed import alias_for, normalized_name
+        receipt = {"schema": "guest-candidate-feed-report/v1",
+                   "awaiting_identity": [
+                       {"alias": alias_for(normalized_name(WARM_NAME)), "channel": "email",
+                        "reason": "warm candidate with no address"},
+                       {"alias": alias_for(normalized_name(COLD_NAME)), "channel": "linkedin",
+                        "reason": "cold candidate with no address"}]}
+        (root / "reasons.json").write_text(json.dumps(receipt), encoding="utf-8")
         out = root / "proposals.json"
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("HUBSPOT_", "UNIPILE_", "LINKEDIN_"))}
@@ -330,7 +363,8 @@ def check_cli(worktree: Path) -> None:
         env.pop("PYTHONPATH", None)
         done = subprocess.run(
             [sys.executable, str(worktree / "scripts/identity_proposals.py"),
-             "--inbox", str(root / "inbox.json"), "--out", str(out)],
+             "--inbox", str(root / "inbox.json"), "--queue", str(root / "reasons.json"),
+             "--out", str(out)],
             capture_output=True, text=True, timeout=300, cwd=str(worktree), env=env)
 
         if done.returncode != 0:

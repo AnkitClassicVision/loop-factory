@@ -46,7 +46,8 @@ SUMMARY_SECTIONS = ("what changed", "how i verified", "risk")
 
 COLD_NAME = "Ada Lovelace"          # no warm marker in the note
 WARM_NAME = "Grace Hopper"          # referral, so warm by charter
-EMAILED_NAME = "Katherine Johnson"  # has an address, must be unaffected
+EMAILED_NAME = "Katherine Johnson"
+HELD_NAME = "Edith Clarke"  # has an address, must be unaffected
 ADDRESS = "katherine@example.invalid"
 
 FAILURES: list[str] = []
@@ -110,10 +111,17 @@ def check(worktree: Path, contact_state) -> None:
         # Reachable today, and must be entirely unaffected by this change.
         {"name": EMAILED_NAME, "email": ADDRESS, "fit_score": 7,
          "source": "guest-acquisition-receipt", "note": "referred by a past guest"},
+        # Cold, no address, and ON HOLD in the ledger. The audit (2026-08-11)
+        # found queueing ran before the hold/stage/cadence gates, so a held or
+        # already-contacted person could be disclosed to an identity search.
+        {"name": HELD_NAME, "email": None, "fit_score": 9,
+         "source": "guest-acquisition-receipt", "note": "strong operator"},
     ]}
     ledger = {"people": [
         {"name": name, "stage": "new_inbound", "last_touch": {"at": None}}
-        for name in (COLD_NAME, WARM_NAME, EMAILED_NAME)]}
+        for name in (COLD_NAME, WARM_NAME, EMAILED_NAME)] + [
+        {"name": HELD_NAME, "stage": "new_inbound", "last_touch": {"at": None},
+         "hold": "owner said pause this one"}]}
 
     try:
         selected, report = feeder.build_candidates(
@@ -125,6 +133,7 @@ def check(worktree: Path, contact_state) -> None:
     cold_alias = feeder.alias_for(feeder.normalized_name(COLD_NAME))
     warm_alias = feeder.alias_for(feeder.normalized_name(WARM_NAME))
     email_alias = feeder.alias_for(feeder.normalized_name(EMAILED_NAME))
+    held_alias = feeder.alias_for(feeder.normalized_name(HELD_NAME))
 
     # 1. The reachable candidate is untouched.
     if [entry.get("alias") for entry in selected] != [email_alias]:
@@ -159,12 +168,33 @@ def check(worktree: Path, contact_state) -> None:
             fail("channel_unnamed",
                  f"the queued entry does not say which channel it is waiting on: {entry!r}")
 
-    # 4. The warm one is NOT — warm means email or text by charter.
-    if warm_alias in aliases:
-        fail("warm_queued_as_linkedin",
-             "a warm candidate with no email was queued for LinkedIn. Warm routes to email or "
-             "text; a warm record with no address is a data gap to fix at intake, and treating it "
-             "as a LinkedIn prospect quietly rewrites the channel rule")
+    # 4. The warm one is queued too — on the EMAIL channel. Owner decision
+    #    2026-08-11: warm referrals with no address are the most valuable
+    #    records in the pool, and a CRM lookup can recover their address; the
+    #    live probe found five of six. Dropping them as a data gap threw the
+    #    identity lane's best work away. The channel rule survives intact:
+    #    the queue entry names WHICH channel the identity is for.
+    if warm_alias not in aliases:
+        fail("warm_not_queued",
+             "a warm referral with no address was dropped instead of queued for email identity "
+             "resolution; that discards the records a CRM lookup can actually recover")
+    else:
+        entry = next(e for e in awaiting if e.get("alias") == warm_alias)
+        if str(entry.get("channel")) != "email":
+            fail("warm_wrong_queue_channel",
+                 f"the warm entry is queued for {entry.get('channel')!r}, expected 'email'")
+
+    # 4b. The HELD candidate is in NO list except dropped-with-the-hold-reason.
+    #     Queueing before the gates disclosed held people to external searches.
+    if held_alias in aliases:
+        fail("held_queued",
+             "a candidate the ledger holds was queued for identity resolution. The gates run "
+             "FIRST; a held person is not disclosed to any external system")
+    held_reasons = " ".join(e.get("reason", "") for e in report.get("dropped", [])
+                            if isinstance(e, dict) and e.get("alias") == held_alias)
+    if "hold" not in held_reasons.lower():
+        fail("held_not_dropped_with_reason",
+             f"the held candidate's drop does not name the hold: {held_reasons!r}")
 
     # 5. Everybody is still accounted for.
     dropped = report.get("dropped", [])
@@ -177,7 +207,7 @@ def check(worktree: Path, contact_state) -> None:
 
     # 6. Receipts-grade.
     blob = json.dumps(report)
-    for secret in (COLD_NAME, WARM_NAME, EMAILED_NAME, ADDRESS):
+    for secret in (COLD_NAME, WARM_NAME, EMAILED_NAME, HELD_NAME, ADDRESS):
         if secret.lower() in blob.lower():
             fail("pii_in_report", f"the report contains {secret!r}; it names records by alias only")
 
