@@ -1,0 +1,23 @@
+{
+  "created_at": "2026-08-05T05:41:00.942748+00:00",
+  "max_parallel": 1,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "run_name": "triage-infra_restartable",
+  "source_fingerprints": [
+    "unit-failure:obe-fix-consumer.service"
+  ],
+  "tasks": [
+    {
+      "check": "systemctl --user is-active --quiet obe-fix-consumer.service",
+      "engine": "codex",
+      "expect_files": [],
+      "key": "infra_restartable-1",
+      "spec": "Diagnose and propose a bounded repair for this loop-factory incident. Department: factory. Failing nodes/units: obe-fix-consumer.service. Observed diagnosis: systemd unit obe-fix-consumer.service failed. Incident fingerprint: unit-failure:obe-fix-consumer.service. Read the relevant charter and runtime evidence before editing. Preserve shadow-first, deny-by-default, receipt-gated behavior. Do not change governance, autonomy, promotion, or human-gate files. Implement only the smallest evidence-backed fix, run the supplied check, and leave changes uncommitted for coordinator review.",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "verified": "post-fix service or release-state check passes"
+    }
+  ],
+  "workdir": "/mnt/d_drive/repos/loop-factory",
+  "worktrees": true
+}

@@ -1,0 +1,18 @@
+{
+  "run_name": "podcast-full-auto",
+  "workdir": "/home/ankit114/ringer-work/podcast-full-auto-fredverify",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "fred-editorial-verify",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "full_access": true,
+      "timeout_s": 1200,
+      "spec": "PYTHONPATH=/mnt/d_drive/repos/podcast PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp python3 -c \"import json; from server.pipeline import content_edit; r = content_edit.find_content_cuts('/mnt/d_drive/repos/podcast/episodes/2026-06-10-fred-cho/processed/transcript.txt'); print('RESULT', json.dumps(r)[:400]); open('result.json','w').write(json.dumps(r, indent=2))\"",
+      "check": "python3 -c \"import json,sys; r=json.load(open('result.json')); ok=r.get('ok'); hold=r.get('hold'); ms=r.get('max_severity'); n=len(r.get('cuts') or []); print('ok:',ok,'| hold:',hold,'| max_severity:',ms,'| n_cuts:',n,'| reason:',r.get('reason')); sys.exit(0 if ok is True else 1)\"",
+      "expect_files": ["result.json"],
+      "verified": "result.json shows the content-safety pass returned ok:true on Fred's real HEAD transcript -- i.e. the analysis COMPLETED and the 'content-safety analysis did not complete' blocker is gone; hold:true would still be a legitimate human-review outcome, not a pipeline failure, and is reported separately"
+    }
+  ]
+}

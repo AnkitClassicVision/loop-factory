@@ -1,0 +1,23 @@
+{
+ "run_name": "ultimate-process",
+ "workdir": "/home/ankit114/ringer-work/ultimate-process-r3lf",
+ "worktrees": true,
+ "repo": "/mnt/d_drive/repos/loop-factory",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "external-dept-projector",
+   "engine": "codex",
+   "task_type": "code-feature",
+   "timeout_s": 3600,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "Your current working directory IS a git worktree. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills; fixture-only tests with INVENTED contacts. NEVER execute scripts/gap_sync.py in any form. NEVER read *.env/*secret*/*token*/*key*/*credential* files. Repo: loop-factory worktree. Factory code names no departments. MISSION (adapt-plan G3): the estate board must SEE external departments (first: Open Engine sales) without loop-factory ever writing into their repos. BUILD factory/external_departments.py: reads a config estate/external_departments.yaml (create example: [{name: sales, root: /mnt/d_drive/repos/open-engine/departments/sales, state: .../state}]) and for each external department READ-ONLY harvests: runs-v2.jsonl (validate rows via factory.runrecord.validate_record; invalid counted not crashed), objectives_observed.json, STATE.json/heartbeats if shaped like ours (tolerate absence -> unknown), writing NOTHING outside loop-factory: it materializes a mirror under estate/state/external/<name>/ (atomic writes) that factory/boardfeed.py then treats as a department source \u2014 extend build_feed to include configured external mirrors in department discovery (department name = config name; missing mirror = absent, never fabricated). Wire a refresh call into the estate-board service template ExecStart chain (templates/systemd/estate-board.service) before boardfeed. Tests tests/test_external_departments.py (>=8, tmp fixtures): harvest validates+mirrors valid rows; invalid rows counted in a receipt; absent files tolerated; boardfeed renders the external department's dept rows/objectives/andons (below-min objective from external dept raises the OBJECTIVE_BELOW_MIN andon); no write outside estate/state/external; determinism; config absent = no-op. VERIFY: 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check'. Write ./evidence.md.",
+   "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' --patch /home/ankit114/ringer-work/ultimate-process-r3lf/projector.patch --owned-files 'factory/external_departments.py,factory/boardfeed.py,templates/systemd/estate-board.service,estate/external_departments.yaml,tests/test_external_departments.py' --min-new-tests 8",
+   "expect_files": [],
+   "verified": "the estate board now renders external departments (sales first) from read-only mirrored records \u2014 cross-repo reads, never writes, honest absences"
+  }
+ ]
+}

@@ -1,0 +1,1580 @@
+diff --git a/.polly/reports/estate-watchdog-cross-review.md b/.polly/reports/estate-watchdog-cross-review.md
+new file mode 100644
+index 0000000..597d6c4
+--- /dev/null
++++ b/.polly/reports/estate-watchdog-cross-review.md
+@@ -0,0 +1,138 @@
++# Estate watchdog cross-review record
++
++## Fresh QA run 1
++
++- Worker: fresh read-only Codex context, static security fallback.
++- Verdict: BLOCK.
++- Codex Security OAuth: not run because its required artifact location was
++  outside the user-authorized worktree boundary. Coverage is explicitly
++  degraded to static review.
++- QA-001 HIGH: deadman unit skipped when the registry directory was missing.
++- QA-002 HIGH: registry decode errors could exit before writing an alarm.
++- QA-003 HIGH: boolean epochs passed Python's integer type check.
++- QA-004 HIGH: installer lacked a tested rollback path.
++- QA-005 BLOCK: no temporary-copy `systemd-analyze verify` test.
++- QA-006 BLOCK: no mocked explicit-apply test.
++- QA-007 BLOCK: full repository check evidence was absent from the review
++  packet.
++
++## Resolution
++
++- Removed the deadman unit condition so missing registry data reaches the
++  fail-closed evaluator.
++- Converted registry decoding failures into alarm findings and required exact
++  integer epoch types.
++- Added pre-mutation self-test/unit verification, an explicit unique-unit-only
++  rollback command plan, stop-on-failure guidance, and mocked apply/failure
++  coverage.
++- Added temporary-copy systemd verification and reran the full repository
++  gate: `159 passed in 3.60s`, `CHECK PASS`.
++
++## Fresh QA run 2
++
++- Worker: second fresh read-only Codex context, static security fallback.
++- Verdict: REQUEST_CHANGES.
++- QA-008 HIGH: non-UTF-8 heartbeat bytes exited before recording the required
++  outbox alarm.
++- Resolution: heartbeat decoding errors now become
++  `estate_heartbeat_unreadable`; an exact false-green regression test covers
++  healthy STATE.json plus non-UTF-8 heartbeat bytes.
++- Verification after fix: focused `22 passed in 0.23s`; full repository
++  `160 passed in 3.75s`, `CHECK PASS`.
++
++## Fresh QA run 3
++
++- Worker: third fresh read-only Codex context, static security fallback.
++- Verdict: REQUEST_CHANGES.
++- QA-009 HIGH: same-epoch STATE.json and heartbeat rows with different but
++  individually fresh timestamps could report healthy.
++- Resolution: state and heartbeat timestamps must now identify the same exact
++  estate cycle; same-epoch mismatches produce `estate_timestamp_mismatch`.
++- Verification after fix: focused `23 passed in 0.23s`; full repository
++  `161 passed in 3.67s`, `CHECK PASS`.
++
++## Fresh QA run 4
++
++- Worker: fourth fresh read-only Codex context, static security fallback.
++- Verdict: REQUEST_CHANGES.
++- QA-010 HIGH: an invalid earlier heartbeat row could be hidden by a valid
++  final row.
++- QA-011 HIGH: rollback stopped on missing/inactive units before completing
++  file removal and daemon reload.
++- Resolution: every nonblank heartbeat row must parse as an object before the
++  last receipt is trusted. Rollback now tolerates absent-unit systemctl
++  results, completes all cleanup commands, and fails only after reporting
++  critical file-removal or daemon-reload errors.
++- Verification after fixes: focused `26 passed in 0.26s`; full repository
++  `164 passed in 3.70s`, `CHECK PASS`.
++
++## Fresh QA run 5
++
++- Worker: fifth fresh read-only Codex context, static security fallback.
++- Verdict: REQUEST_CHANGES.
++- QA-012 HIGH: earlier heartbeat JSON objects were not checked for the
++  estate-manager heartbeat schema, so a valid final row could hide `{}` or a
++  wrong-emitter historical row.
++- Resolution: every row now requires a timezone-aware timestamp,
++  estate-manager/cycle identity, a payload object, and exact integer epoch,
++  findings, and escalation counters.
++- Verification after fix: focused `29 passed in 0.24s`; full repository
++  `167 passed in 3.77s`, `CHECK PASS`.
++
++## Fresh QA run 6
++
++- Worker: sixth fresh read-only Codex context, static security fallback.
++- Verdict: REQUEST_CHANGES.
++- QA-013 HIGH: final heartbeat finding/escalation counters were not bound to
++  STATE.json, and required state fields were not fully type-validated.
++- Resolution: STATE.json now requires a nonnegative integer epoch, a typed
++  department-epoch map, a findings list, and a nonnegative integer escalation
++  count. The final heartbeat counters must equal state findings/escalations.
++- Verification after fix: focused `35 passed in 0.25s`; full repository
++  `173 passed in 3.59s`, `CHECK PASS`.
++
++## Fresh QA run 7
++
++- Worker: seventh fresh read-only Codex context, static security fallback.
++- Verdict: PASS.
++- Issues: none.
++- OAuth security scan: not run because its required artifact location would
++  violate the worktree-only boundary. Static security coverage remained
++  explicitly degraded; no live system or external state was touched.
++
++## PR #10 blocking review remediation
++
++- B1 BLOCK: replaced the real `--apply` subprocess test with an in-process
++  `main()` call, a sentinel canonical root, and a subprocess trap. Added an AST
++  regression that rejects `--apply` in every real `subprocess.run` call in the
++  installer test module.
++- N1: registry module loading now occurs inside the fail-closed boundary.
++  Unexpected evaluator failures generate a synthetic `deadman_internal_error`
++  report and attempt the normal outbox alarm path before exit 2.
++- N2: unchanged finding-code sets are capped to one outbox append per six
++  hours. State is atomic and deadman-owned at
++  `state/estate-deadman/alarm_state.json`; a healthy check resets recurrence.
++- N3: accepted as a bounded hardening change. The latest heartbeat row remains
++  strict and fail-closed, while historical rows are ignored so one old corrupt
++  row cannot create a permanent alarm.
++- N4: missing `systemd-analyze` now produces an explicit pytest skip.
++- Environment-dependence audit: the only real subprocess calls left in
++  `tests/test_estate_systemd_install.py` are read-only `systemd-analyze verify`
++  against temporary copies and the installer without `--apply`. Every apply or
++  rollback test is in-process with `subprocess.run` monkeypatched.
++- Verification before the concurrency hardening: focused `42 passed in 0.26s`;
++  full repository `180 passed in 3.78s`, `CHECK PASS`.
++- Degraded fresh review found the cooldown check was not concurrency-safe.
++  The full read-check-outbox-write sequence now holds an exclusive lock in the
++  deadman state directory, with a two-invocation regression proving one append
++  and one suppression.
++- Verification after the concurrency hardening: focused `43 passed in 0.30s`;
++  full repository `181 passed in 4.01s`, `CHECK PASS`.
++- Final fresh review found no BLOCK/HIGH issue and one MED: healthy-state writes
++  did not share the alarm-state lock. Both alarm and healthy writers now use
++  the same exclusive lock; a concurrent regression checks that their atomic
++  writes never overlap.
++- Final verification after the MED fix: focused `44 passed in 0.42s`; full
++  repository `182 passed in 4.08s`, `CHECK PASS`.
++- Narrow fresh-context recheck of the shared-lock remediation: `PASS`, with no
++  remaining BLOCK, HIGH, or MED finding.
+diff --git a/.polly/reports/estate-watchdog-implementation.md b/.polly/reports/estate-watchdog-implementation.md
+new file mode 100644
+index 0000000..be6f33d
+--- /dev/null
++++ b/.polly/reports/estate-watchdog-implementation.md
+@@ -0,0 +1,55 @@
++# Estate watchdog stabilization yardstick
++
++## Requirements contract
++
++- U1: Add uniquely named loop-factory user service and timer files that invoke
++  the repository's real `loopfactory.py estate` entrypoint. They must not
++  collide with the existing open-engine `estate-manager.service`.
++- U2: Add a deterministic deadman that alarms through the factory human
++  outbox when the estate heartbeat or registry cannot be trusted, or when the
++  heartbeat is older than the configured threshold.
++- U3: Add a poisoned-registry self-test that corrupts only a temporary copy and
++  proves the deadman reports an alarm condition.
++- U4: Add an idempotent installer whose default behavior is display-only and
++  whose `--apply` path alone copies units and invokes `systemctl --user`.
++- U5: Prove behavior with isolated tests and the repository-wide check.
++
++## Non-goals
++
++- Do not install, enable, start, stop, or reload real user units during build or
++  verification.
++- Do not modify department state, estate state, governance files, department
++  maps, charters, releases, or runtime behavior.
++- Do not repair the stalled social department or change estate-manager policy.
++
++## Implementation units and proof
++
++| Unit | Expected proof |
++|---|---|
++| U1 | Static unit assertions plus `systemd-analyze verify` against temporary copies |
++| U2 | Focused tests for healthy, stale, unreadable, malformed, future, and inconsistent state |
++| U3 | CLI self-test exits zero and reports that poisoned registry input was detected |
++| U4 | Dry-run output exactness and mocked apply-path tests; no real `systemctl` calls |
++| U5 | `python3 loopfactory.py check` passes |
++
++## Decision residue
++
++- Hardest decision: make unreadable registry/heartbeat inputs alarm without
++  relying on the estate manager's own healthy claim.
++- Rejected alternative: reuse `estate-manager.service`; it would preserve the
++  name collision that caused this outage. Also rejected: a deadman that checks
++  only file mtime, because malformed or false-green content could pass.
++- Least-confident assumption: the canonical checkout remains
++  `/mnt/d_drive/repos/loop-factory`, matching the repository's existing
++  systemd convention. The installer validates this path before applying.
++
++## Verification receipts
++
++- Focused tests after PR #10 cross-review fixes: `44 passed in 0.42s`.
++- Poisoned registry: `INFO poisoned-registry self-test passed: detected
++  estate_registry_unreadable`.
++- Unit parser: all four repo-local units returned exit 0 from
++  `systemd-analyze verify`.
++- Repository check after all accepted review fixes: `182 passed in 4.08s`,
++  `CHECK PASS`.
++- Live-state actions during build and review: zero.
+diff --git a/deploy/install_estate_watchdog.py b/deploy/install_estate_watchdog.py
+new file mode 100644
+index 0000000..0972617
+--- /dev/null
++++ b/deploy/install_estate_watchdog.py
+@@ -0,0 +1,135 @@
++#!/usr/bin/env python3
++"""Install the loop-factory estate units, display-only unless --apply is set."""
++from __future__ import annotations
++
++import argparse
++import shlex
++import subprocess
++from pathlib import Path
++
++
++CANONICAL_ROOT = Path("/mnt/d_drive/repos/loop-factory")
++UNIT_NAMES = (
++    "loop-factory-estate.service",
++    "loop-factory-estate.timer",
++    "loop-factory-estate-deadman.service",
++    "loop-factory-estate-deadman.timer",
++)
++
++
++def install_commands(repo_root: Path, user_home: Path) -> list[list[str]]:
++    unit_source = repo_root / "deploy" / "systemd"
++    unit_target = user_home / ".config" / "systemd" / "user"
++    commands: list[list[str]] = [
++        [
++            "/usr/bin/env", "python3", str(repo_root / "factory" / "estate_deadman.py"),
++            "--registry-dir", str(repo_root / "estate" / "registry.d"),
++            "--self-test-poisoned-registry",
++        ],
++        ["systemd-analyze", "verify", *(str(unit_source / name) for name in UNIT_NAMES)],
++        ["install", "-d", "-m", "0755", str(unit_target)],
++        ["install", "-d", "-m", "0755", str(repo_root / "estate" / "state")],
++        ["install", "-d", "-m", "0755", str(repo_root / "state")],
++        ["install", "-d", "-m", "0755", str(repo_root / "state" / "estate-deadman")],
++    ]
++    commands.extend(
++        ["install", "-m", "0644", str(unit_source / name), str(unit_target / name)]
++        for name in UNIT_NAMES
++    )
++    commands.extend([
++        ["systemctl", "--user", "daemon-reload"],
++        [
++            "systemctl", "--user", "enable", "--now",
++            "loop-factory-estate.timer", "loop-factory-estate-deadman.timer",
++        ],
++        ["systemctl", "--user", "start", "loop-factory-estate.service"],
++        ["systemctl", "--user", "start", "loop-factory-estate-deadman.service"],
++        [
++            "systemctl", "--user", "status",
++            "loop-factory-estate.timer", "loop-factory-estate-deadman.timer", "--no-pager",
++        ],
++        [
++            "systemctl", "--user", "list-timers",
++            "loop-factory-estate.timer", "loop-factory-estate-deadman.timer", "--no-pager",
++        ],
++    ])
++    return commands
++
++
++def rollback_commands(user_home: Path) -> list[list[str]]:
++    unit_target = user_home / ".config" / "systemd" / "user"
++    return [
++        [
++            "systemctl", "--user", "disable", "--now",
++            "loop-factory-estate.timer", "loop-factory-estate-deadman.timer",
++        ],
++        [
++            "systemctl", "--user", "stop",
++            "loop-factory-estate.service", "loop-factory-estate-deadman.service",
++        ],
++        ["rm", "-f", *(str(unit_target / name) for name in UNIT_NAMES)],
++        ["systemctl", "--user", "daemon-reload"],
++        [
++            "systemctl", "--user", "reset-failed",
++            "loop-factory-estate.service", "loop-factory-estate-deadman.service",
++        ],
++    ]
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Install uniquely named loop-factory estate user units")
++    parser.add_argument("--apply", action="store_true", help="copy files and run the displayed commands")
++    parser.add_argument("--rollback", action="store_true", help="show or apply removal of only these unique units")
++    args = parser.parse_args()
++
++    repo_root = Path(__file__).resolve().parents[1]
++    commands = rollback_commands(Path.home()) if args.rollback else install_commands(repo_root, Path.home())
++    action = "ROLLBACK" if args.rollback else "INSTALL"
++    mode = f"{action} APPLY" if args.apply else f"{action} DRY RUN (no commands executed)"
++    print(mode)
++    for command in commands:
++        print(shlex.join(command))
++    if not args.apply:
++        if repo_root != CANONICAL_ROOT:
++            print(f"NOTE: --apply refuses outside the canonical checkout at {CANONICAL_ROOT}.")
++        suffix = " --rollback" if args.rollback else ""
++        print(f"Re-run with --apply{suffix} to execute exactly the commands above.")
++        return 0
++
++    if repo_root != CANONICAL_ROOT:
++        print(f"REFUSING: installer must run from {CANONICAL_ROOT}; current root is {repo_root}")
++        print(f"After merge, run: cd {CANONICAL_ROOT} && python3 deploy/install_estate_watchdog.py --apply")
++        return 2
++
++    if args.rollback:
++        critical_failures = []
++        for command in commands:
++            result = subprocess.run(command, check=False)
++            is_critical = (
++                command[0] == "rm"
++                or command[:3] == ["systemctl", "--user", "daemon-reload"]
++            )
++            if result.returncode != 0 and is_critical:
++                critical_failures.append((command, result.returncode))
++        if critical_failures:
++            for command, returncode in critical_failures:
++                print(f"FAILED ({returncode}) at: {shlex.join(command)}")
++            return critical_failures[0][1] or 1
++        return 0
++
++    try:
++        for command in commands:
++            subprocess.run(command, check=True)
++    except subprocess.CalledProcessError as exc:
++        print(f"FAILED at: {shlex.join(exc.cmd)}")
++        if not args.rollback:
++            print(
++                "Rollback: "
++                f"cd {CANONICAL_ROOT} && python3 deploy/install_estate_watchdog.py --apply --rollback"
++            )
++        return exc.returncode or 1
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/deploy/systemd/loop-factory-estate-deadman.service b/deploy/systemd/loop-factory-estate-deadman.service
+new file mode 100644
+index 0000000..b4d4a57
+--- /dev/null
++++ b/deploy/systemd/loop-factory-estate-deadman.service
+@@ -0,0 +1,17 @@
++[Unit]
++Description=Loop Factory estate manager deadman check
++Documentation=https://github.com/AnkitClassicVision/loop-factory
++
++[Service]
++Type=oneshot
++WorkingDirectory=/mnt/d_drive/repos/loop-factory
++ExecStart=/usr/bin/env python3 /mnt/d_drive/repos/loop-factory/factory/estate_deadman.py --registry-dir /mnt/d_drive/repos/loop-factory/estate/registry.d --estate-state-dir /mnt/d_drive/repos/loop-factory/estate/state --outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl --alarm-state /mnt/d_drive/repos/loop-factory/state/estate-deadman/alarm_state.json --max-age-seconds 97200 --cooldown-seconds 21600
++TimeoutStartSec=60
++NoNewPrivileges=yes
++PrivateTmp=yes
++ProtectSystem=strict
++ProtectHome=read-only
++ReadWritePaths=/mnt/d_drive/repos/loop-factory/state
++IPAddressDeny=any
++RestrictAddressFamilies=AF_UNIX
++LockPersonality=yes
+diff --git a/deploy/systemd/loop-factory-estate-deadman.timer b/deploy/systemd/loop-factory-estate-deadman.timer
+new file mode 100644
+index 0000000..0273c51
+--- /dev/null
++++ b/deploy/systemd/loop-factory-estate-deadman.timer
+@@ -0,0 +1,11 @@
++[Unit]
++Description=Check the Loop Factory estate manager deadman hourly
++
++[Timer]
++OnCalendar=hourly
++Persistent=true
++RandomizedDelaySec=60
++Unit=loop-factory-estate-deadman.service
++
++[Install]
++WantedBy=timers.target
+diff --git a/deploy/systemd/loop-factory-estate.service b/deploy/systemd/loop-factory-estate.service
+new file mode 100644
+index 0000000..2041a4e
+--- /dev/null
++++ b/deploy/systemd/loop-factory-estate.service
+@@ -0,0 +1,18 @@
++[Unit]
++Description=Loop Factory estate manager cycle
++Documentation=https://github.com/AnkitClassicVision/loop-factory
++ConditionPathIsDirectory=/mnt/d_drive/repos/loop-factory/estate/registry.d
++
++[Service]
++Type=oneshot
++WorkingDirectory=/mnt/d_drive/repos/loop-factory
++ExecStart=/usr/bin/env python3 /mnt/d_drive/repos/loop-factory/loopfactory.py estate --root /mnt/d_drive/repos/loop-factory --outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl
++TimeoutStartSec=300
++NoNewPrivileges=yes
++PrivateTmp=yes
++ProtectSystem=strict
++ProtectHome=read-only
++ReadWritePaths=/mnt/d_drive/repos/loop-factory/estate/state /mnt/d_drive/repos/loop-factory/state
++IPAddressDeny=any
++RestrictAddressFamilies=AF_UNIX
++LockPersonality=yes
+diff --git a/deploy/systemd/loop-factory-estate.timer b/deploy/systemd/loop-factory-estate.timer
+new file mode 100644
+index 0000000..ce7a1ca
+--- /dev/null
++++ b/deploy/systemd/loop-factory-estate.timer
+@@ -0,0 +1,11 @@
++[Unit]
++Description=Run the Loop Factory estate manager daily
++
++[Timer]
++OnCalendar=*-*-* 14:15:00
++Persistent=true
++RandomizedDelaySec=120
++Unit=loop-factory-estate.service
++
++[Install]
++WantedBy=timers.target
+diff --git a/factory/estate_deadman.py b/factory/estate_deadman.py
+new file mode 100644
+index 0000000..9472f99
+--- /dev/null
++++ b/factory/estate_deadman.py
+@@ -0,0 +1,440 @@
++#!/usr/bin/env python3
++"""Fail-closed deadman for the loop-factory estate manager.
++
++The estate manager watches department managers. This module watches the estate
++manager's own registry, STATE.json, and append-only heartbeat. Any unreadable,
++malformed, stale, future-dated, or inconsistent input is an alarm condition.
++It never reports healthy from STATE.json alone.
++"""
++from __future__ import annotations
++
++import argparse
++import fcntl
++import importlib.util
++import json
++import logging
++import shutil
++import tempfile
++from contextlib import contextmanager
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++
++LOGGER = logging.getLogger("loop_factory.estate_deadman")
++DEFAULT_MAX_AGE_SECONDS = 27 * 3600
++DEFAULT_MAX_FUTURE_SKEW_SECONDS = 5 * 60
++DEFAULT_ALARM_COOLDOWN_SECONDS = 6 * 3600
++
++
++def _load_module(name: str, filename: str):
++    path = Path(__file__).resolve().parent / filename
++    spec = importlib.util.spec_from_file_location(name, path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def _parse_timestamp(value: Any) -> datetime | None:
++    if not isinstance(value, str):
++        return None
++    try:
++        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
++    except ValueError:
++        return None
++    if parsed.tzinfo is None:
++        return None
++    return parsed.astimezone(timezone.utc)
++
++
++def _read_json_object(path: Path) -> tuple[dict[str, Any] | None, str | None]:
++    try:
++        value = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, ValueError) as exc:
++        return None, f"{path.name} unreadable: {exc.__class__.__name__}"
++    if not isinstance(value, dict):
++        return None, f"{path.name} must contain a JSON object"
++    return value, None
++
++
++def _read_last_heartbeat(path: Path) -> tuple[dict[str, Any] | None, str | None]:
++    try:
++        rows = [line for line in path.read_bytes().splitlines() if line.strip()]
++    except OSError as exc:
++        return None, f"{path.name} unreadable: {exc.__class__.__name__}"
++    if not rows:
++        return None, f"{path.name} has no heartbeat rows"
++    try:
++        value = json.loads(rows[-1].decode("utf-8"))
++    except (UnicodeError, ValueError):
++        return None, f"{path.name} last row is malformed or not UTF-8"
++    if not isinstance(value, dict):
++        return None, f"{path.name} last row must be a JSON object"
++    payload = value.get("payload")
++    required_counters = ("epoch", "findings", "escalations")
++    if (
++        _parse_timestamp(value.get("ts")) is None
++        or value.get("emitter") != "estate-manager"
++        or value.get("kind") != "cycle"
++        or not isinstance(payload, dict)
++        or any(type(payload.get(key)) is not int for key in required_counters)
++        or any(payload.get(key, -1) < 0 for key in required_counters)
++    ):
++        return None, f"{path.name} last row has invalid estate heartbeat schema"
++    return value, None
++
++
++def _finding(code: str, detail: str) -> dict[str, str]:
++    return {"code": code, "detail": detail}
++
++
++def evaluate_deadman(
++    registry_dir: str | Path,
++    estate_state_dir: str | Path,
++    *,
++    now: datetime | None = None,
++    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
++    max_future_skew_seconds: int = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
++) -> dict[str, Any]:
++    """Return a deterministic health report; any uncertainty is an alarm."""
++    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
++        raise ValueError("deadman thresholds must be positive")
++
++    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
++    registry_dir = Path(registry_dir)
++    estate_state_dir = Path(estate_state_dir)
++    findings: list[dict[str, str]] = []
++
++    try:
++        registry = _load_module("estate_registry_deadman", "estate_registry.py")
++        entries = registry.load_registry(registry_dir)
++    except Exception as exc:
++        findings.append(_finding("estate_registry_unreadable", f"registry validation failed: {exc}"))
++    else:
++        if not entries:
++            findings.append(_finding("estate_registry_empty", "registry contains no entries"))
++
++    state, state_error = _read_json_object(estate_state_dir / "STATE.json")
++    heartbeat, heartbeat_error = _read_last_heartbeat(estate_state_dir / "heartbeats.jsonl")
++    if state_error:
++        findings.append(_finding("estate_state_unreadable", state_error))
++    if heartbeat_error:
++        findings.append(_finding("estate_heartbeat_unreadable", heartbeat_error))
++
++    state_ts = _parse_timestamp(state.get("last_cycle_at")) if state else None
++    heartbeat_ts = _parse_timestamp(heartbeat.get("ts")) if heartbeat else None
++    if state is not None and state_ts is None:
++        findings.append(_finding("estate_state_timestamp_invalid", "STATE.json last_cycle_at is missing or invalid"))
++    if heartbeat is not None and heartbeat_ts is None:
++        findings.append(_finding("estate_heartbeat_timestamp_invalid", "heartbeat ts is missing or invalid"))
++
++    state_schema_valid = False
++    if state is not None:
++        dept_epochs = state.get("dept_epochs")
++        open_findings = state.get("open_findings")
++        state_schema_valid = (
++            type(state.get("epoch")) is int
++            and state["epoch"] >= 0
++            and isinstance(dept_epochs, dict)
++            and all(
++                isinstance(dept_id, str)
++                and (dept_epoch is None or (type(dept_epoch) is int and dept_epoch >= 0))
++                for dept_id, dept_epoch in dept_epochs.items()
++            )
++            and isinstance(open_findings, list)
++            and all(isinstance(finding, dict) for finding in open_findings)
++            and type(state.get("escalations")) is int
++            and state["escalations"] >= 0
++        )
++        if not state_schema_valid:
++            findings.append(_finding(
++                "estate_state_schema_invalid",
++                "STATE.json has invalid epoch, dept_epochs, open_findings, or escalations fields",
++            ))
++
++    if state and heartbeat:
++        state_epoch = state.get("epoch")
++        heartbeat_epoch = heartbeat.get("payload", {}).get("epoch") if isinstance(heartbeat.get("payload"), dict) else None
++        if heartbeat.get("emitter") != "estate-manager" or heartbeat.get("kind") != "cycle":
++            findings.append(_finding("estate_heartbeat_identity_invalid", "last heartbeat is not an estate-manager cycle"))
++        if type(state_epoch) is not int or type(heartbeat_epoch) is not int:
++            findings.append(_finding("estate_epoch_invalid", "state and heartbeat epochs must be integers"))
++        elif state_epoch != heartbeat_epoch:
++            findings.append(_finding(
++                "estate_epoch_mismatch",
++                f"STATE.json epoch {state_epoch} does not match heartbeat epoch {heartbeat_epoch}",
++            ))
++        if state_ts is not None and heartbeat_ts is not None and state_ts != heartbeat_ts:
++            findings.append(_finding(
++                "estate_timestamp_mismatch",
++                "STATE.json and heartbeat timestamps do not identify the same estate cycle",
++            ))
++        if state_schema_valid:
++            payload = heartbeat["payload"]
++            if (
++                payload["findings"] != len(state["open_findings"])
++                or payload["escalations"] != state["escalations"]
++            ):
++                findings.append(_finding(
++                    "estate_counter_mismatch",
++                    "heartbeat findings/escalations do not match STATE.json",
++                ))
++
++    if heartbeat_ts is not None:
++        age_seconds = (observed_at - heartbeat_ts).total_seconds()
++        if age_seconds < -max_future_skew_seconds:
++            findings.append(_finding("estate_heartbeat_future", "heartbeat timestamp is beyond allowed clock skew"))
++        elif age_seconds > max_age_seconds:
++            findings.append(_finding(
++                "estate_heartbeat_stale",
++                f"estate heartbeat age {int(age_seconds)}s exceeds {max_age_seconds}s",
++            ))
++
++    if state_ts is not None:
++        state_age_seconds = (observed_at - state_ts).total_seconds()
++        if state_age_seconds < -max_future_skew_seconds:
++            findings.append(_finding("estate_state_future", "state timestamp is beyond allowed clock skew"))
++        elif state_age_seconds > max_age_seconds:
++            findings.append(_finding(
++                "estate_state_stale",
++                f"estate state age {int(state_age_seconds)}s exceeds {max_age_seconds}s",
++            ))
++
++    return {
++        "ok": not findings,
++        "alarm": bool(findings),
++        "observed_at": observed_at.isoformat(),
++        "max_age_seconds": max_age_seconds,
++        "findings": findings,
++    }
++
++
++def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, Any]:
++    """Append one factory-standard escalation packet; never sends externally."""
++    human_loop = _load_module("human_in_the_loop_deadman", "human_in_the_loop.py")
++    codes = [finding["code"] for finding in report["findings"]]
++    issue = f"[deadman] estate watchdog alarm: {', '.join(codes)}"
++    return human_loop.escalate(
++        "estate",
++        issue,
++        outbox_path,
++        context={
++            "source": "estate-deadman",
++            "finding_codes": codes,
++            "observed_at": report["observed_at"],
++            "max_age_seconds": report["max_age_seconds"],
++        },
++    )
++
++
++def _atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_suffix(path.suffix + ".tmp")
++    temporary.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
++    temporary.replace(path)
++
++
++def _read_alarm_state(path: str | Path) -> tuple[dict[str, Any] | None, str | None]:
++    path = Path(path)
++    if not path.exists():
++        return None, None
++    value, error = _read_json_object(path)
++    if error:
++        return None, error
++    codes = value.get("finding_codes")
++    last_alarm_at = value.get("last_alarm_at")
++    if (
++        not isinstance(codes, list)
++        or any(not isinstance(code, str) or not code for code in codes)
++        or codes != sorted(set(codes))
++        or (codes and _parse_timestamp(last_alarm_at) is None)
++        or (not codes and last_alarm_at is not None)
++    ):
++        return None, f"{path.name} has invalid cooldown schema"
++    return value, None
++
++
++@contextmanager
++def _alarm_state_lock(alarm_state_path: str | Path):
++    alarm_state_path = Path(alarm_state_path)
++    alarm_state_path.parent.mkdir(parents=True, exist_ok=True)
++    lock_path = alarm_state_path.with_suffix(alarm_state_path.suffix + ".lock")
++    with lock_path.open("a+", encoding="utf-8") as lock_handle:
++        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
++        yield
++
++
++def raise_alarm_with_cooldown(
++    report: dict[str, Any],
++    outbox_path: str | Path,
++    alarm_state_path: str | Path,
++    *,
++    now: datetime | None = None,
++    cooldown_seconds: int = DEFAULT_ALARM_COOLDOWN_SECONDS,
++) -> dict[str, Any]:
++    """Raise once per finding-code set per cooldown window, then persist proof."""
++    if cooldown_seconds <= 0:
++        raise ValueError("alarm cooldown must be positive")
++    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
++    alarm_state_path = Path(alarm_state_path)
++    with _alarm_state_lock(alarm_state_path):
++        prior, prior_error = _read_alarm_state(alarm_state_path)
++        if prior_error:
++            report = {**report, "findings": [
++                *report["findings"],
++                _finding("deadman_cooldown_state_unreadable", prior_error),
++            ]}
++        codes = sorted({finding["code"] for finding in report["findings"]})
++        if prior is not None and prior["finding_codes"] == codes:
++            last_alarm_at = _parse_timestamp(prior["last_alarm_at"])
++            age_seconds = (now_dt - last_alarm_at).total_seconds()
++            if 0 <= age_seconds < cooldown_seconds:
++                return {"alarmed": False, "suppressed": True, "finding_codes": codes}
++
++        raise_alarm(report, outbox_path)
++        _atomic_write_json(alarm_state_path, {
++            "finding_codes": codes,
++            "last_alarm_at": now_dt.isoformat(),
++            "healthy_at": None,
++        })
++        return {"alarmed": True, "suppressed": False, "finding_codes": codes}
++
++
++def record_healthy(alarm_state_path: str | Path, *, now: datetime | None = None) -> None:
++    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
++    with _alarm_state_lock(alarm_state_path):
++        _atomic_write_json(alarm_state_path, {
++            "finding_codes": [],
++            "last_alarm_at": None,
++            "healthy_at": now_dt.isoformat(),
++        })
++
++
++def _internal_error_report(exc: Exception, max_age_seconds: int) -> dict[str, Any]:
++    observed_at = datetime.now(timezone.utc).isoformat()
++    return {
++        "ok": False,
++        "alarm": True,
++        "observed_at": observed_at,
++        "max_age_seconds": max_age_seconds,
++        "findings": [_finding(
++            "deadman_internal_error",
++            f"deadman infrastructure failure: {exc.__class__.__name__}",
++        )],
++    }
++
++
++def poisoned_registry_self_test(registry_dir: str | Path) -> dict[str, Any]:
++    """Corrupt a temporary registry copy and prove fail-closed detection."""
++    source = Path(registry_dir)
++    registry_files = sorted(source.glob("*.yaml"))
++    if not registry_files:
++        raise RuntimeError("poisoned-registry self-test requires at least one registry YAML file")
++
++    with tempfile.TemporaryDirectory(prefix="loop-factory-deadman-") as temp_dir:
++        temp_root = Path(temp_dir)
++        copied_registry = temp_root / "registry.d"
++        copied_state = temp_root / "state"
++        shutil.copytree(source, copied_registry)
++        copied_state.mkdir()
++
++        now = datetime.now(timezone.utc)
++        (copied_state / "STATE.json").write_text(json.dumps({
++            "epoch": 7,
++            "last_cycle_at": now.isoformat(),
++            "dept_epochs": {},
++            "open_findings": [],
++            "escalations": 0,
++        }), encoding="utf-8")
++        (copied_state / "heartbeats.jsonl").write_text(json.dumps({
++            "ts": now.isoformat(),
++            "emitter": "estate-manager",
++            "kind": "cycle",
++            "payload": {"epoch": 7, "findings": 0, "escalations": 0},
++        }) + "\n", encoding="utf-8")
++
++        poisoned = copied_registry / registry_files[0].name
++        poisoned.write_text("this is deliberately invalid registry data\n", encoding="utf-8")
++        report = evaluate_deadman(copied_registry, copied_state, now=now)
++        codes = {finding["code"] for finding in report["findings"]}
++        if not report["alarm"] or "estate_registry_unreadable" not in codes:
++            raise AssertionError("deadman failed to alarm on poisoned registry copy")
++        return report
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Fail-closed deadman for the loop-factory estate manager")
++    parser.add_argument("--registry-dir", default="estate/registry.d")
++    parser.add_argument("--estate-state-dir", default="estate/state")
++    parser.add_argument("--outbox", default="state/decisions_outbox.jsonl")
++    parser.add_argument("--alarm-state", default="state/estate-deadman/alarm_state.json")
++    parser.add_argument("--max-age-seconds", type=int, default=DEFAULT_MAX_AGE_SECONDS)
++    parser.add_argument("--cooldown-seconds", type=int, default=DEFAULT_ALARM_COOLDOWN_SECONDS)
++    parser.add_argument("--self-test-poisoned-registry", action="store_true")
++    args = parser.parse_args()
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
++
++    if args.self_test_poisoned_registry:
++        try:
++            report = poisoned_registry_self_test(args.registry_dir)
++        except (OSError, RuntimeError, AssertionError, ValueError) as exc:
++            LOGGER.error("poisoned-registry self-test failed: %s", exc)
++            return 2
++        LOGGER.info(
++            "poisoned-registry self-test passed: detected %s",
++            ",".join(finding["code"] for finding in report["findings"]),
++        )
++        return 0
++
++    try:
++        report = evaluate_deadman(
++            args.registry_dir,
++            args.estate_state_dir,
++            max_age_seconds=args.max_age_seconds,
++        )
++    except Exception as exc:
++        LOGGER.error("deadman evaluation failed closed: %s", exc)
++        report = _internal_error_report(exc, args.max_age_seconds)
++        try:
++            raise_alarm_with_cooldown(
++                report,
++                args.outbox,
++                args.alarm_state,
++                cooldown_seconds=args.cooldown_seconds,
++            )
++        except Exception as alarm_exc:
++            LOGGER.error("deadman internal-error alarm failed: %s", alarm_exc)
++        return 2
++
++    if report["alarm"]:
++        try:
++            outcome = raise_alarm_with_cooldown(
++                report,
++                args.outbox,
++                args.alarm_state,
++                cooldown_seconds=args.cooldown_seconds,
++            )
++        except Exception as exc:  # the alarm path itself must fail visibly
++            LOGGER.error("alarm detected but outbox append failed: %s", exc)
++            return 2
++        action = "suppressed by cooldown" if outcome["suppressed"] else "recorded"
++        LOGGER.error("estate deadman alarm %s: %s", action, ",".join(outcome["finding_codes"]))
++        return 1
++
++    try:
++        record_healthy(args.alarm_state)
++    except Exception as exc:
++        LOGGER.error("deadman healthy-state record failed: %s", exc)
++        internal_report = _internal_error_report(exc, args.max_age_seconds)
++        try:
++            raise_alarm(internal_report, args.outbox)
++        except Exception as alarm_exc:
++            LOGGER.error("deadman healthy-state failure alarm failed: %s", alarm_exc)
++        return 2
++    LOGGER.info("estate deadman healthy")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_estate_deadman.py b/tests/test_estate_deadman.py
+new file mode 100644
+index 0000000..7f8fd9e
+--- /dev/null
++++ b/tests/test_estate_deadman.py
+@@ -0,0 +1,481 @@
++from __future__ import annotations
++
++import json
++import threading
++import time
++from concurrent.futures import ThreadPoolExecutor
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++
++import pytest
++
++from factory import estate_deadman
++
++
++NOW = datetime(2026, 8, 2, 16, 0, tzinfo=timezone.utc)
++
++
++def _write_registry(path: Path) -> None:
++    path.mkdir(parents=True)
++    (path / "demo.yaml").write_text(
++        """entries:
++  - id: demo
++    owner: owner
++    surface: department
++    schedule: daily
++    health_check: test
++    heartbeat_path: departments/demo/state/heartbeats.jsonl
++    kill_switch: stop-demo
++""",
++        encoding="utf-8",
++    )
++
++
++def _write_estate_state(path: Path, *, when: datetime = NOW, epoch: int = 4) -> None:
++    path.mkdir(parents=True)
++    (path / "STATE.json").write_text(json.dumps({
++        "epoch": epoch,
++        "last_cycle_at": when.isoformat(),
++        "dept_epochs": {"demo": 2},
++        "open_findings": [],
++        "escalations": 0,
++    }), encoding="utf-8")
++    (path / "heartbeats.jsonl").write_text(json.dumps({
++        "ts": when.isoformat(),
++        "emitter": "estate-manager",
++        "kind": "cycle",
++        "payload": {"epoch": epoch, "findings": 0, "escalations": 0},
++    }) + "\n", encoding="utf-8")
++
++
++def _report(tmp_path: Path, **kwargs):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state, **kwargs)
++    return estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++
++def _codes(report):
++    return {finding["code"] for finding in report["findings"]}
++
++
++def test_fresh_consistent_heartbeat_is_healthy(tmp_path):
++    report = _report(tmp_path)
++    assert report["ok"] is True
++    assert report["alarm"] is False
++
++
++def test_stale_heartbeat_and_state_alarm(tmp_path):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    assert report["alarm"] is True
++    assert {"estate_heartbeat_stale", "estate_state_stale"} <= _codes(report)
++
++
++def test_false_green_state_with_unreadable_heartbeat_alarms(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    (state / "heartbeats.jsonl").write_text("not-json\n", encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert report["alarm"] is True
++    assert "estate_heartbeat_unreadable" in _codes(report)
++
++
++def test_false_green_state_with_non_utf8_heartbeat_alarms(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    (state / "heartbeats.jsonl").write_bytes(b"\xff\xfe")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert report["alarm"] is True
++    assert "estate_heartbeat_unreadable" in _codes(report)
++
++
++def test_malformed_earlier_heartbeat_row_does_not_override_valid_last_row(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    valid_last = (state / "heartbeats.jsonl").read_text(encoding="utf-8")
++    (state / "heartbeats.jsonl").write_text("not-json\n" + valid_last, encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert report["ok"] is True
++
++
++@pytest.mark.parametrize(
++    "invalid_row",
++    [
++        {},
++        {
++            "ts": NOW.isoformat(),
++            "emitter": "other",
++            "kind": "cycle",
++            "payload": {"epoch": 1, "findings": 0, "escalations": 0},
++        },
++        {
++            "ts": NOW.isoformat(),
++            "emitter": "estate-manager",
++            "kind": "cycle",
++            "payload": {"epoch": True, "findings": 0, "escalations": 0},
++        },
++    ],
++)
++def test_schema_invalid_earlier_heartbeat_object_is_ignored_when_last_is_valid(tmp_path, invalid_row):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    valid_last = (state / "heartbeats.jsonl").read_text(encoding="utf-8")
++    (state / "heartbeats.jsonl").write_text(
++        json.dumps(invalid_row) + "\n" + valid_last,
++        encoding="utf-8",
++    )
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert report["ok"] is True
++
++
++def test_non_utf8_earlier_heartbeat_is_ignored_when_last_is_valid(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    valid_last = (state / "heartbeats.jsonl").read_bytes()
++    (state / "heartbeats.jsonl").write_bytes(b"\xff\xfe\n" + valid_last)
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert report["ok"] is True
++
++
++def test_epoch_mismatch_alarms(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state, epoch=4)
++    heartbeat = json.loads((state / "heartbeats.jsonl").read_text(encoding="utf-8"))
++    heartbeat["payload"]["epoch"] = 3
++    (state / "heartbeats.jsonl").write_text(json.dumps(heartbeat) + "\n", encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert "estate_epoch_mismatch" in _codes(report)
++
++
++def test_same_epoch_with_different_cycle_timestamps_alarms(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state, epoch=4)
++    heartbeat = json.loads((state / "heartbeats.jsonl").read_text(encoding="utf-8"))
++    heartbeat["ts"] = (NOW - timedelta(minutes=5)).isoformat()
++    (state / "heartbeats.jsonl").write_text(json.dumps(heartbeat) + "\n", encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert "estate_timestamp_mismatch" in _codes(report)
++
++
++@pytest.mark.parametrize(
++    "state_updates",
++    [
++        {"epoch": True},
++        {"dept_epochs": []},
++        {"open_findings": {}},
++        {"escalations": True},
++    ],
++)
++def test_invalid_state_schema_alarms(tmp_path, state_updates):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    state_row = json.loads((state / "STATE.json").read_text(encoding="utf-8"))
++    state_row.update(state_updates)
++    (state / "STATE.json").write_text(json.dumps(state_row), encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert "estate_state_schema_invalid" in _codes(report)
++
++
++@pytest.mark.parametrize(
++    ("state_findings", "state_escalations", "heartbeat_findings", "heartbeat_escalations"),
++    [
++        ([{"code": "dead_manager"}], 1, 0, 1),
++        ([], 1, 0, 0),
++    ],
++)
++def test_final_heartbeat_counters_must_match_state(
++    tmp_path,
++    state_findings,
++    state_escalations,
++    heartbeat_findings,
++    heartbeat_escalations,
++):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state)
++    state_row = json.loads((state / "STATE.json").read_text(encoding="utf-8"))
++    state_row["open_findings"] = state_findings
++    state_row["escalations"] = state_escalations
++    (state / "STATE.json").write_text(json.dumps(state_row), encoding="utf-8")
++    heartbeat = json.loads((state / "heartbeats.jsonl").read_text(encoding="utf-8"))
++    heartbeat["payload"]["findings"] = heartbeat_findings
++    heartbeat["payload"]["escalations"] = heartbeat_escalations
++    (state / "heartbeats.jsonl").write_text(json.dumps(heartbeat) + "\n", encoding="utf-8")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert "estate_counter_mismatch" in _codes(report)
++
++
++def test_boolean_epochs_alarm_instead_of_passing_as_integers(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    _write_registry(registry)
++    _write_estate_state(state, epoch=True)
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW, max_age_seconds=3600)
++
++    assert "estate_heartbeat_unreadable" in _codes(report)
++
++
++def test_future_timestamp_alarms(tmp_path):
++    report = _report(tmp_path, when=NOW + timedelta(minutes=10))
++    assert {"estate_heartbeat_future", "estate_state_future"} <= _codes(report)
++
++
++def test_invalid_or_empty_registry_alarms(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    registry.mkdir()
++    _write_estate_state(state)
++    empty = estate_deadman.evaluate_deadman(registry, state, now=NOW)
++    assert "estate_registry_empty" in _codes(empty)
++    (registry / "bad.yaml").write_text("poison\n", encoding="utf-8")
++    invalid = estate_deadman.evaluate_deadman(registry, state, now=NOW)
++    assert "estate_registry_unreadable" in _codes(invalid)
++
++
++def test_registry_decode_failure_becomes_alarm(tmp_path):
++    registry = tmp_path / "registry.d"
++    state = tmp_path / "state"
++    registry.mkdir()
++    _write_estate_state(state)
++    (registry / "bad.yaml").write_bytes(b"\xff\xfe")
++
++    report = estate_deadman.evaluate_deadman(registry, state, now=NOW)
++
++    assert "estate_registry_unreadable" in _codes(report)
++
++
++def test_alarm_uses_factory_outbox_shape(tmp_path):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++
++    result = estate_deadman.raise_alarm(report, outbox)
++
++    assert result["escalated"] is True
++    packet = json.loads(outbox.read_text(encoding="utf-8"))
++    assert packet["kind"] == "escalation"
++    assert packet["department"] == "estate"
++    assert packet["context"]["source"] == "estate-deadman"
++    assert "estate_heartbeat_stale" in packet["context"]["finding_codes"]
++
++
++def test_unchanged_alarm_is_capped_to_once_per_six_hours(tmp_path):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++    alarm_state = tmp_path / "estate-deadman" / "alarm_state.json"
++
++    first = estate_deadman.raise_alarm_with_cooldown(
++        report, outbox, alarm_state, now=NOW, cooldown_seconds=6 * 3600,
++    )
++    second = estate_deadman.raise_alarm_with_cooldown(
++        report, outbox, alarm_state, now=NOW + timedelta(hours=1), cooldown_seconds=6 * 3600,
++    )
++    third = estate_deadman.raise_alarm_with_cooldown(
++        report, outbox, alarm_state, now=NOW + timedelta(hours=6), cooldown_seconds=6 * 3600,
++    )
++
++    assert first["alarmed"] is True
++    assert second["suppressed"] is True
++    assert third["alarmed"] is True
++    assert len(outbox.read_text(encoding="utf-8").splitlines()) == 2
++    assert alarm_state.parent.name == "estate-deadman"
++
++
++def test_overlapping_unchanged_alarms_append_only_once(tmp_path, monkeypatch):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++    alarm_state = tmp_path / "estate-deadman" / "alarm_state.json"
++    start = threading.Barrier(2)
++    real_raise_alarm = estate_deadman.raise_alarm
++
++    def slow_raise_alarm(*args, **kwargs):
++        time.sleep(0.05)
++        return real_raise_alarm(*args, **kwargs)
++
++    def invoke():
++        start.wait()
++        return estate_deadman.raise_alarm_with_cooldown(
++            report,
++            outbox,
++            alarm_state,
++            now=NOW,
++            cooldown_seconds=6 * 3600,
++        )
++
++    monkeypatch.setattr(estate_deadman, "raise_alarm", slow_raise_alarm)
++    with ThreadPoolExecutor(max_workers=2) as pool:
++        outcomes = [future.result() for future in (pool.submit(invoke), pool.submit(invoke))]
++
++    assert sum(outcome["alarmed"] for outcome in outcomes) == 1
++    assert sum(outcome["suppressed"] for outcome in outcomes) == 1
++    assert len(outbox.read_text(encoding="utf-8").splitlines()) == 1
++
++
++def test_alarm_and_healthy_state_writes_are_serialized(tmp_path, monkeypatch):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++    alarm_state = tmp_path / "estate-deadman" / "alarm_state.json"
++    start = threading.Barrier(2)
++    real_atomic_write = estate_deadman._atomic_write_json
++    active_writes = 0
++    max_active_writes = 0
++    counter_lock = threading.Lock()
++
++    def observed_atomic_write(*args, **kwargs):
++        nonlocal active_writes, max_active_writes
++        with counter_lock:
++            active_writes += 1
++            max_active_writes = max(max_active_writes, active_writes)
++        try:
++            time.sleep(0.05)
++            return real_atomic_write(*args, **kwargs)
++        finally:
++            with counter_lock:
++                active_writes -= 1
++
++    def alarm():
++        start.wait()
++        estate_deadman.raise_alarm_with_cooldown(report, outbox, alarm_state, now=NOW)
++
++    def healthy():
++        start.wait()
++        estate_deadman.record_healthy(alarm_state, now=NOW)
++
++    monkeypatch.setattr(estate_deadman, "_atomic_write_json", observed_atomic_write)
++    with ThreadPoolExecutor(max_workers=2) as pool:
++        for future in (pool.submit(alarm), pool.submit(healthy)):
++            future.result()
++
++    assert max_active_writes == 1
++    state = json.loads(alarm_state.read_text(encoding="utf-8"))
++    assert state["finding_codes"] in ([], sorted(_codes(report)))
++    assert len(outbox.read_text(encoding="utf-8").splitlines()) == 1
++
++
++def test_changed_finding_set_bypasses_alarm_cooldown(tmp_path):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++    alarm_state = tmp_path / "estate-deadman" / "alarm_state.json"
++    estate_deadman.raise_alarm_with_cooldown(report, outbox, alarm_state, now=NOW)
++    changed = {**report, "findings": [*report["findings"], {
++        "code": "estate_registry_unreadable",
++        "detail": "test",
++    }]}
++
++    outcome = estate_deadman.raise_alarm_with_cooldown(
++        changed,
++        outbox,
++        alarm_state,
++        now=NOW + timedelta(minutes=5),
++    )
++
++    assert outcome["alarmed"] is True
++    assert len(outbox.read_text(encoding="utf-8").splitlines()) == 2
++
++
++def test_healthy_record_resets_cooldown_for_a_recurrence(tmp_path):
++    report = _report(tmp_path, when=NOW - timedelta(hours=2))
++    outbox = tmp_path / "outbox.jsonl"
++    alarm_state = tmp_path / "estate-deadman" / "alarm_state.json"
++    estate_deadman.raise_alarm_with_cooldown(report, outbox, alarm_state, now=NOW)
++    estate_deadman.record_healthy(alarm_state, now=NOW + timedelta(minutes=10))
++
++    outcome = estate_deadman.raise_alarm_with_cooldown(
++        report,
++        outbox,
++        alarm_state,
++        now=NOW + timedelta(minutes=20),
++    )
++
++    assert outcome["alarmed"] is True
++    assert len(outbox.read_text(encoding="utf-8").splitlines()) == 2
++
++
++def test_registry_module_load_failure_becomes_alarm_finding(tmp_path, monkeypatch):
++    state = tmp_path / "state"
++    _write_estate_state(state)
++
++    def fail_load(*_args):
++        raise SyntaxError("corrupt module")
++
++    monkeypatch.setattr(estate_deadman, "_load_module", fail_load)
++    report = estate_deadman.evaluate_deadman(tmp_path / "registry.d", state, now=NOW)
++
++    assert "estate_registry_unreadable" in _codes(report)
++
++
++def test_main_attempts_synthetic_alarm_before_internal_error_exit(tmp_path, monkeypatch):
++    captured = []
++
++    def fail_evaluation(*_args, **_kwargs):
++        raise RuntimeError("deadman infrastructure failed")
++
++    def capture_alarm(report, *_args, **_kwargs):
++        captured.append(report)
++        return {"alarmed": True, "suppressed": False, "finding_codes": ["deadman_internal_error"]}
++
++    monkeypatch.setattr(estate_deadman, "evaluate_deadman", fail_evaluation)
++    monkeypatch.setattr(estate_deadman, "raise_alarm_with_cooldown", capture_alarm)
++    monkeypatch.setattr(
++        "sys.argv",
++        [
++            "estate_deadman.py",
++            "--outbox", str(tmp_path / "outbox.jsonl"),
++            "--alarm-state", str(tmp_path / "deadman" / "alarm_state.json"),
++        ],
++    )
++
++    assert estate_deadman.main() == 2
++    assert captured[0]["findings"][0]["code"] == "deadman_internal_error"
++
++
++def test_poisoned_registry_self_test_only_mutates_copy(tmp_path):
++    registry = tmp_path / "registry.d"
++    _write_registry(registry)
++    original = (registry / "demo.yaml").read_text(encoding="utf-8")
++
++    report = estate_deadman.poisoned_registry_self_test(registry)
++
++    assert "estate_registry_unreadable" in _codes(report)
++    assert (registry / "demo.yaml").read_text(encoding="utf-8") == original
++
++
++def test_invalid_threshold_refuses_to_evaluate(tmp_path):
++    with pytest.raises(ValueError):
++        estate_deadman.evaluate_deadman(tmp_path, tmp_path, max_age_seconds=0)
+diff --git a/tests/test_estate_systemd_install.py b/tests/test_estate_systemd_install.py
+new file mode 100644
+index 0000000..51aedd0
+--- /dev/null
++++ b/tests/test_estate_systemd_install.py
+@@ -0,0 +1,214 @@
++from __future__ import annotations
++
++import ast
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from deploy import install_estate_watchdog
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SYSTEMD = ROOT / "deploy" / "systemd"
++
++
++def test_units_are_uniquely_named_and_invoke_real_entrypoints():
++    estate = (SYSTEMD / "loop-factory-estate.service").read_text(encoding="utf-8")
++    deadman = (SYSTEMD / "loop-factory-estate-deadman.service").read_text(encoding="utf-8")
++    assert "loopfactory.py estate" in estate
++    assert "factory/estate_deadman.py" in deadman
++    assert "estate-manager.service" not in estate
++    assert "estate-manager.service" not in deadman
++    assert "--outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl" in estate
++    assert "--outbox /mnt/d_drive/repos/loop-factory/state/decisions_outbox.jsonl" in deadman
++    assert "--alarm-state /mnt/d_drive/repos/loop-factory/state/estate-deadman/alarm_state.json" in deadman
++    assert "--cooldown-seconds 21600" in deadman
++
++
++def test_units_are_fail_closed_and_network_denied():
++    for name in (
++        "loop-factory-estate.service",
++        "loop-factory-estate-deadman.service",
++    ):
++        text = (SYSTEMD / name).read_text(encoding="utf-8")
++        assert "ProtectSystem=strict" in text
++        assert "NoNewPrivileges=yes" in text
++        assert "IPAddressDeny=any" in text
++        assert "SuccessExitStatus=" not in text
++    deadman = (SYSTEMD / "loop-factory-estate-deadman.service").read_text(encoding="utf-8")
++    assert "ReadWritePaths=/mnt/d_drive/repos/loop-factory/state" in deadman
++    assert "estate/state" not in deadman.split("ReadWritePaths=", 1)[1]
++    assert "ConditionPathIsDirectory=" not in deadman
++
++
++def test_timers_explicitly_target_unique_services():
++    estate_timer = (SYSTEMD / "loop-factory-estate.timer").read_text(encoding="utf-8")
++    deadman_timer = (SYSTEMD / "loop-factory-estate-deadman.timer").read_text(encoding="utf-8")
++    assert "Unit=loop-factory-estate.service" in estate_timer
++    assert "Unit=loop-factory-estate-deadman.service" in deadman_timer
++    assert "Persistent=true" in estate_timer
++    assert "Persistent=true" in deadman_timer
++
++
++def test_installer_command_plan_is_idempotent_and_unique(tmp_path):
++    commands = install_estate_watchdog.install_commands(ROOT, tmp_path)
++    copies = [command for command in commands if command[:3] == ["install", "-m", "0644"]]
++    assert len(copies) == 4
++    assert {Path(command[-1]).name for command in copies} == set(install_estate_watchdog.UNIT_NAMES)
++    assert commands[0][-1] == "--self-test-poisoned-registry"
++    assert commands[1][:2] == ["systemd-analyze", "verify"]
++    assert ["install", "-d", "-m", "0755", str(ROOT / "state" / "estate-deadman")] in commands
++    systemctl = [command for command in commands if command and command[0] == "systemctl"]
++    assert systemctl[0] == ["systemctl", "--user", "daemon-reload"]
++    assert systemctl[1][:4] == ["systemctl", "--user", "enable", "--now"]
++    assert systemctl[2] == ["systemctl", "--user", "start", "loop-factory-estate.service"]
++    assert systemctl[3] == ["systemctl", "--user", "start", "loop-factory-estate-deadman.service"]
++    assert any(command[:2] == ["systemd-analyze", "verify"] for command in commands)
++    assert "estate-manager.service" not in " ".join(" ".join(command) for command in commands)
++
++
++def test_systemd_analyze_verifies_temporary_unit_copies(tmp_path):
++    if shutil.which("systemd-analyze") is None:
++        pytest.skip("systemd-analyze is unavailable")
++    copies = []
++    for name in install_estate_watchdog.UNIT_NAMES:
++        target = tmp_path / name
++        shutil.copy2(SYSTEMD / name, target)
++        copies.append(str(target))
++    result = subprocess.run(
++        ["systemd-analyze", "verify", *copies],
++        check=False,
++        text=True,
++        capture_output=True,
++    )
++    assert result.returncode == 0, result.stderr
++
++
++def test_default_installer_is_display_only():
++    result = subprocess.run(
++        ["python3", str(ROOT / "deploy" / "install_estate_watchdog.py")],
++        check=True,
++        text=True,
++        capture_output=True,
++    )
++    assert "INSTALL DRY RUN (no commands executed)" in result.stdout
++    assert "systemctl --user daemon-reload" in result.stdout
++    assert "systemctl --user enable --now loop-factory-estate.timer loop-factory-estate-deadman.timer" in result.stdout
++    assert "Re-run with --apply to execute exactly the commands above." in result.stdout
++
++
++def test_no_real_subprocess_call_in_this_suite_contains_apply_flag():
++    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
++    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
++        function = call.func
++        is_subprocess_run = (
++            isinstance(function, ast.Attribute)
++            and isinstance(function.value, ast.Name)
++            and function.value.id == "subprocess"
++            and function.attr == "run"
++        )
++        if not is_subprocess_run or not call.args:
++            continue
++        constants = {
++            node.value
++            for node in ast.walk(call.args[0])
++            if isinstance(node, ast.Constant) and isinstance(node.value, str)
++        }
++        assert "--apply" not in constants
++
++
++def test_apply_refuses_noncanonical_root_without_executing_commands(monkeypatch, capsys):
++    sentinel_root = ROOT.parent / "not-the-current-checkout"
++
++    def fail_if_called(*_args, **_kwargs):
++        raise AssertionError("refusal path must not execute subprocesses")
++
++    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", sentinel_root)
++    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fail_if_called)
++    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply"])
++
++    assert install_estate_watchdog.main() == 2
++    assert "REFUSING: installer must run from" in capsys.readouterr().out
++
++
++def test_apply_executes_exact_plan_only_when_explicit(monkeypatch):
++    calls = []
++
++    def fake_run(command, check):
++        assert check is True
++        calls.append(command)
++        return subprocess.CompletedProcess(command, 0)
++
++    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", ROOT)
++    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fake_run)
++    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply"])
++
++    assert install_estate_watchdog.main() == 0
++    assert calls == install_estate_watchdog.install_commands(ROOT, Path.home())
++
++
++def test_apply_failure_stops_and_prints_tested_rollback(monkeypatch, capsys):
++    calls = []
++    plan = install_estate_watchdog.install_commands(ROOT, Path.home())
++
++    def fake_run(command, check):
++        calls.append(command)
++        if len(calls) == 3:
++            raise subprocess.CalledProcessError(9, command)
++        return subprocess.CompletedProcess(command, 0)
++
++    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", ROOT)
++    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fake_run)
++    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply"])
++
++    assert install_estate_watchdog.main() == 9
++    assert calls == plan[:3]
++    assert "--apply --rollback" in capsys.readouterr().out
++
++
++def test_rollback_plan_targets_only_unique_units(tmp_path):
++    commands = install_estate_watchdog.rollback_commands(tmp_path)
++    rendered = "\n".join(" ".join(command) for command in commands)
++    assert "loop-factory-estate.timer" in rendered
++    assert "loop-factory-estate-deadman.timer" in rendered
++    assert "estate-manager.service" not in rendered
++    assert all(str(tmp_path / ".config" / "systemd" / "user" / name) in rendered
++               for name in install_estate_watchdog.UNIT_NAMES)
++
++
++def test_applied_rollback_continues_when_units_are_already_absent(monkeypatch):
++    calls = []
++    plan = install_estate_watchdog.rollback_commands(Path.home())
++
++    def fake_run(command, check):
++        assert check is False
++        calls.append(command)
++        returncode = 5 if command[0] == "systemctl" and "daemon-reload" not in command else 0
++        return subprocess.CompletedProcess(command, returncode)
++
++    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", ROOT)
++    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fake_run)
++    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply", "--rollback"])
++
++    assert install_estate_watchdog.main() == 0
++    assert calls == plan
++
++
++def test_applied_rollback_reports_critical_failure_after_completing_plan(monkeypatch):
++    calls = []
++    plan = install_estate_watchdog.rollback_commands(Path.home())
++
++    def fake_run(command, check):
++        calls.append(command)
++        returncode = 7 if command[0] == "rm" else 0
++        return subprocess.CompletedProcess(command, returncode)
++
++    monkeypatch.setattr(install_estate_watchdog, "CANONICAL_ROOT", ROOT)
++    monkeypatch.setattr(install_estate_watchdog.subprocess, "run", fake_run)
++    monkeypatch.setattr(sys, "argv", ["install_estate_watchdog.py", "--apply", "--rollback"])
++
++    assert install_estate_watchdog.main() == 7
++    assert calls == plan

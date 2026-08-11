@@ -1,0 +1,19 @@
+{
+  "run_name": "loop-factory-v2-merge-qa",
+  "workdir": "/home/ankit114/ringer-work/merge-qa-r1",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "merge-review",
+      "engine": "claude",
+      "task_type": "code-review",
+      "timeout_s": 2400,
+      "spec": "You are an adversarial merge reviewer with READ-ONLY intent: your current working directory is a git worktree of the loop-factory repo checked out at the merged result; you may run git and read-only python commands but must not edit any repo file. Your ONLY deliverable is ./review.md in the task working directory.\n\nCONTEXT: Merge commit 42ae723 merged origin/master into feat/loop-factory-v2 (now merged to master as PR #13). The two parents both edited factory/manager.py: the MASTER side added a release-drift sensor (sense_drift(), drift findings in compare() — release_drift / release_unpinned / drift_check_failed / drift_unverifiable, run_manager_cycle(dept_dir=, release_root=) merging sense_drift into sensed, main() passing dept_dir unconditionally, import stat). The BRANCH side hardened the manager (fcntl records_lock around all state writes via factory/lockutil.py, atomic _atomic_write with tempfile+fsync, _append_jsonl, escalation fingerprint dedup with resolved-reopen semantics — _escalation_subject/_escalation_fingerprint/_active_escalation_fingerprints, the _act_and_record rewrite of act(), decide() adding a subject field, imports hashlib/importlib.util/tempfile). The intended resolution was the FULL UNION: nothing dropped from either side.\n\nADVERSARIALLY VERIFY the union actually holds. Audit at minimum: (1) git show 42ae723^1:factory/manager.py, 42ae723^2:factory/manager.py, and the merged factory/manager.py — enumerate every function/feature each parent added and confirm each exists intact in the merged file (cite function names + line numbers in the merged file); (2) no conflict markers anywhere: git grep -nE '^(<{7}|={7}|>{7})' -- . ; (3) semantic composition: does compare()'s drift-finding block still run before decide(), does decide() subject drift findings (they carry no explicit subject — confirm the f.get(\"subject\") or f[\"code\"] fallback subjects them by code), and does the escalation fingerprint dedup therefore suppress REPEAT drift escalations while a resolved-then-recurring breach re-escalates (trace the code paths, cite lines); (4) run the suites yourself and report actual output: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_manager.py tests/test_manager_hardening.py -q -p no:cacheprovider, and then the full PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check; (5) sweep the rest of the merge for accidental drops: git diff 42ae723^1 42ae723 --stat and confirm every changed file traces to one of the two parents rather than novel content.\n\nWrite ./review.md: FIRST LINE exactly 'VERDICT: PASS' or 'VERDICT: FAIL', then per audit point a heading with findings and Evidence lines (file:line / function / command output). A missing parent feature, surviving conflict marker, failing test, or novel unexplained content = VERDICT: FAIL with the exact evidence. Do not soften; a FAIL verdict is a fully acceptable deliverable.",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/merge-qa/checks/merge_qa_check.py",
+      "expect_files": ["review.md"],
+      "verified": "an independent claude-lane reviewer adversarially confirmed (or refuted) that the manager.py merge is the true union of both parents with tests green"
+    }
+  ]
+}

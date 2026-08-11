@@ -1,0 +1,23 @@
+{
+ "run_name": "ultimate-process",
+ "workdir": "/home/ankit114/ringer-work/ultimate-process-r3oe",
+ "worktrees": true,
+ "repo": "/mnt/d_drive/repos/open-engine",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "sales-v2-bridge",
+   "engine": "codex",
+   "task_type": "code-feature",
+   "timeout_s": 3600,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "Your current working directory IS a git worktree. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills; fixture-only tests with INVENTED contacts. NEVER execute scripts/gap_sync.py in any form. NEVER read *.env/*secret*/*token*/*key*/*credential* files. Repo: open-engine worktree (the sales department). The voice gate exists at /mnt/d_drive/repos/hubspot-daily-2/scripts/voice_gate.py (read it): check_draft(body, *, channel, subject=None, metadata=None) -> {pass, defects[{rule_id,severity,detail}], warns, rule_version, content_hash}; CLI --body-file --channel --subject --metadata-json --receipt-out, exit 0/1/2, PII-free receipts; rules at scripts/voice_rules.json. Invoke via subprocess by absolute path or import via importlib file location \u2014 your call; MISSING/erroring gate must FAIL CLOSED (block the draft path, never skip). MISSION \u2014 three gaps from an approved adapt plan (G2, G4, G5), smallest-adaptation, shadow-only, existing receipts stay authoritative: (G2) runs-v2 sidecar \u2014 read /mnt/d_drive/repos/loop-factory/factory/runrecord.py (the contract; do not import cross-repo \u2014 vendor a minimal emitter) and the sales receipts_spine (find it; read how stages emit); add a small src/factory/runrecord_v2.py emitter + wire receipts_spine so each stage ALSO appends one valid runs-v2.jsonl row (department sales, node=stage name, status, duration, external_actions_taken=0, no bodies/contacts) referencing the signed receipt id in artifacts[]; stage fails if the sidecar append fails. (G4) objectives emitter \u2014 add a deterministic script src/factory/objectives_observed_sales.py computing from AGGREGATE receipt/state data only (no contact rows): stale_opportunities count, qa_pass_rate, median_disposition_hours, closure_integrity \u2014 writing departments/sales/state/objectives_observed.json {schema:'objectives-observed/v1', ts, values:{...}} atomically; values it cannot compute are ABSENT never 0; wire into sales_daily.sh after the existing stages. (G5) voice-gate adapter \u2014 find where sales-reactivation drafts copy; wire the gate (channel email) fail-closed exactly as the charter requires: non-pass => blocked_voice_gate receipt (PII-free), no approval counting, no dispatch; drafting itself may continue. OWNED: the new files + receipts_spine + sales_daily.sh + the drafting-site file + tests/test_sales_v2_bridge.py (>=8 fixture tests: sidecar row validates against vendored contract; stage fails on sidecar failure; objectives absent-vs-zero; gate blocks bad copy fail-closed incl. missing-gate; daily script wiring lines present). Write ./evidence.md (sites found, diffs summary, test output). VERIFY: your new tests + any existing suite for touched files.",
+   "check": "python3 -c \"import sys,subprocess;from pathlib import Path;e=Path('evidence.md');t=e.read_text(errors='replace').lower() if e.exists() else sys.exit(print('FAIL: evidence.md missing') or 1);r=subprocess.run(['python3','-m','pytest','tests/test_sales_v2_bridge.py','-q','-p','no:cacheprovider'],capture_output=True,text=True,env={'PYTHONDONTWRITEBYTECODE':'1','PATH':'/usr/bin:/bin'});ok='passed' in r.stdout and r.returncode==0;d=subprocess.run(['git','diff','HEAD'],capture_output=True,text=True).stdout;Path('/home/ankit114/ringer-work/ultimate-process-r3oe/salesbridge.patch').write_text(d);need=[('sites named','file'),('fail-closed','fail')];fails=[n for n,pat in need if pat not in t]+([] if ok else ['pytest failed: '+r.stdout[-200:]])+([] if len(d)>500 else ['patch too small']);print('SALES-BRIDGE CHECK:','PASS' if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\"",
+   "expect_files": [],
+   "verified": "sales emits v2 run records + measured objectives and its outreach copy is voice-gated fail-closed \u2014 receipts chain untouched, shadow preserved"
+  }
+ ]
+}

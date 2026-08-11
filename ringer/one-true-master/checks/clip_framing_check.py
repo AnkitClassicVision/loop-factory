@@ -342,10 +342,19 @@ def resolve_manifest_path(
     candidate = Path(raw_path).expanduser()
     if candidate.is_absolute():
         return candidate.resolve()
-    candidates = (
+    # A manifest may store paths relative to the clips dir, to itself, to the
+    # repo root, or to the process cwd, depending on how the generator was
+    # invoked. Joining blindly onto clips_dir produced a doubled path like
+    # <ep>/clips/episodes/<ep>/clips/clip_1.mp4 and an UNMEASURABLE verdict on
+    # a genuinely good clip set (2026-07-29). Try every sane base, then fall
+    # back to matching by basename inside clips_dir before giving up.
+    candidates = [
         clips_dir / candidate,
         manifest_path.parent / candidate,
-    )
+        Path.cwd() / candidate,
+        candidate,
+        clips_dir / candidate.name,
+    ]
     for resolved in candidates:
         if resolved.is_file():
             return resolved.resolve()

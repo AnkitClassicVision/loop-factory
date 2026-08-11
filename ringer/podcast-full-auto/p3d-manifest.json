@@ -1,0 +1,19 @@
+{
+  "run_name": "podcast-full-auto",
+  "workdir": "/home/ankit114/ringer-work/podcast-full-auto-p3d",
+  "max_parallel": 1,
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "tasks": [
+    {
+      "key": "publishing-social-alignment",
+      "engine": "codex",
+      "task_type": "test-hardening",
+      "timeout_s": 2400,
+      "spec": "You are a fix worker on the OBE podcast repo. Your current working directory IS a git worktree of /mnt/d_drive/repos/podcast - edit files here directly. Do NOT git commit, branch, or push; leave changes uncommitted. No skills/MCP/network. PYTHONDONTWRITEBYTECODE=1.\n\nBASE STATE: your worktree HEAD already includes the fanout-policy change (outer orch_zernio_social batch action removed; per-post gateway dispatch with per-post receipts; batch status computed locally; verified_media_urls gate). The 4 tests below are currently RED at HEAD - that is the starting point.\n\nTASK: raise 4 stale tests in tests/test_publishing.py to the new per-post social contract WITHOUT weakening what they prove.\n\nOWNERSHIP: you own ONLY tests/test_publishing.py. NO production edits - if a contract cannot be proven without a production change, STOP and explain in fix-summary.\n\nTHE 4 TESTS + their surviving contracts:\n1. test_publish_social_dispatch_replay_allows_downstream_state - replay of already-created posts remains an accepted idempotent outcome; downstream state advances. Now: per-post receipts show replayed/existing keys, no duplicate provider calls, stage advances.\n2-4. test_publish_social_gated_outcome_does_not_write_state_or_advance[blocked|failed|shadow] - a blocked/failed/shadow PER-POST outcome must not write Zernio state for that post and must not falsely mark social complete: assert the failed post's receipt records the gated outcome, no provider ID persisted for it, batch status != complete, and the episode does not advance past its earned stage. Successful other posts in the batch MAY have receipts (that is the new per-post point) - assert the partial-batch invariant precisely.\n\nRead the fanout patch's own tests (tests/test_zernio.py, tests/test_publish_orchestrator_resume_fanout.py after applying) to mirror fixture patterns. ALL of tests/test_publishing.py must pass.\n\nHOW TO RUN: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_publishing.py -q -p no:cacheprovider\n\nOUTPUT CONTRACT: uncommitted changes + ./fix-summary.md ('# Fix Summary','## Summary','## Files Changed','## Verification','## Assumptions', <400 words).",
+      "check": "python3 '/home/ankit114/repos/ringer/templates/fix-swarm/checks/fix-swarm.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_publishing.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/podcast-full-auto-p3d/publishing-social-alignment.patch' --summary fix-summary.md --exported-summary '/home/ankit114/ringer-work/podcast-full-auto-p3d/publishing-social-alignment.summary.md' --owned-files 'tests/test_publishing.py'",
+      "expect_files": [],
+      "verified": "test_publishing.py fully green under the per-post social contract with the gated-outcome invariants preserved"
+    }
+  ]
+}

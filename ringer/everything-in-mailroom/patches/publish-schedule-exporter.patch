@@ -1,0 +1,226 @@
+diff --git a/scripts/export_publish_schedule.py b/scripts/export_publish_schedule.py
+new file mode 100644
+index 0000000..8bc1765
+--- /dev/null
++++ b/scripts/export_publish_schedule.py
+@@ -0,0 +1,119 @@
++#!/usr/bin/env python3
++"""Export episode publish dates for the podcast watchdog."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import logging
++import os
++from datetime import datetime, timezone
++from pathlib import Path
++import tempfile
++
++
++LOGGER = logging.getLogger("export_publish_schedule")
++
++
++def collect_episodes(episodes_root: Path) -> list[dict[str, str]]:
++    """Collect publish schedule rows from immediate episode subdirectories."""
++    if not episodes_root.is_dir():
++        raise OSError("episodes root is missing or unreadable")
++
++    try:
++        episode_dirs = list(episodes_root.iterdir())
++    except OSError as exc:
++        raise OSError("episodes root is missing or unreadable") from exc
++
++    rows: list[dict[str, str]] = []
++    for episode_dir in episode_dirs:
++        if episode_dir.name.startswith("_") or not episode_dir.is_dir():
++            continue
++
++        episode_file = episode_dir / "episode.json"
++        if not episode_file.is_file():
++            continue
++
++        try:
++            with episode_file.open("r", encoding="utf-8") as handle:
++                episode = json.load(handle)
++            publish_date = episode.get("publish_date")
++        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
++            LOGGER.warning(
++                "skipping episode %s: unreadable or malformed episode.json",
++                episode_dir.name,
++            )
++            continue
++
++        if isinstance(publish_date, str) and publish_date:
++            rows.append(
++                {"episode_id": episode_dir.name, "publish_date": publish_date}
++            )
++
++    rows.sort(key=lambda row: (row["publish_date"], row["episode_id"]))
++    return rows
++
++
++def write_atomic(output_path: Path, payload: dict[str, object]) -> None:
++    """Write JSON via a temporary file in the destination directory."""
++    output_path.parent.mkdir(parents=True, exist_ok=True)
++    temp_path: Path | None = None
++    try:
++        with tempfile.NamedTemporaryFile(
++            mode="w",
++            encoding="utf-8",
++            dir=output_path.parent,
++            prefix=f".{output_path.name}.",
++            suffix=".tmp",
++            delete=False,
++        ) as handle:
++            temp_path = Path(handle.name)
++            json.dump(payload, handle, indent=2)
++            handle.write("\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temp_path, output_path)
++    except Exception:
++        if temp_path is not None:
++            try:
++                temp_path.unlink()
++            except OSError:
++                pass
++        raise
++
++
++def build_parser() -> argparse.ArgumentParser:
++    repo_root = Path(__file__).resolve().parent.parent
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--episodes", type=Path, default=repo_root / "episodes")
++    parser.add_argument("--out", type=Path, required=True)
++    return parser
++
++
++def main(argv: list[str] | None = None) -> int:
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
++    args = build_parser().parse_args(argv)
++
++    try:
++        rows = collect_episodes(args.episodes)
++    except OSError:
++        LOGGER.error("episodes root is missing or unreadable")
++        return 1
++
++    payload = {
++        "schema": "publish-schedule/v1",
++        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "episodes": rows,
++    }
++    try:
++        write_atomic(args.out, payload)
++    except OSError:
++        LOGGER.error("output could not be written")
++        return 1
++
++    LOGGER.info("exported %d scheduled episodes", len(rows))
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_export_publish_schedule.py b/tests/test_export_publish_schedule.py
+new file mode 100644
+index 0000000..db6c733
+--- /dev/null
++++ b/tests/test_export_publish_schedule.py
+@@ -0,0 +1,95 @@
++import json
++import os
++from pathlib import Path
++import subprocess
++import sys
++
++
++SCRIPT = Path(__file__).parents[1] / "scripts" / "export_publish_schedule.py"
++
++
++def write_episode(root: Path, episode_id: str, publish_date: str | None) -> None:
++    episode_dir = root / episode_id
++    episode_dir.mkdir()
++    (episode_dir / "episode.json").write_text(
++        json.dumps({"publish_date": publish_date}), encoding="utf-8"
++    )
++
++
++def run_export(episodes: Path, output: Path) -> subprocess.CompletedProcess[str]:
++    env = os.environ.copy()
++    env["PYTHONDONTWRITEBYTECODE"] = "1"
++    return subprocess.run(
++        [
++            sys.executable,
++            str(SCRIPT),
++            "--episodes",
++            str(episodes),
++            "--out",
++            str(output),
++        ],
++        text=True,
++        capture_output=True,
++        check=False,
++        env=env,
++    )
++
++
++def test_happy_path_filters_and_sorts(tmp_path: Path) -> None:
++    episodes = tmp_path / "episodes"
++    episodes.mkdir()
++    write_episode(episodes, "episode-z", "2026-08-09")
++    write_episode(episodes, "episode-a", "2026-08-08")
++    write_episode(episodes, "not-scheduled", None)
++    write_episode(episodes, "_trash", "2026-08-01")
++    output = tmp_path / "publish_schedule.json"
++
++    result = run_export(episodes, output)
++
++    assert result.returncode == 0
++    payload = json.loads(output.read_text(encoding="utf-8"))
++    assert payload["schema"] == "publish-schedule/v1"
++    assert payload["generated_at"]
++    assert payload["episodes"] == [
++        {"episode_id": "episode-a", "publish_date": "2026-08-08"},
++        {"episode_id": "episode-z", "publish_date": "2026-08-09"},
++    ]
++
++
++def test_malformed_episode_warns_and_other_rows_export(tmp_path: Path) -> None:
++    episodes = tmp_path / "episodes"
++    episodes.mkdir()
++    write_episode(episodes, "good", "2026-08-08")
++    bad = episodes / "bad"
++    bad.mkdir()
++    (bad / "episode.json").write_text("{not json", encoding="utf-8")
++    output = tmp_path / "publish_schedule.json"
++
++    result = run_export(episodes, output)
++
++    assert result.returncode == 0
++    assert "WARNING" in result.stderr
++    assert "bad" in result.stderr
++    assert json.loads(output.read_text(encoding="utf-8"))["episodes"] == [
++        {"episode_id": "good", "publish_date": "2026-08-08"}
++    ]
++
++
++def test_missing_episodes_root_exits_nonzero(tmp_path: Path) -> None:
++    result = run_export(tmp_path / "missing", tmp_path / "publish_schedule.json")
++
++    assert result.returncode != 0
++
++
++def test_output_is_valid_json_and_leaves_no_temp_file(tmp_path: Path) -> None:
++    episodes = tmp_path / "episodes"
++    episodes.mkdir()
++    write_episode(episodes, "episode-a", "2026-08-08")
++    output_dir = tmp_path / "output"
++    output = output_dir / "publish_schedule.json"
++
++    result = run_export(episodes, output)
++
++    assert result.returncode == 0
++    json.loads(output.read_text(encoding="utf-8"))
++    assert list(output_dir.iterdir()) == [output]

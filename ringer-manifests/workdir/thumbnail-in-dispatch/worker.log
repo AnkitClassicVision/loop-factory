@@ -1,0 +1,993 @@
+
+[ringer.py] attempt 1 started 2026-07-29T14:43:17.121543+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch 'ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/dispatch.py. Do not modify anything else.
+
+GOAL: When a draft has a non-empty `thumbnail_url`, pass it to the Zernio CLI via `--media`.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py
+
+CHANGES:
+1. In `_validated_draft()` (~line 85), after the existing required-field validation, add optional validation for thumbnail_url: if present, it must be a string. Do NOT add it to the `required` set.
+2. In `dispatch()`, in the LIVE Zernio subprocess command (~line 285-293), after building the base command list, conditionally append `['"'"'--media'"'"', draft['"'"'thumbnail_url'"'"']]` ONLY if `draft.get('"'"'thumbnail_url'"'"')` is a non-empty string. The `--media` flag takes comma-separated media URLs.
+3. In the SIMULATE (non-live) path (~line 250-280), include `thumbnail_url` in the simulate sink record if present: add `'"'"'thumbnail_url'"'"': draft.get('"'"'thumbnail_url'"'"', '"'"''"'"')` to the sink dict.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('"'"'/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py'"'"').read()); print('"'"'syntax ok'"'"')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.145.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fae54-74ea-7353-8183-5e08c09117bf
+--------
+user
+ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/dispatch.py. Do not modify anything else.
+
+GOAL: When a draft has a non-empty `thumbnail_url`, pass it to the Zernio CLI via `--media`.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py
+
+CHANGES:
+1. In `_validated_draft()` (~line 85), after the existing required-field validation, add optional validation for thumbnail_url: if present, it must be a string. Do NOT add it to the `required` set.
+2. In `dispatch()`, in the LIVE Zernio subprocess command (~line 285-293), after building the base command list, conditionally append `['--media', draft['thumbnail_url']]` ONLY if `draft.get('thumbnail_url')` is a non-empty string. The `--media` flag takes comma-separated media URLs.
+3. In the SIMULATE (non-live) path (~line 250-280), include `thumbnail_url` in the simulate sink record if present: add `'thumbnail_url': draft.get('thumbnail_url', '')` to the sink dict.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+Ankit — I’ll make only the requested `dispatch.py` edits, run the exact AST check, and write the result to the scratch `notes.md`. I’m using the repo operating-card guidance because this is a scoped repository implementation.
+
+Likely files: `departments/social/runtime/dispatch.py`, scratch `notes.md`. Risk: accidentally adding `--media` for empty/non-string values. Test: the exact syntax command you provided.
+exec
+/bin/bash -lc "sed -n '1,220p' /home/ankit114/.claude/skills/codex-operating-card/SKILL.md && sed -n '1,360p' /mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch
+ succeeded in 0ms:
+---
+name: codex-operating-card
+description: "Operate Codex with Nate-style project induction, read-only-first task starts, one-thread-one-outcome discipline, UI/browser evidence, self-review gates, and durable-rule extraction. Use when working in Codex on a repo, starting a new Codex thread, doing project induction, implementing or reviewing code, doing frontend/UI QA, or deciding whether to promote a prompt pattern into AGENTS.md or a skill."
+---
+
+# Codex Operating Card
+
+Purpose: make Codex behave like a repo worker with a tight work contract, not a wandering owner. These prompts are operating defaults, not safety gates. For production writes, deploys, PHI/PII, secrets, CRM/EHR/finance writes, external sends, or autonomy changes, follow the relevant deterministic gate and human approval rules.
+
+## Default behavior
+
+Use this operating card unless the user explicitly overrides it:
+
+1. Read first. Do not edit until you can explain the current project shape.
+2. One thread = one outcome. If a new goal appears, propose a new thread.
+3. Prefer read-only or sandbox mode unless write access is explicitly intended.
+4. Before changes, state likely files, risk, test plan, and rollback path.
+5. Treat AGENTS.md and project docs as local law. If missing, infer lightly and flag gaps.
+6. For UI work, use browser or visual evidence rather than guessing.
+7. Verify with actual command output, visual check, or a named source before claiming done.
+8. End with: Changed, Verified by, Risks left, Next action.
+9. If the task reveals a reusable rule, propose AGENTS.md or skill capture, but do not write it without approval.
+
+## Prompt pack
+
+For exact copy/paste prompts, read `references/prompt-pack.md` and choose the smallest prompt that matches the work:
+
+- Project induction prompt: first pass on a repo.
+- Task starter prompt: normal implementation.
+- UI/browser evidence prompt: frontend or visual QA.
+- Review gate prompt: before accepting Codex output.
+- Durable-rule extraction prompt: after a repeated pattern appears.
+
+## Output contract
+
+For routine work, keep the final terse:
+
+- Changed: files/behavior changed.
+- Verified by: real command, screenshot/visual check, or source.
+- Risks left: only what matters.
+- Next action: one step.
+
+Do not call work complete if verification did not run. Say `Partial` or `Blocked` instead.
+"""Receipt-gated social dispatch.
+
+Shadow dispatch always traverses the kernel gateway, writes only to local
+synthetic sinks, and proves delivered_count == 0. A future live adapter remains
+behind both promotion state and an explicit promotion-runbook flag.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import secrets
+import shlex
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+try:
+    from . import kernel_bridge
+except ImportError:  # standalone CLI
+    import kernel_bridge
+
+
+LOG = logging.getLogger("social.dispatch")
+SURFACES = frozenset(
+    {
+        "linkedin_mybcat",
+        "linkedin_personal",
+        "linkedin_podcast",
+        "facebook_mybcat",
+        "instagram_mybcat",
+        "tiktok_mybcat",
+        "x_mybcat",
+        "youtube_mybcat",
+        "youtube_podcast",
+    }
+)
+
+
+class DispatchBlocked(RuntimeError):
+    """The dispatch gate refused the action."""
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def atomic_write_json(path: str | Path, value: Any) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _read_object(path: str | Path, label: str) -> dict[str, Any]:
+    path = Path(path)
+    if not path.exists():
+        raise DispatchBlocked(f"{label} source missing: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DispatchBlocked(f"{label} is malformed: {exc}") from exc
+    if not isinstance(value, dict):
+        raise DispatchBlocked(f"{label} must be a JSON object")
+    return value
+
+
+def _validated_draft(draft: dict[str, Any]) -> dict[str, Any]:
+    required = {"surface", "body", "cta_url", "sources", "engine", "round"}
+    missing = sorted(required - set(draft))
+    if missing:
+        raise DispatchBlocked("draft missing fields: " + ", ".join(missing))
+    if draft["surface"] not in SURFACES:
+        raise DispatchBlocked(f"unknown draft surface: {draft['surface']!r}")
+    if not isinstance(draft["body"], str) or not draft["body"].strip():
+        raise DispatchBlocked("draft body must be non-empty text")
+    if not isinstance(draft["cta_url"], str):
+        raise DispatchBlocked("draft cta_url must be text")
+    if not isinstance(draft["sources"], list):
+        raise DispatchBlocked("draft sources must be a list")
+    if not isinstance(draft["round"], int) or draft["round"] < 1:
+        raise DispatchBlocked("draft round must be a positive integer")
+    return draft
+
+
+def _validated_qa(report: dict[str, Any]) -> None:
+    if set(("pass", "defects", "engine")) - set(report):
+        raise DispatchBlocked("qa_report is missing required fields")
+    if report["pass"] is not True:
+        raise DispatchBlocked("qa_report did not pass")
+    if report["defects"] != []:
+        raise DispatchBlocked("qa_report passed while defects remain")
+    if not isinstance(report["engine"], str) or not report["engine"]:
+        raise DispatchBlocked("qa_report engine is invalid")
+
+
+def _validated_token(token: dict[str, Any]) -> tuple[str, str]:
+    receipt = token.get("receipt")
+    slot = token.get("slot")
+    if not isinstance(receipt, str) or not receipt or not isinstance(slot, str) or not slot:
+        raise DispatchBlocked("S4 token must contain a receipt and frequency slot")
+    return receipt, slot
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _last_json(stdout: str) -> dict[str, Any]:
+    for line in reversed(stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise DispatchBlocked("zernio returned no JSON object")
+
+
+def _scheduler_ref(value: dict[str, Any]) -> str:
+    candidates = [value]
+    for key in ("post", "data", "result"):
+        if isinstance(value.get(key), dict):
+            candidates.append(value[key])
+    for candidate in candidates:
+        for key in ("_id", "id", "post_ref", "postRef"):
+            found = candidate.get(key)
+            if isinstance(found, str) and found:
+                return found
+    raise DispatchBlocked("zernio create response has no scheduler post reference")
+
+
+def _check_stop_markers(state_dir: Path, surface: str) -> None:
+    if (state_dir / "KILLED").exists():
+        raise DispatchBlocked("department KILLED marker blocks dispatch")
+    if (state_dir / f"BREAKER_{surface}").exists():
+        raise DispatchBlocked(f"circuit breaker blocks surface {surface}")
+
+
+def _surface_count(surface_counts: dict[str, Any] | None, surface: str) -> int:
+    if surface_counts is None:
+        raise DispatchBlocked("surface_counts is required for all-author cap enforcement")
+    if not isinstance(surface_counts, dict):
+        raise DispatchBlocked("surface_counts must be a JSON object")
+    count = surface_counts.get(surface)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise DispatchBlocked(
+            f"surface_counts must contain a non-negative integer for {surface}"
+        )
+    return count
+
+
+def dispatch(
+    state_dir: str | Path,
+    draft: dict[str, Any],
+    qa_report: dict[str, Any],
+    token: dict[str, Any],
+    *,
+    promoted_flag: bool = False,
+    delivery_mode: str | None = None,
+    zernio_cmd: str = "zernio",
+    simulate_sink: str | Path | None = None,
+    surface_counts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Dispatch one passed draft, through the kernel, or fail closed."""
+    state_dir = Path(state_dir)
+    draft = _validated_draft(draft)
+    surface = draft["surface"]
+    _check_stop_markers(state_dir, surface)
+
+    state = kernel_bridge.autonomy_state()
+    derived_mode = "simulate" if state in kernel_bridge.NON_LIVE_STATES else "live"
+    mode = delivery_mode or derived_mode
+    if mode not in {"simulate", "live"}:
+        raise DispatchBlocked(f"unknown delivery mode: {mode}")
+    if state in kernel_bridge.NON_LIVE_STATES and mode != "simulate":
+        raise DispatchBlocked(
+            f"{state} charter requires delivery_mode=simulate"
+        )
+    live = mode == "live"
+    if live and not promoted_flag:
+        raise DispatchBlocked(
+            "live dispatch requires --i-am-promoted from the promotion runbook"
+        )
+    try:
+        kernel_bridge.require_shadow(live=live)
+    except RuntimeError as exc:
+        raise DispatchBlocked(str(exc)) from exc
+
+    count = _surface_count(surface_counts, surface)
+    try:
+        cap = kernel_bridge.surface_daily_cap(surface)
+    except RuntimeError as exc:
+        raise DispatchBlocked(str(exc)) from exc
+    if count >= cap:
+        return {
+            "status": "yielded",
+            "reason": "surface_at_cap",
+            "surface": surface,
+            "surface_count": count,
+            "cap": cap,
+            "delivered_count": 0,
+            "simulated": mode == "simulate",
+            "ts": utc_now(),
+        }
+
+    _validated_qa(qa_report)
+    receipt, slot = _validated_token(token)
+    fields = kernel_bridge.dispatch_fields(draft)
+    kernel = kernel_bridge.get_kernel(state_dir)
+    kernel_audit_sink = state_dir / "kernel" / "dispatch_sink.jsonl"
+    _check_stop_markers(state_dir, surface)
+    try:
+        gateway_result = kernel.send(
+            fields["to"],
+            fields["subject"],
+            fields["body"],
+            receipt,
+            slot=slot,
+            sink=None if live else kernel_audit_sink,
+            live=live,
+        )
+    except Exception as exc:
+        raise DispatchBlocked(f"kernel dispatch gateway refused: {exc}") from exc
+
+    if not live:
+        if (
+            not isinstance(gateway_result, dict)
+            or gateway_result.get("mode") != "shadow"
+            or gateway_result.get("delivered") is not False
+        ):
+            raise DispatchBlocked("kernel simulate result did not prove zero delivery")
+        post_ref = f"sim-dispatch-{secrets.token_hex(12)}"
+        platform_post_id = f"sim-platform-{secrets.token_hex(12)}"
+        sink_path = Path(simulate_sink or state_dir / "simulate_delivery.jsonl")
+        _append_jsonl(
+            sink_path,
+            {
+                "post_ref": post_ref,
+                "platform_post_id": platform_post_id,
+                "surface": surface,
+                "status": "simulated",
+                "source": "simulate_sink",
+                "ts": utc_now(),
+            },
+        )
+        result = {
+            "post_ref": post_ref,
+            "surface": surface,
+            "delivered_count": 0,
+            "simulated": True,
+            "ts": utc_now(),
+        }
+        if result["delivered_count"] != 0:
+            raise DispatchBlocked("shadow law violated: delivered_count was not zero")
+        return result
+
+    command = shlex.split(zernio_cmd)
+    if not command:
+        raise DispatchBlocked("zernio command is empty")
+    proc = subprocess.run(
+        command
+        + [
+            "posts:create",
+            "--text",
+            draft["body"],
+            "--accounts",
+            surface,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise DispatchBlocked(
+            f"zernio create failed with exit {proc.returncode}: "
+            f"{(proc.stderr or '').strip()[:200]}"
+        )
+    post_ref = _scheduler_ref(_last_json(proc.stdout or ""))
+    return {
+        "post_ref": post_ref,
+        "surface": surface,
+        "delivered_count": 1,
+        "simulated": False,
+        "ts": utc_now(),
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Receipt-gated social dispatch")
+    parser.add_argument("--state-dir", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--draft", required=True)
+    parser.add_argument("--qa-report", required=True)
+    parser.add_argument("--token", required=True)
+    parser.add_argument("--surface-counts")
+    parser.add_argument("--simulate-sink")
+    parser.add_argument("--delivery-mode", choices=("simulate", "live"))
+    parser.add_argument("--zernio-cmd", default="zernio")
+    parser.add_argument("--i-am-promoted", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    out = Path(args.out)
+    try:
+        result = dispatch(
+            args.state_dir,
+            _read_object(args.draft, "draft"),
+            _read_object(args.qa_report, "qa_report"),
+            _read_object(args.token, "S4 token"),
+            promoted_flag=args.i_am_promoted,
+            delivery_mode=args.delivery_mode,
+            zernio_cmd=args.zernio_cmd,
+            simulate_sink=args.simulate_sink,
+            surface_counts=(
+                _read_object(args.surface_counts, "surface_counts")
+                if args.surface_counts
+                else None
+            ),
+        )
+        atomic_write_json(out, result)
+        return 0
+    except (
+        DispatchBlocked,
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        RuntimeError,
+        TypeError,
+        KeyError,
+    ) as exc:
+        LOG.error("dispatch blocked: %s", exc)
+        atomic_write_json(out, {"status": "blocked", "reason": str(exc)})
+
+codex
+Ankit — Step 1 of 2: the current code matches the three target locations. I’ll keep `thumbnail_url` optional, preserve empty strings as “no media,” and build the live command before invoking the subprocess so the conditional flag is explicit.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1698d60913feec5ea86387554b8d65df07b45c0
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,6 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification: pending.
+
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1698d60913feec5ea86387554b8d65df07b45c0
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,6 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification: pending.
+
+exec
+/bin/bash -lc "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')\"" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1698d60913feec5ea86387554b8d65df07b45c0
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,6 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification: pending.
+
+ succeeded in 112ms:
+syntax ok
+
+codex
+Ankit — Step 2 of 2: the exact AST verification passed with `syntax ok`. I’m recording that receipt in `notes.md` and doing a final scope/diff check.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..604ab7bf482100a5390f72321ed8dd2d26465d01
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,8 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification passed:
++  `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
++  Output: `syntax ok`
+
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..604ab7bf482100a5390f72321ed8dd2d26465d01
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,8 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification passed:
++  `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
++  Output: `syntax ok`
+
+exec
+/bin/bash -lc "git diff -- departments/social/runtime/dispatch.py && git status --short -- departments/social/runtime/dispatch.py ringer-manifests/workdir/thumbnail-in-dispatch/notes.md && sed -n '1,120p' ringer-manifests/workdir/thumbnail-in-dispatch/notes.md" in /mnt/d_drive/repos/loop-factory
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..604ab7bf482100a5390f72321ed8dd2d26465d01
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,8 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification passed:
++  `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
++  Output: `syntax ok`
+
+ succeeded in 160ms:
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e9..57e868f 100644
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@ def _validated_draft(draft: dict[str, Any]) -> dict[str, Any]:
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@ def dispatch(
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@ def dispatch(
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+ M departments/social/runtime/dispatch.py
+?? ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+# Thumbnail dispatch change
+
+- Added optional `thumbnail_url` validation: when present, it must be a string.
+- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
+- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
+- Verification passed:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
+  Output: `syntax ok`
+
+codex
+Ankit — Implemented the thumbnail dispatch change.
+
+- Changed: [dispatch.py](/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py)
+- Added requested record: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md)
+- Verified by exact AST command: `syntax ok`
+- Risks left: none identified
+- Next action: none
+diff --git a/departments/social/runtime/dispatch.py b/departments/social/runtime/dispatch.py
+index 72603e90f303051ca3de246e1a461bfb9280eb55..57e868fec51302ae4504da79c05db2c962aef43f
+--- a/departments/social/runtime/dispatch.py
++++ b/departments/social/runtime/dispatch.py
+@@ -97,6 +97,8 @@
+         raise DispatchBlocked("draft sources must be a list")
+     if not isinstance(draft["round"], int) or draft["round"] < 1:
+         raise DispatchBlocked("draft round must be a positive integer")
++    if "thumbnail_url" in draft and not isinstance(draft["thumbnail_url"], str):
++        raise DispatchBlocked("draft thumbnail_url must be text")
+     return draft
+ 
+ 
+@@ -265,6 +267,7 @@
+                 "surface": surface,
+                 "status": "simulated",
+                 "source": "simulate_sink",
++                "thumbnail_url": draft.get("thumbnail_url", ""),
+                 "ts": utc_now(),
+             },
+         )
+@@ -282,15 +285,17 @@
+     command = shlex.split(zernio_cmd)
+     if not command:
+         raise DispatchBlocked("zernio command is empty")
++    command += [
++        "posts:create",
++        "--text",
++        draft["body"],
++        "--accounts",
++        surface,
++    ]
++    if isinstance(draft.get("thumbnail_url"), str) and draft["thumbnail_url"]:
++        command += ["--media", draft["thumbnail_url"]]
+     proc = subprocess.run(
+-        command
+-        + [
+-            "posts:create",
+-            "--text",
+-            draft["body"],
+-            "--accounts",
+-            surface,
+-        ],
++        command,
+         capture_output=True,
+         text=True,
+         timeout=120,
+diff --git a/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..604ab7bf482100a5390f72321ed8dd2d26465d01
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md
+@@ -0,0 +1,8 @@
++# Thumbnail dispatch change
++
++- Added optional `thumbnail_url` validation: when present, it must be a string.
++- Added `thumbnail_url` to simulated sink records, defaulting to an empty string.
++- Added `--media <thumbnail_url>` to live Zernio commands only for a non-empty string.
++- Verification passed:
++  `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py').read()); print('syntax ok')"`
++  Output: `syntax ok`
+
+tokens used
+43,326
+Ankit — Implemented the thumbnail dispatch change.
+
+- Changed: [dispatch.py](/mnt/d_drive/repos/loop-factory/departments/social/runtime/dispatch.py)
+- Added requested record: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-dispatch/notes.md)
+- Verified by exact AST command: `syntax ok`
+- Risks left: none identified
+- Next action: none
+[ringer.py] attempt 1 exited rc=0

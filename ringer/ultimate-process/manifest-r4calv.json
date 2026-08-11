@@ -1,0 +1,19 @@
+{
+  "run_name": "ultimate-process",
+  "workdir": "/home/ankit114/ringer-work/ultimate-process-r4calv",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/hubspot-daily-2",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "gate-calibration-verify",
+      "engine": "local-shell",
+      "task_type": "code-fix",
+      "timeout_s": 600,
+      "spec": "set -euo pipefail; SRC=/mnt/d_drive/ringer-work/ultimate-process-r4cal/gate-calibration; cp \"$SRC/scripts/voice_gate.py\" scripts/voice_gate.py; cp \"$SRC/scripts/voice_rules.json\" scripts/voice_rules.json; cp \"$SRC/tests/test_voice_gate.py\" tests/test_voice_gate.py; cp \"$SRC/evidence.md\" evidence.md; echo 'copied 4 verified gate-calibration files from preserved r4cal worktree (32 tests green there; original red was a checker owned-list omission of evidence.md, not a product defect)'",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_voice_gate.py -q -p no:cacheprovider' --patch /home/ankit114/ringer-work/ultimate-process-r4calv/calibration.patch --owned-files 'scripts/voice_gate.py,scripts/voice_rules.json,tests/test_voice_gate.py,evidence.md' --min-new-tests 7",
+      "expect_files": [],
+      "verified": "voice-gate calibration (paragraph-budget miscount fix + email-guest channel with required prep link and duration warn) passes the corrected gate: 25 existing + 7 new tests green, patch exported for coordinator integration"
+    }
+  ]
+}

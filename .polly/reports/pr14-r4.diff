@@ -1,0 +1,3144 @@
+diff --git a/factory/manager.py b/factory/manager.py
+index dac8689..6737074 100644
+--- a/factory/manager.py
++++ b/factory/manager.py
+@@ -214,6 +214,98 @@ def sense(
+     }
+ 
+ 
++# STATE.json is a bounded human surface; the sensed escalation LIST is
++# bounded only there — compare/decide/act always see every open escalation
++# (review B3: >20 open escalations must not truncate into silence).
++STATE_GRAPH_ESCALATION_BOUND = 20
++
++
++def sense_graph_escalations(state_dir) -> dict[str, Any]:
++    """Read-only, model-free replay of the runner->manager escalation bridge.
++
++    factory/runner.py appends one row per terminal escalated/killed graph run
++    to state/graph_escalations.jsonl. Rows are replayed keyed by run_id: an
++    'open' row (re)raises the escalation, a 'resolved' marker clears it, so
++    duplicate bridge rows from a crash-resume window collapse to one. ALL
++    open escalations are returned — persistence bounding is presentation-only
++    (see act). A stream that exists but cannot be parsed, or a row without a
++    run_id, is unverifiable and surfaces as its own breach (deny-by-default)
++    — an escalation must never vanish because its record is broken.
++    """
++    path = Path(state_dir) / "graph_escalations.jsonl"
++    active: dict[str, dict[str, Any]] = {}
++    unreadable = False
++    if path.exists():
++        try:
++            rows = _load_jsonl(path)
++        except (ValueError, OSError):
++            rows = []
++            unreadable = True
++        for row in rows:
++            run_id = row.get("run_id")
++            if not isinstance(run_id, str) or not run_id:
++                unreadable = True
++                continue
++            marker = row.get("marker") or row.get("status")
++            if marker == "resolved" or row.get("resolved") is True:
++                active.pop(run_id, None)
++            else:
++                active[run_id] = {
++                    "run_id": run_id,
++                    "loop_id": row.get("loop_id"),
++                    "state": row.get("state"),
++                    "termination_reason": row.get("termination_reason"),
++                }
++    escalations = sorted(active.values(), key=lambda row: row["run_id"])
++    return {
++        "graph_escalations": escalations,  # ALL of them; act bounds STATE only
++        "graph_escalation_count": len(escalations),
++        "graph_escalations_truncated":
++            len(escalations) > STATE_GRAPH_ESCALATION_BOUND,
++        "graph_escalations_unreadable": unreadable,
++    }
++
++
++def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
++                             now: str | datetime | None = None) -> dict:
++    """One coordinated resolution for a bridged graph escalation (review B2).
++
++    This lives on the MANAGER because the manager owns both ledgers it must
++    reconcile: it writes escalation_fingerprints.jsonl (outbox dedup) and it
++    is the sole reader of graph_escalations.jsonl (the runner only reports —
++    giving the runner a resolution verb would be new authority). A human
++    resolves; this verb records it.
++
++    Two ordered, fsync'd appends under the records fence, fingerprint FIRST:
++    if the process dies between them the escalation stays OPEN with a freed
++    fingerprint — the next cycle re-delivers (noisy but never silent). The
++    reverse order could clear the sensor while the fingerprint still
++    suppresses, which is exactly the reopen-into-silence defect this fixes.
++    After resolution, a reopened run regains fresh fingerprint eligibility.
++    """
++    state_dir = Path(state_dir)
++    now_iso = _now(now).isoformat()
++    fingerprint = _escalation_fingerprint(
++        department, "graph_run_escalated", str(run_id))
++    with records_lock(state_dir):
++        _append_jsonl(state_dir / "escalation_fingerprints.jsonl", {
++            "department": department,
++            "finding_code": "graph_run_escalated",
++            "fingerprint": fingerprint,
++            "marker": "resolved",
++            "subject": str(run_id),
++            "timestamp": now_iso,
++        })
++        _append_jsonl(state_dir / "graph_escalations.jsonl", {
++            "department": department,
++            "run_id": str(run_id),
++            "marker": "resolved",
++            "ts": now_iso,
++        })
++    return {"resolved": str(run_id), "fingerprint": fingerprint,
++            "department": department}
++
++
+ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
+     """Read-only, model-free release-drift snapshot (graphs.check_drift).
+ 
+@@ -402,6 +494,29 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
+                      observed=None, setpoint=None)
+         )
+ 
++    # breach: a graph run terminated escalated/killed — the runner bridged it
++    # here and it stays open until a human resolves it. subject=run_id keeps
++    # the outbox delivery fingerprint unique per run.
++    for escalation in sensed.get("graph_escalations") or []:
++        finding = _finding(
++            "graph_run_escalated", "breach",
++            f"graph run {escalation.get('run_id')} "
++            f"({escalation.get('loop_id')}) terminated "
++            f"{escalation.get('state')}: "
++            f"{escalation.get('termination_reason')} — awaiting a human",
++            observed=1, setpoint=0)
++        finding["subject"] = escalation.get("run_id")
++        findings.append(finding)
++
++    # breach: the escalation bridge stream is unverifiable (fail-closed)
++    if sensed.get("graph_escalations_unreadable"):
++        findings.append(
++            _finding("graph_escalations_unreadable", "breach",
++                     "graph escalation records exist but could not be parsed "
++                     "— runner escalations are unverifiable (deny-by-default)",
++                     observed=None, setpoint=None)
++        )
++
+     # breach: last worker run errored
+     if sensed.get("last_run_ok") is False:
+         findings.append(
+@@ -527,7 +642,7 @@ def _escalation_fingerprint(
+     department: str, finding_code: str, subject: str
+ ) -> str:
+     material = f"{department}|{finding_code}|{subject}".encode("utf-8")
+-    return hashlib.sha256(material).hexdigest()[:12]
++    return hashlib.sha256(material).hexdigest()
+ 
+ 
+ def _active_escalation_fingerprints(path: Path) -> set[str]:
+@@ -713,7 +828,17 @@ def act(
+                 ),
+             )
+ 
+-        # RECORD 3: STATE.json (atomic, monotonic epoch)
++        # RECORD 3: STATE.json (atomic, monotonic epoch). The escalation LIST
++        # is bounded here and only here — a presentation limit, never a
++        # processing limit (every open escalation was already compared,
++        # escalated, and delivered above; the honest total + truncated flag
++        # ride along).
++        state_sensed = dict(sensed)
++        escalation_rows = state_sensed.get("graph_escalations")
++        if (isinstance(escalation_rows, list)
++                and len(escalation_rows) > STATE_GRAPH_ESCALATION_BOUND):
++            state_sensed["graph_escalations"] = \
++                escalation_rows[:STATE_GRAPH_ESCALATION_BOUND]
+         if state_path is not None:
+             _atomic_write(
+                 Path(state_path),
+@@ -723,7 +848,7 @@ def act(
+                         "epoch": epoch,
+                         "last_cycle_at": now_iso,
+                         "autonomy_state": autonomy_state,
+-                        "sensed": sensed,
++                        "sensed": state_sensed,
+                         "open_findings": findings,
+                         "escalations": delivered,
+                         "escalations_undelivered": undelivered,
+@@ -797,6 +922,11 @@ def run_manager_cycle(
+     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
+     if dept_dir is not None:
+         sensed.update(sense_drift(dept_dir, release_root))
++    # Like drift, the runner->manager escalation bridge is watched on every
++    # tick regardless of a department's custom sense_fn shape — a terminal
++    # escalated/killed graph run must never depend on the worker's telemetry
++    # contract to reach a human.
++    sensed.update(sense_graph_escalations(state_dir))
+     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
+     actions = decide(findings, autonomy_state=autonomy_state)
+     report = act(
+@@ -846,12 +976,22 @@ def main() -> None:
+     parser.add_argument("--autonomy-state", default=None,
+                         help="override; the charter is the source of truth when present")
+     parser.add_argument("--outbox", default=None, help="human-in-the-loop outbox to escalate into")
++    parser.add_argument("--resolve-graph-run", default=None, metavar="RUN_ID",
++                        help="record a human resolution for a bridged graph "
++                             "escalation (clears BOTH ledgers, coordinated) "
++                             "instead of running a cycle")
+     args = parser.parse_args()
+ 
+     root = Path(args.root)
+     state_dir = Path(args.state_dir) if args.state_dir else (
+         root / "departments" / args.department / "state")
+ 
++    if args.resolve_graph_run:
++        print(json.dumps(resolve_graph_escalation(
++            state_dir, department=args.department,
++            run_id=args.resolve_graph_run)))
++        return
++
+     config = _load_charter_config(root, args.department)
+     thresholds = config["thresholds"] if config else None
+     # Codex review #5: when a charter exists it is the SOLE authority on
+diff --git a/factory/rollup.py b/factory/rollup.py
+index b85c3be..3f527ab 100644
+--- a/factory/rollup.py
++++ b/factory/rollup.py
+@@ -18,7 +18,7 @@ from factory import scores as score_records
+ 
+ 
+ LOGGER = logging.getLogger(__name__)
+-SCHEMA_VERSION = "rollup/v1"
++SCHEMA_VERSION = "rollup/v2"  # v2: graph_run_id join columns (review R1)
+ ENTITIES = (
+     "department",
+     "run",
+@@ -43,11 +43,12 @@ CREATE TABLE department (
+ );
+ CREATE TABLE run (
+   id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT NOT NULL,
+-  current_step TEXT, status TEXT, ts TEXT, epoch INTEGER, source_ref TEXT,
+-  schema_version TEXT NOT NULL
++  graph_run_id TEXT, current_step TEXT, status TEXT, ts TEXT, epoch INTEGER,
++  source_ref TEXT, schema_version TEXT NOT NULL
+ );
+ CREATE TABLE step_telemetry (
+-  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, step_id TEXT, node TEXT,
++  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, graph_run_id TEXT,
++  step_id TEXT, node TEXT,
+   ts TEXT, operation_name TEXT, provider_name TEXT, request_model TEXT,
+   response_model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+   finish_reasons_json TEXT, duration_ms INTEGER, error_type TEXT,
+@@ -61,7 +62,8 @@ CREATE TABLE receipt (
+   schema_version TEXT NOT NULL
+ );
+ CREATE TABLE score (
+-  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, step_id TEXT,
++  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, graph_run_id TEXT,
++  step_id TEXT,
+   node TEXT NOT NULL, name TEXT NOT NULL, value REAL NOT NULL, label TEXT NOT NULL,
+   explanation TEXT NOT NULL, source TEXT NOT NULL, judge_model TEXT,
+   config_version TEXT NOT NULL, ts TEXT NOT NULL, source_ref TEXT,
+@@ -76,8 +78,11 @@ CREATE TABLE approval (
+   queued_at TEXT, card_ref TEXT, source_ref TEXT, schema_version TEXT NOT NULL
+ );
+ CREATE INDEX run_by_status_ts ON run(status, ts);
++CREATE INDEX run_by_graph_run ON run(graph_run_id);
+ CREATE INDEX telemetry_by_department_ts ON step_telemetry(department, ts);
++CREATE INDEX telemetry_by_graph_run ON step_telemetry(graph_run_id);
+ CREATE INDEX score_by_department_label ON score(department, label);
++CREATE INDEX score_by_graph_run ON score(graph_run_id);
+ CREATE INDEX incident_by_status ON incident(status);
+ CREATE INDEX approval_by_status_age ON approval(status, queued_at);
+ """
+@@ -88,6 +93,167 @@ def _stable_id(*parts: Any) -> str:
+     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+ 
+ 
++def _resolve_verifier():
++    """The kernel signer when its key is present in-process, else None."""
++    if not os.environ.get("OE_KERNEL_SIGNING_KEY"):
++        return None
++    from kernel import receipts
++
++    return receipts.LocalSigner()
++
++
++def _promotion_verdict(row: dict[str, Any], signer) -> str:
++    """Read-time defense (review B1, Option C): only the runner's promotion
++    step may put graph identity into a canonical stream, and it signs every
++    promoted row. A graph-claiming row without a valid signature is a
++    same-uid direct file write (or tampering) and is quarantined."""
++    promotion = row.get("promotion")
++    if not isinstance(promotion, dict) or not isinstance(
++            promotion.get("sig"), str):
++        return "unsigned"
++    if signer is None:
++        return "unverifiable"
++    unsigned = {**row, "promotion": {k: v for k, v in promotion.items()
++                                     if k != "sig"}}
++    try:
++        payload = json.dumps(unsigned, sort_keys=True, separators=(",", ":"),
++                             allow_nan=False).encode("utf-8")
++        verified = signer.verify(payload, promotion["sig"])
++    except Exception:
++        return "invalid"
++    return "ok" if verified else "invalid"
++
++
++def _promotion_id(row: dict[str, Any]) -> str | None:
++    promotion = row.get("promotion")
++    if isinstance(promotion, dict) and isinstance(promotion.get("id"), str):
++        return promotion["id"]
++    return None
++
++
++def _body_hash(row: dict[str, Any]) -> str:
++    return hashlib.sha256(
++        json.dumps(row, sort_keys=True, separators=(",", ":"),
++                   default=str).encode("utf-8")
++    ).hexdigest()
++
++
++def _collapse_promotions(rows, incidents):
++    """Exactly-once for promotion-backed rows (review F3).
++
++    Rows sharing a promotion id must be byte-identical — that is what a
++    crash-recovered promotion re-appending the SAME spool produces. Two
++    different bodies under one id is a conflict, never last-writer-wins:
++    the whole group is quarantined as an incident.
++    """
++    grouped: dict[str, list] = {}
++    passthrough = []
++    for row in rows:
++        marker = row.pop("_promotion_body", None)
++        if marker is None:
++            passthrough.append(row)
++        else:
++            grouped.setdefault(row["id"], []).append((marker, row))
++    for row_id, group in grouped.items():
++        bodies = {marker for marker, _row in group}
++        if len(bodies) > 1:
++            first = group[0][1]
++            incidents.append(
++                _incident(
++                    department=first.get("department"),
++                    code="graph_identity_conflict",
++                    source_ref=str(first.get("source_ref")),
++                )
++            )
++            continue
++        passthrough.append(group[0][1])
++    return passthrough
++
++
++def _projection_runs(root, state_dir, department, incidents, signer):
++    """Graph runs backed by the department's VERIFIED signed projection.
++
++    Review F2: runs.jsonl is a plain append-only event log — anything that
++    can write the file can claim a graph run in it. The signed execution
++    projection (factory/projection.py, exported by the runner) is the
++    authority instead: graph-run rows are DERIVED from it, and a runs.jsonl
++    graph claim without projection backing is quarantined. Deny-by-default —
++    a missing, unreadable, unverifiable, or tampered projection backs
++    nothing at all.
++
++    Known bound, stated honestly: a department whose projection covers one
++    subgraph will not back graph claims from a second subgraph's runs; those
++    surface as graph_identity_unbacked incidents (visible and fail-closed)
++    rather than being silently trusted.
++    """
++    path = state_dir / "receipts" / "execution-projection.json"
++    try:
++        if not stat.S_ISREG(path.lstat().st_mode):
++            raise OSError("projection is not a regular file")
++    except (FileNotFoundError, OSError):
++        return {}
++    value = _read_json(root, path, department, incidents)
++    if value is None:
++        return {}
++    from factory import projection as projection_module
++
++    if signer is None:
++        findings = [{"kind": "no_verifier"}]
++    else:
++        findings = projection_module.verify_projection(value, signer)
++    if findings:
++        incidents.append(
++            _incident(
++                department=department,
++                code="graph_identity_projection_invalid",
++                source_ref=_relative(root, path),
++            )
++        )
++        return {}
++    backed = {}
++    for run in value.get("runs") or []:
++        if not isinstance(run, dict):
++            continue
++        run_id = run.get("run_id")
++        if isinstance(run_id, str) and run_id:
++            backed[run_id] = run
++    return backed
++
++
++def _projection_run_rows(root, state_dir, department, backed):
++    """Derive the canonical graph-run rows from the verified projection."""
++    source_ref = _relative(root, state_dir / "receipts"
++                           / "execution-projection.json")
++    out = []
++    for run_id, run in sorted(backed.items()):
++        transitions = run.get("transitions") or []
++        last = transitions[-1] if isinstance(transitions, list) and transitions \
++            else {}
++        try:
++            safe_run_id = _identifier(run_id, "run_id", nullable=False)
++            status = _identifier(run.get("state") or "unknown", "status",
++                                 nullable=False)
++            ts = _identifier(last.get("ts") if isinstance(last, dict) else None,
++                             "timestamp")
++            current_step = _identifier(
++                last.get("from") if isinstance(last, dict) else None, "node")
++        except ValueError:
++            continue
++        out.append({
++            "id": _stable_id("run", department, safe_run_id),
++            "department": department,
++            "run_id": safe_run_id,
++            "graph_run_id": safe_run_id,
++            "current_step": current_step,
++            "status": status,
++            "ts": ts,
++            "epoch": None,
++            "source_ref": source_ref,
++            "schema_version": SCHEMA_VERSION,
++        })
++    return out
++
++
+ def _relative(root: Path, path: Path) -> str:
+     try:
+         return path.absolute().relative_to(root.absolute()).as_posix()
+@@ -263,11 +429,44 @@ def _department_row(root: Path, department: str, state_dir: Path, state: dict |
+ 
+ 
+ def _run_rows(
+-    root: Path, path: Path, department: str, incidents: list[dict[str, Any]]
++    root: Path, path: Path, department: str, incidents: list[dict[str, Any]],
++    signer=None, backed: dict[str, Any] | None = None,
+ ) -> list[dict[str, Any]]:
+     latest: dict[str, dict[str, Any]] = {}
++    promoted: list[dict[str, Any]] = []
+     source_ref = _relative(root, path)
++    # Two different integrity stories per stream:
++    #  * runs-v2.jsonl carries PROMOTED rows — a graph claim needs a valid
++    #    runner promotion signature (review B1).
++    #  * runs.jsonl is a plain event log — a graph claim there is only
++    #    evidence if the SIGNED execution projection backs it, and the row
++    #    itself is never the source of the graph-run record: those rows are
++    #    derived from the projection in _projection_run_rows (review F2).
++    promoted_stream = path.name == "runs-v2.jsonl"
+     for line_number, row in _read_jsonl(root, path, department, incidents):
++        claimed_graph_run = row.get("graph_run_id")
++        if promoted_stream and claimed_graph_run is not None:
++            verdict = _promotion_verdict(row, signer)
++            if verdict != "ok":
++                incidents.append(
++                    _incident(
++                        department=department,
++                        code=f"graph_identity_{verdict}",
++                        source_ref=f"{source_ref}:{line_number}",
++                    )
++                )
++                continue
++        elif not promoted_stream and claimed_graph_run is not None:
++            if claimed_graph_run not in (backed or {}):
++                incidents.append(
++                    _incident(
++                        department=department,
++                        code="graph_identity_unbacked",
++                        source_ref=f"{source_ref}:{line_number}",
++                    )
++                )
++            # backed or not, the projection is the source of graph-run rows
++            continue
+         run_id = row.get("run_id")
+         if not isinstance(run_id, str) or not run_id:
+             run_id = _stable_id(department, source_ref, line_number)
+@@ -278,6 +477,7 @@ def _run_rows(
+             status = "active" if node and node != "manager_tick" else "unknown"
+         try:
+             run_id = _identifier(run_id, "run_id", nullable=False)
++            graph_run_id = _identifier(row.get("graph_run_id"), "graph_run_id")
+             node = _identifier(node, "node")
+             ts = _identifier(ts, "timestamp")
+             status = _identifier(status, "status", nullable=False)
+@@ -290,10 +490,16 @@ def _run_rows(
+                 )
+             )
+             continue
++        promotion_id = _promotion_id(row)
+         candidate = {
+-            "id": _stable_id("run", department, run_id),
++            # the stable promotion id collapses re-appended duplicates from
++            # a crash between canonical append and promotion marker
++            "id": (_stable_id("run", department, "promotion", promotion_id)
++                   if promotion_id else _stable_id("run", department, run_id)),
++            **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
+             "department": department,
+             "run_id": run_id,
++            "graph_run_id": graph_run_id,
+             "current_step": node,
+             "status": status,
+             "ts": ts,
+@@ -301,6 +507,12 @@ def _run_rows(
+             "source_ref": f"{source_ref}:{line_number}",
+             "schema_version": SCHEMA_VERSION,
+         }
++        if promotion_id is not None:
++            # promoted rows are never collapsed here: two bodies under one
++            # promotion id is a CONFLICT for _collapse_promotions to
++            # quarantine, not a latest-writer-wins race (review F3)
++            promoted.append(candidate)
++            continue
+         prior = latest.get(run_id)
+         if prior is None or ((candidate["ts"] or ""), line_number) >= (
+             (prior["ts"] or ""), prior.get("_line", -1)
+@@ -309,64 +521,89 @@ def _run_rows(
+             latest[run_id] = candidate
+     for row in latest.values():
+         row.pop("_line", None)
+-    return sorted(latest.values(), key=lambda row: row["id"])
++    return sorted(list(latest.values()) + promoted, key=lambda row: row["id"])
++
+ 
++def validate_telemetry_row(row: dict[str, Any], department: str | None = None):
++    """Full step-telemetry validation, raising ValueError on the first fault.
+ 
+-def _telemetry_rows(root, path, department, incidents):
++    Shared definition (review F4): factory/runner.py runs this over every
++    spooled telemetry row BEFORE signing and promotion, so an invalid row can
++    never be signed and then rejected only here at read time.
++    """
++    reasons = row.get("gen_ai.response.finish_reasons")
++    if reasons is not None and (
++        not isinstance(reasons, list)
++        or len(reasons) > 8
++        or any(reason not in _FINISH_REASONS for reason in reasons)
++    ):
++        raise ValueError("finish reasons are invalid")
++    if row.get("schema_version") != "step-telemetry/v1":
++        raise ValueError("telemetry schema_version is invalid")
++    if row.get("loopfactory.auth.route") not in _AUTH_ROUTES:
++        raise ValueError("auth route is invalid")
++    if not isinstance(row.get("estimated"), bool):
++        raise ValueError("estimated must be boolean")
++    return {
++        "ts": _identifier(row.get("ts"), "timestamp", nullable=False),
++        "department": _identifier(
++            row.get("loopfactory.department") or department,
++            "department",
++            nullable=False,
++        ),
++        "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
++        "graph_run_id": _identifier(
++            row.get("loopfactory.graph_run_id"), "graph_run_id"
++        ),
++        "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
++        "node": _identifier(row.get("loopfactory.node"), "node"),
++        "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
++        "provider_name": _identifier(row.get("gen_ai.provider.name"), "provider_name"),
++        "request_model": _identifier(row.get("gen_ai.request.model"), "request_model"),
++        "response_model": _identifier(row.get("gen_ai.response.model"), "response_model"),
++        "error_type": _identifier(row.get("error.type"), "error_type"),
++        "auth_route": _identifier(row.get("loopfactory.auth.route"), "auth_route"),
++        "engine": _identifier(row.get("loopfactory.engine"), "engine"),
++        "price_schema_version": _identifier(
++            row.get("loopfactory.price.schema_version"), "price_schema_version"
++        ),
++        "price_effective_date": _identifier(
++            row.get("loopfactory.price.effective_date"), "price_effective_date"
++        ),
++        "telemetry_source": _identifier(
++            row.get("loopfactory.telemetry.source"), "telemetry_source"
++        ),
++        "input_tokens": _number(
++            row.get("gen_ai.usage.input_tokens"), "input_tokens", integer=True
++        ),
++        "output_tokens": _number(
++            row.get("gen_ai.usage.output_tokens"), "output_tokens", integer=True
++        ),
++        "duration_ms": _number(
++            row.get("duration_ms"), "duration_ms", integer=True, nullable=False
++        ),
++        "cost_usd": _number(row.get("loopfactory.cost_usd"), "cost_usd"),
++    }
++
++
++def _telemetry_rows(root, path, department, incidents, signer=None):
+     out = []
+     source_ref = _relative(root, path)
+     for line_number, row in _read_jsonl(root, path, department, incidents):
++        if row.get("loopfactory.graph_run_id") is not None:
++            verdict = _promotion_verdict(row, signer)
++            if verdict != "ok":
++                incidents.append(
++                    _incident(
++                        department=department,
++                        code=f"graph_identity_{verdict}",
++                        source_ref=f"{source_ref}:{line_number}",
++                    )
++                )
++                continue
+         reasons = row.get("gen_ai.response.finish_reasons")
+         try:
+-            if reasons is not None and (
+-                not isinstance(reasons, list)
+-                or len(reasons) > 8
+-                or any(reason not in _FINISH_REASONS for reason in reasons)
+-            ):
+-                raise ValueError("finish reasons are invalid")
+-            if row.get("schema_version") != "step-telemetry/v1":
+-                raise ValueError("telemetry schema_version is invalid")
+-            if row.get("loopfactory.auth.route") not in _AUTH_ROUTES:
+-                raise ValueError("auth route is invalid")
+-            if not isinstance(row.get("estimated"), bool):
+-                raise ValueError("estimated must be boolean")
+-            safe_values = {
+-                "ts": _identifier(row.get("ts"), "timestamp", nullable=False),
+-                "department": _identifier(
+-                    row.get("loopfactory.department") or department,
+-                    "department",
+-                    nullable=False,
+-                ),
+-                "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
+-                "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
+-                "node": _identifier(row.get("loopfactory.node"), "node"),
+-                "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
+-                "provider_name": _identifier(row.get("gen_ai.provider.name"), "provider_name"),
+-                "request_model": _identifier(row.get("gen_ai.request.model"), "request_model"),
+-                "response_model": _identifier(row.get("gen_ai.response.model"), "response_model"),
+-                "error_type": _identifier(row.get("error.type"), "error_type"),
+-                "auth_route": _identifier(row.get("loopfactory.auth.route"), "auth_route"),
+-                "engine": _identifier(row.get("loopfactory.engine"), "engine"),
+-                "price_schema_version": _identifier(
+-                    row.get("loopfactory.price.schema_version"), "price_schema_version"
+-                ),
+-                "price_effective_date": _identifier(
+-                    row.get("loopfactory.price.effective_date"), "price_effective_date"
+-                ),
+-                "telemetry_source": _identifier(
+-                    row.get("loopfactory.telemetry.source"), "telemetry_source"
+-                ),
+-                "input_tokens": _number(
+-                    row.get("gen_ai.usage.input_tokens"), "input_tokens", integer=True
+-                ),
+-                "output_tokens": _number(
+-                    row.get("gen_ai.usage.output_tokens"), "output_tokens", integer=True
+-                ),
+-                "duration_ms": _number(
+-                    row.get("duration_ms"), "duration_ms", integer=True, nullable=False
+-                ),
+-                "cost_usd": _number(row.get("loopfactory.cost_usd"), "cost_usd"),
+-            }
++            safe_values = validate_telemetry_row(row, department)
+         except ValueError as exc:
+             incidents.append(
+                 _incident(
+@@ -376,11 +613,18 @@ def _telemetry_rows(root, path, department, incidents):
+                 )
+             )
+             continue
++        promotion_id = _promotion_id(row)
+         out.append(
+             {
+-                "id": _stable_id("telemetry", department, source_ref, line_number),
++                "id": (_stable_id("telemetry", department, "promotion",
++                                  promotion_id)
++                       if promotion_id
++                       else _stable_id("telemetry", department, source_ref,
++                                       line_number)),
++                **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
+                 "department": safe_values["department"],
+                 "run_id": safe_values["run_id"],
++                "graph_run_id": safe_values["graph_run_id"],
+                 "step_id": safe_values["step_id"],
+                 "node": safe_values["node"],
+                 "ts": safe_values["ts"],
+@@ -407,12 +651,28 @@ def _telemetry_rows(root, path, department, incidents):
+     return out
+ 
+ 
+-def _score_rows(root, path, department, incidents):
++def _score_rows(root, path, department, incidents, signer=None):
+     out = []
+     source_ref = _relative(root, path)
+     for line_number, row in _read_jsonl(root, path, department, incidents):
++        target = row.get("target_ref")
++        claimed = target.get("graph_run_id") if isinstance(target, dict) else None
++        if claimed is not None:
++            verdict = _promotion_verdict(row, signer)
++            if verdict != "ok":
++                incidents.append(
++                    _incident(
++                        department=department,
++                        code=f"graph_identity_{verdict}",
++                        source_ref=f"{source_ref}:{line_number}",
++                    )
++                )
++                continue
+         try:
+             row = score_records.validate_score(row)
++            graph_run_id = _identifier(
++                row["target_ref"].get("graph_run_id"), "graph_run_id"
++            )
+         except ValueError as exc:
+             incidents.append(
+                 _incident(
+@@ -424,11 +684,18 @@ def _score_rows(root, path, department, incidents):
+             continue
+         target = row["target_ref"]
+         value = row["gen_ai.evaluation.score.value"]
++        promotion_id = _promotion_id(row)
+         out.append(
+             {
+-                "id": _stable_id("score", department, source_ref, line_number),
++                "id": (_stable_id("score", department, "promotion",
++                                  promotion_id)
++                       if promotion_id
++                       else _stable_id("score", department, source_ref,
++                                       line_number)),
++                **({"_promotion_body": _body_hash(row)} if promotion_id else {}),
+                 "department": target.get("department") or department,
+                 "run_id": target.get("run_id"),
++                "graph_run_id": graph_run_id,
+                 "step_id": target.get("step_id"),
+                 "node": target.get("node") or "unknown",
+                 "name": row.get("gen_ai.evaluation.name") or "unknown",
+@@ -585,9 +852,15 @@ def _insert_rows(connection: sqlite3.Connection, table: str, rows: Iterable[dict
+         )
+ 
+ 
+-def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, Any]:
++def rebuild(
++    root: str | Path,
++    db_path: str | Path | None = None,
++    signer=None,
++) -> dict[str, Any]:
+     root = Path(root).resolve()
+     db_path = Path(db_path or root / "estate" / "state" / "rollup.sqlite3")
++    if signer is None:
++        signer = _resolve_verifier()
+     incidents: list[dict[str, Any]] = []
+     rows: dict[str, list[dict[str, Any]]] = {entity: [] for entity in ENTITIES}
+ 
+@@ -640,13 +913,17 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
+                             "schema_version": SCHEMA_VERSION,
+                         }
+                     )
++        # F2: the signed execution projection is the authority on graph runs
++        backed = _projection_runs(root, state_dir, department, incidents, signer)
++        rows["run"].extend(
++            _projection_run_rows(root, state_dir, department, backed))
+         for run_path in (state_dir / "runs.jsonl", state_dir / "runs-v2.jsonl"):
+             if _source_available(root, run_path, department, incidents):
+-                rows["run"].extend(_run_rows(root, run_path, department, incidents))
++                rows["run"].extend(_run_rows(root, run_path, department, incidents, signer, backed))
+         if _source_available(root, state_dir / "telemetry.jsonl", department, incidents):
+-            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents))
++            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents, signer))
+         if _source_available(root, state_dir / "scores.jsonl", department, incidents):
+-            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents))
++            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents, signer))
+         for path in sorted(state_dir.rglob("*")):
+             if path.is_symlink():
+                 incidents.append(
+@@ -695,6 +972,11 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
+                 rows["approval"].extend(_approval_rows(root, path, "estate", incidents))
+             elif "receipt" in name:
+                 rows["receipt"].extend(_receipt_rows(root, path, "estate", incidents))
++    # Promotion-id-keyed rows: a crash-recovered promotion re-appends the
++    # SAME spool, so duplicates must be byte-identical; conflicting bodies
++    # under one id are quarantined rather than silently resolved (F3).
++    for entity in ("run", "step_telemetry", "score"):
++        rows[entity] = _collapse_promotions(rows[entity], incidents)
+     rows["incident"].extend(incidents)
+     rows["incident"] = list({row["id"]: row for row in rows["incident"]}.values())
+     deduped_runs: dict[str, dict[str, Any]] = {}
+@@ -735,6 +1017,40 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
+     }
+ 
+ 
++def graph_run_bundle(db_path: str | Path, graph_run_id: str) -> dict[str, list]:
++    """Return every rollup row correlated to ONE graph execution.
++
++    The graph runner's run_id is the correlation key: its own runs.jsonl rows
++    carry it as run_id (and graph_run_id), while runs-v2 wrapper summaries,
++    step telemetry, and scores reference it as graph_run_id.
++    """
++    graph_run_id = _identifier(graph_run_id, "graph_run_id", nullable=False)
++    connection = sqlite3.connect(db_path)
++    connection.row_factory = sqlite3.Row
++    try:
++        bundle = {
++            "run": [
++                dict(row)
++                for row in connection.execute(
++                    "SELECT * FROM run WHERE run_id = ? OR graph_run_id = ? "
++                    "ORDER BY id",
++                    (graph_run_id, graph_run_id),
++                )
++            ],
++        }
++        for entity in ("step_telemetry", "score"):
++            bundle[entity] = [
++                dict(row)
++                for row in connection.execute(
++                    f"SELECT * FROM {entity} WHERE graph_run_id = ? ORDER BY id",
++                    (graph_run_id,),
++                )
++            ]
++    finally:
++        connection.close()
++    return bundle
++
++
+ def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]:
+     db_path = Path(db_path)
+     if db_path.name.endswith(".incomplete"):
+@@ -749,7 +1065,8 @@ def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]
+             columns = "*"
+             if entity == "score":
+                 columns = (
+-                    "id,department,run_id,step_id,node,name,value,label,source,"
++                    "id,department,run_id,graph_run_id,step_id,node,name,value,"
++                    "label,source,"
+                     "judge_model,config_version,ts,source_ref,schema_version"
+                 )
+             records = [
+diff --git a/factory/runner.py b/factory/runner.py
+index 1636884..f80ccf0 100644
+--- a/factory/runner.py
++++ b/factory/runner.py
+@@ -74,6 +74,8 @@ import hashlib
+ import importlib.util
+ import json
+ import os
++import shutil
++import stat
+ import subprocess
+ import sys
+ import tempfile
+@@ -84,8 +86,42 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+-RUNNER_VERSION = "2.4.0"
++RUNNER_VERSION = "2.5.0"
+ RUN_STATE_SCHEMA = "graph-run-v1"
++# Runner-mediated appends (review B1, Option C). The runner injects a
++# per-attempt record SPOOL path into every node process AFTER the capability
++# scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical name
++# in kernel/capabilities.py). Appenders write there; canonical streams are
++# unreachable from node code. Post-node — and BEFORE any transition receipt
++# mints — the runner validates each spooled row, stamps identity from its
++# OWN execution state (identity is assigned, never claimed), signs each
++# promoted row, and appends under the records fence. Nothing secret travels
++# to nodes at all.
++RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
++SPOOL_STREAMS = ("runs-v2.jsonl", "telemetry.jsonl", "scores.jsonl")
++MAX_SPOOL_ROWS_PER_STREAM = 1000
++MAX_SPOOL_ROW_BYTES = 65536
++MAX_SPOOL_FILE_BYTES = 8 * 1024 * 1024
++PROMOTION_SCHEMA = "promotion/v1"
++PROMOTION_MARKER_SCHEMA = "promotion-marker/v1"
++
++
++def run_control_dir(root, department: str, run_id: str) -> Path:
++    """The runner's own control plane for one run — promotion markers only.
++
++    Deliberately OUTSIDE departments/<dept>/state (review F1): the node's
++    sanctioned paths are its state directory and the spool it is handed, and
++    neither leads here, so node code following the toolchain cannot forge a
++    marker and strand its own records. Same-uid OS access can still write
++    anywhere on the filesystem — that is the same residual risk documented
++    at _promote_spool, and the reason markers are SIGNED and verified before
++    a skip is honored, with factory/rollup.py as the read-time backstop.
++    """
++    # Beside the estate records plane, never inside it: estate/state is a
++    # scanned records tree (factory/rollup.py), and control markers are not
++    # records — putting them there would make every run look like a
++    # half-configured estate.
++    return Path(root) / "estate" / "run-control" / department / run_id
+ DEFAULT_LOCK_TIMEOUT_S = 10.0
+ TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
+ 
+@@ -372,7 +408,8 @@ class _Run:
+ 
+     def log(self, event: str, **fields) -> None:
+         row = {"ts": _now_iso(self.now_fn), "event": event,
+-               "run_id": self.run_id, "loop_id": self.loop_id, **fields}
++               "run_id": self.run_id, "graph_run_id": self.run_id,
++               "loop_id": self.loop_id, **fields}
+         with records_lock(self.state_dir):
+             _append_jsonl(self.state_dir / "runs.jsonl", row)
+ 
+@@ -389,11 +426,16 @@ class _Run:
+             self.log(event, state=new_state, **fields)
+ 
+ 
+-def _launch_node(dept_name: str, script: Path, *, root: Path, env_base) -> tuple:
++def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
++                 spool_dir: Path) -> tuple:
+     launch = _load("launch", "factory/launch.py")
+     captured: dict = {}
+ 
+     def _capture(command, env):
++        # The spool path is injected AFTER the capability scrub, exactly
++        # like OE_DEPARTMENT — a location, never a credential.
++        env = dict(env)
++        env[RECORD_SPOOL_ENV] = str(spool_dir)
+         proc = subprocess.run(command, env=env, capture_output=True, text=True)
+         captured["proc"] = proc
+         return proc
+@@ -407,10 +449,360 @@ def _launch_node(dept_name: str, script: Path, *, root: Path, env_base) -> tuple
+     return returncode, stdout, stderr
+ 
+ 
++def _canon_row_bytes(row) -> bytes:
++    return json.dumps(row, sort_keys=True, separators=(",", ":"),
++                      allow_nan=False).encode("utf-8")
++
++
++def _promotion_row_id(run_id: str, node_id: str, stream: str,
++                      index: int) -> str:
++    """Stable across re-executions (rollup._stable_id pattern): a crash
++    between the canonical appends and the promotion marker re-appends the
++    same logical rows, and this id collapses them at read time."""
++    material = "\x1f".join(("promotion", run_id, node_id, stream, str(index)))
++    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
++
++
++def _read_spool_stream(spool_dir: Path, stream: str) -> list:
++    """Read one spool stream under hostile-input bounds (review F5).
++
++    Order matters: lstat FIRST (a symlink or non-regular entry is refused
++    before it is ever opened — the same discipline as rollup._open_source),
++    then the file-size bound BEFORE the read, then per-row and row-count
++    bounds. A node cannot make the runner read an unbounded file or follow
++    a link out of the spool."""
++    path = spool_dir / stream
++    try:
++        info = path.lstat()
++    except FileNotFoundError:
++        return []
++    if not stat.S_ISREG(info.st_mode):
++        raise ValueError(f"spool {stream} is not a regular file "
++                         f"(symlinks and special files are refused)")
++    if info.st_size > MAX_SPOOL_FILE_BYTES:
++        raise ValueError(f"spool {stream} is {info.st_size} bytes, over the "
++                         f"{MAX_SPOOL_FILE_BYTES}-byte bound")
++    rows = []
++    for number, line in enumerate(
++            path.read_text(encoding="utf-8").splitlines(), 1):
++        if not line.strip():
++            continue
++        if len(line.encode("utf-8")) > MAX_SPOOL_ROW_BYTES:
++            raise ValueError(f"spool {stream} row {number} exceeds "
++                             f"{MAX_SPOOL_ROW_BYTES} bytes")
++        try:
++            row = _strict_loads(line)
++            if not isinstance(row, dict):
++                raise ValueError("row is not an object")
++        except ValueError as exc:
++            raise ValueError(f"spool {stream} row {number} is not a valid "
++                             f"record ({exc})") from exc
++        rows.append(row)
++        if len(rows) > MAX_SPOOL_ROWS_PER_STREAM:
++            raise ValueError(f"spool {stream} overflows "
++                             f"{MAX_SPOOL_ROWS_PER_STREAM} rows")
++    return rows
++
++
++def _marker_signature(signer, payload: dict) -> str:
++    unsigned = {k: v for k, v in payload.items() if k != "sig"}
++    return signer.sign(_canon_row_bytes(unsigned))
++
++
++def _marker_ok(marker, signer, *, department: str, run_id: str,
++               node_id: str) -> str | None:
++    """Verify a promotion marker before any skip is honored (review F1).
++
++    Signature, identity, and self-consistency (declared counts vs declared
++    row ids) all have to hold. Returns None when the marker is trustworthy,
++    else the reason it is not."""
++    if not isinstance(marker, dict):
++        return "marker is not an object"
++    if marker.get("schema") != PROMOTION_MARKER_SCHEMA:
++        return f"marker schema is not {PROMOTION_MARKER_SCHEMA}"
++    signature = marker.get("sig")
++    if not isinstance(signature, str) or not signature:
++        return "marker carries no signature"
++    try:
++        if not signer.verify(_canon_row_bytes(
++                {k: v for k, v in marker.items() if k != "sig"}), signature):
++            return "marker signature does not verify"
++    except Exception as exc:
++        return f"marker signature unverifiable: {type(exc).__name__}"
++    if (marker.get("department") != department
++            or marker.get("run_id") != run_id
++            or marker.get("node") != node_id):
++        return "marker identity does not match this execution"
++    counts = marker.get("counts")
++    row_ids = marker.get("row_ids")
++    if not isinstance(counts, dict) or not isinstance(row_ids, list):
++        return "marker counts/row_ids are malformed"
++    if any(not isinstance(value, int) or isinstance(value, bool)
++           for value in counts.values()):
++        return "marker counts are not integers"
++    if not all(isinstance(row_id, str) for row_id in row_ids):
++        return "marker row ids are not strings"
++    if sum(counts.values()) != len(row_ids):
++        return "marker counts do not match its declared row ids"
++    return None
++
++
++def _canonical_promotion_ids(state_dir: Path) -> set:
++    ids = set()
++    for stream in SPOOL_STREAMS:
++        path = state_dir / stream
++        if not path.exists():
++            continue
++        for line in path.read_text(encoding="utf-8").splitlines():
++            if not line.strip():
++                continue
++            try:
++                row = _strict_loads(line)
++                promotion = row.get("promotion") if isinstance(row, dict) else None
++                if isinstance(promotion, dict) and isinstance(
++                        promotion.get("id"), str):
++                    ids.add(promotion["id"])
++            except ValueError:
++                continue
++    return ids
++
++
++def _record_graph_incident(run: _Run, code: str, detail: str,
++                           node_id: str | None = None) -> None:
++    """Durable, rollup-visible incident for an identity-plane fault."""
++    row = {"ts": _now_iso(run.now_fn), "code": code, "severity": "breach",
++           "status": "open", "department": run.dept_dir.name,
++           "run_id": run.run_id, "node": node_id, "detail": detail}
++    with records_lock(run.state_dir):
++        _append_jsonl(run.state_dir / "graph_incidents.jsonl", row)
++    run.log("graph_incident", code=code, node_id=node_id, detail=detail)
++
++
++def _promote_spool(run: _Run, *, node_id: str, attempt: int, spool_dir: Path,
++                   signer, control_dir: Path, output: dict,
++                   crash_hook=None) -> str | None:
++    """Validate, stamp, sign, and append the node's spooled records.
++
++    This is the ONLY path from node-emitted records to the canonical streams
++    (review B1, Option C). Identity is ASSIGNED here from the runner's own
++    execution state — department, graph run, node — never taken from the
++    row; whatever a node claimed is overwritten. Every row is validated with
++    the stream's own validator FIRST — including the FULL step-telemetry
++    validator shared with rollup (review F4), so nothing invalid is ever
++    signed; any malformed, overflowing, reserved-field, or wrong-stream row
++    refuses the WHOLE promotion (nothing partial) and fails the node. Each
++    promoted row is signed by the runner's signer so factory/rollup.py can
++    verify at read time and quarantine direct same-uid file writes.
++
++    Exactly-once across crash-resume (review F1/F3): markers live in the
++    runner's OWN control directory, outside every path the node is handed
++    (run_control_dir), and are SIGNED — a marker is honored as a skip only
++    after its signature, identity, and declared counts/row-ids verify AND
++    the rows it claims are actually present in the canonical streams. A
++    marker that fails any of that is an incident and the node is
++    re-promoted, never silently skipped. A pending marker written before the
++    canonical appends lets a crashed promotion resume from the ORIGINAL
++    spool without re-executing the node, so recovery re-appends
++    byte-identical rows under the same stable promotion id instead of a
++    second, differing body.
++
++    RESIDUAL RISK (documented, not solved here): the defense is against the
++    sanctioned node toolchain. Under a single uid a hostile process can
++    still write anywhere on the filesystem — including the control dir — and
++    can truncate or delete canonical files outright; detecting destructive
++    edits needs OS-level separation (a distinct uid or a supervisor process)
++    or hash-chaining of the streams. That is a promotion-ladder live-tier
++    concern; the KMSSigner seam in kernel/receipts.py is reserved for
++    exactly that hardening. Signed markers plus rollup's read-time
++    verification are what make such tampering visible rather than silent.
++
++    Returns None on success (or verified duplicate skip), else the refusal
++    reason.
++    """
++    # factory/scores.py imports the kernel package; when the runner is
++    # invoked by file path the repo root may be absent from sys.path.
++    if str(ROOT) not in sys.path:
++        sys.path.insert(0, str(ROOT))
++    runrecord = _load("runrecord", "factory/runrecord.py")
++    scores = _load("scores", "factory/scores.py")
++    from factory import rollup as rollup_module
++
++    department = run.dept_dir.name
++
++    # ---- validate (all rows, before anything is written or signed) -------- #
++    try:
++        unknown = sorted(child.name for child in spool_dir.iterdir()
++                         if child.name not in SPOOL_STREAMS)
++        if unknown:
++            return (f"spool_rejected: unknown spool entries {unknown} — "
++                    f"nodes may emit only {list(SPOOL_STREAMS)}")
++        spooled = {stream: _read_spool_stream(spool_dir, stream)
++                   for stream in SPOOL_STREAMS}
++        for stream, rows in spooled.items():
++            for row in rows:
++                if "promotion" in row:
++                    raise ValueError(f"spool {stream} row carries the "
++                                     f"reserved 'promotion' field")
++                if stream == "runs-v2.jsonl":
++                    runrecord.validate_record(row)
++                elif stream == "scores.jsonl":
++                    scores.validate_score(row)
++                else:
++                    # F4: the SAME validator rollup applies at read time,
++                    # so an invalid row is refused before it can be signed
++                    rollup_module.validate_telemetry_row(row, department)
++                    _canon_row_bytes(row)  # canonical-JSON policy
++    except (ValueError, OSError) as exc:
++        return f"spool_promotion: {exc}"
++
++    # ---- stamp + sign (identity assigned from runner state) --------------- #
++    stamped_streams: dict[str, list] = {}
++    try:
++        for stream, rows in spooled.items():
++            stamped_rows = []
++            for index, row in enumerate(rows):
++                stamped = dict(row)
++                if stream == "runs-v2.jsonl":
++                    stamped["department"] = department
++                    stamped["graph_run_id"] = run.run_id
++                    stamped["node"] = node_id
++                elif stream == "telemetry.jsonl":
++                    stamped["loopfactory.department"] = department
++                    stamped["loopfactory.graph_run_id"] = run.run_id
++                    stamped["loopfactory.node"] = node_id
++                else:  # scores: target node stays the score's SUBJECT
++                    target = dict(stamped.get("target_ref") or {})
++                    target["department"] = department
++                    target["graph_run_id"] = run.run_id
++                    stamped["target_ref"] = target
++                stamped["promotion"] = {
++                    "schema": PROMOTION_SCHEMA,
++                    "id": _promotion_row_id(run.run_id, node_id, stream,
++                                            index),
++                    "attempt": attempt,
++                }
++                signature = signer.sign(_canon_row_bytes(stamped))
++                stamped["promotion"] = {**stamped["promotion"],
++                                        "sig": signature}
++                stamped_rows.append(stamped)
++            stamped_streams[stream] = stamped_rows
++    except Exception as exc:
++        run.log("gate_failure", node_id=node_id,
++                why="signing_plane:promotion",
++                reason=f"{type(exc).__name__}: {exc}")
++        raise SigningPlaneBroken(str(exc)) from exc
++
++    # ---- verified skip: has this node already been promoted? -------------- #
++    counts = {stream: len(rows) for stream, rows in stamped_streams.items()}
++    row_ids = [stamped["promotion"]["id"]
++               for stamped_rows in stamped_streams.values()
++               for stamped in stamped_rows]
++    control_dir.mkdir(parents=True, exist_ok=True)
++    ledger = control_dir / "promotions.jsonl"
++    if ledger.exists():
++        for line in ledger.read_text(encoding="utf-8").splitlines():
++            if not line.strip():
++                continue
++            try:
++                marker = _strict_loads(line)
++            except ValueError:
++                # torn trailing line: never durably committed, re-promote
++                continue
++            if not isinstance(marker, dict) or marker.get("node") != node_id:
++                continue
++            fault = _marker_ok(marker, signer, department=department,
++                               run_id=run.run_id, node_id=node_id)
++            if fault is None:
++                present = _canonical_promotion_ids(run.state_dir)
++                missing = [row_id for row_id in marker["row_ids"]
++                           if row_id not in present]
++                if missing:
++                    fault = (f"marker claims {len(missing)} promoted row(s) "
++                             f"absent from the canonical streams")
++            if fault is None:
++                run.log("promotion_skipped_duplicate", node_id=node_id)
++                return None
++            _record_graph_incident(
++                run, "promotion_marker_unverifiable", fault, node_id=node_id)
++            break  # re-promote rather than trust an unverifiable marker
++
++    # ---- pending marker, canonical appends, completion marker ------------- #
++    pending_payload = {
++        "schema": PROMOTION_MARKER_SCHEMA, "state": "pending",
++        "department": department, "run_id": run.run_id, "node": node_id,
++        "attempt": attempt, "counts": counts, "row_ids": row_ids,
++        "spool_dir": str(spool_dir), "output": output,
++        "ts": _now_iso(run.now_fn),
++    }
++    try:
++        pending_payload["sig"] = _marker_signature(signer, pending_payload)
++        completion_payload = {
++            "schema": PROMOTION_MARKER_SCHEMA, "state": "promoted",
++            "department": department, "run_id": run.run_id, "node": node_id,
++            "attempt": attempt, "counts": counts, "row_ids": row_ids,
++            "ts": _now_iso(run.now_fn),
++        }
++        completion_payload["sig"] = _marker_signature(
++            signer, completion_payload)
++    except Exception as exc:
++        run.log("gate_failure", node_id=node_id, why="signing_plane:marker",
++                reason=f"{type(exc).__name__}: {exc}")
++        raise SigningPlaneBroken(str(exc)) from exc
++
++    pending_path = control_dir / f"pending-{node_id}.json"
++    _atomic_write_json(pending_path, pending_payload)
++    with records_lock(run.state_dir):
++        for stream, stamped_rows in stamped_streams.items():
++            for stamped in stamped_rows:
++                _append_jsonl(run.state_dir / stream, stamped)
++    if crash_hook is not None:
++        crash_hook("pre_promotion_marker")
++    _append_jsonl(ledger, completion_payload)
++    pending_path.unlink(missing_ok=True)
++    run.log("spool_promoted", node_id=node_id, attempt=attempt, counts=counts)
++    return None
++
++
++def _pending_promotion(run: _Run, control_dir: Path, node_id: str,
++                       signer) -> dict | None:
++    """A promotion that began and never completed (review F3).
++
++    Recovery must NOT re-execute the node: a second execution produces a
++    different record body under the same stable promotion id, which is the
++    two-signed-bodies defect. Instead the original spool and the node's
++    original output are recovered from the signed pending marker, so the
++    completed promotion re-appends byte-identical rows."""
++    pending_path = control_dir / f"pending-{node_id}.json"
++    if not pending_path.exists():
++        return None
++    try:
++        marker = _strict_loads(pending_path.read_text(encoding="utf-8"))
++    except (ValueError, OSError) as exc:
++        _record_graph_incident(run, "promotion_marker_unverifiable",
++                               f"pending marker unreadable: {exc}",
++                               node_id=node_id)
++        return None
++    fault = _marker_ok(marker, signer, department=run.dept_dir.name,
++                       run_id=run.run_id, node_id=node_id)
++    if fault is None and not isinstance(marker.get("output"), dict):
++        fault = "pending marker carries no node output"
++    if fault is None and not Path(marker.get("spool_dir", "")).is_dir():
++        fault = "pending marker points at a missing spool"
++    if fault is not None:
++        _record_graph_incident(run, "promotion_marker_unverifiable", fault,
++                               node_id=node_id)
++        pending_path.unlink(missing_ok=True)
++        return None
++    return marker
++
++
+ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
+-                         env_base, sleep_fn) -> tuple:
+-    """Run one node under its failure policy.
+-    Returns (output|None, failure|None, attempts_used)."""
++                         env_base, sleep_fn, signer, now_fn,
++                         crash_hook=None) -> tuple:
++    """Run one node under its failure policy, then promote its spool.
++    Returns (output|None, failure|None, attempts_used). Spool rows from
++    FAILED attempts are never promoted — they stay in the per-attempt spool
++    directory for audit; the runner's own failure record covers the books."""
+     rungraph = _load("rungraph", "factory/rungraph.py")
+     policy = node["failure_policy"]
+     attempts = int(policy["max_retries"]) + 1
+@@ -418,13 +810,43 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
+     if not script.is_relative_to(run.dept_dir.resolve()):
+         return None, {"reason": "impl_escapes_department", "exit_code": None,
+                       "attempt": 0}, 0
++    control_dir = run_control_dir(root, dept_name, run.run_id)
++    # F3: a promotion that began before a crash completes from its ORIGINAL
++    # spool and output — re-executing would produce a different body under
++    # the same promotion id.
++    pending = _pending_promotion(run, control_dir, node["id"], signer)
++    if pending is not None:
++        run.log("promotion_resumed", node_id=node["id"],
++                attempt=pending["attempt"])
++        reason = _promote_spool(
++            run, node_id=node["id"], attempt=pending["attempt"],
++            spool_dir=Path(pending["spool_dir"]), signer=signer,
++            control_dir=control_dir, output=pending["output"])
++        if reason is not None:
++            run.log("spool_rejected", node_id=node["id"], reason=reason)
++            return None, {"reason": reason, "exit_code": 0,
++                          "attempt": pending["attempt"]}, pending["attempt"]
++        return pending["output"], None, pending["attempt"]
++
+     failure = None
+     attempt = 0
+     for attempt in range(1, attempts + 1):
+         if attempt > 1:
+             sleep_fn(float(policy["backoff_s"]))
++        spool_dir = run.run_dir / "spool" / f"{node['id']}-{attempt}"
++        if spool_dir.exists():
++            # stale spool from a crashed prior execution of this attempt.
++            # RETENTION: spools of FAILED attempts are kept for audit and
++            # are bounded per attempt (MAX_SPOOL_FILE_BYTES per stream);
++            # they live under the run directory, so a department's retention
++            # sweep removes them with the run. A long-lived department with
++            # many retried nodes should include state/graph_runs in that
++            # sweep — nothing here prunes them automatically.
++            shutil.rmtree(spool_dir)
++        spool_dir.mkdir(parents=True)
+         returncode, stdout, stderr = _launch_node(
+-            dept_name, script, root=root, env_base=env_base)
++            dept_name, script, root=root, env_base=env_base,
++            spool_dir=spool_dir)
+         run.log("node_attempt", node_id=node["id"], attempt=attempt,
+                 exit_code=returncode)
+         if returncode != 0:
+@@ -446,6 +868,16 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
+             failure = {"reason": "output_contract: " + "; ".join(contract_fails),
+                        "exit_code": 0, "attempt": attempt}
+             continue
++        if crash_hook is not None:
++            crash_hook("pre_promotion")
++        reason = _promote_spool(run, node_id=node["id"], attempt=attempt,
++                                spool_dir=spool_dir, signer=signer,
++                                control_dir=control_dir, output=output,
++                                crash_hook=crash_hook)
++        if reason is not None:
++            run.log("spool_rejected", node_id=node["id"], reason=reason)
++            return None, {"reason": reason, "exit_code": 0,
++                          "attempt": attempt}, attempt
+         return output, None, attempt
+     return None, failure, attempt
+ 
+@@ -650,6 +1082,9 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
+             env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
+             receipt_ttl_s=receipt_ttl_s, crash_hook=crash_hook)
+ 
++        if final_state in ("escalated", "killed"):
++            _bridge_escalation(run, final_state)
++
+         try:
+             _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
+                                now_fn=now_fn)
+@@ -680,6 +1115,33 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
+         run_lock.close()
+ 
+ 
++def _bridge_escalation(run: _Run, final_state: str) -> None:
++    """Runner->manager escalation bridge (report + escalate only, no new
++    authority). A terminal escalated/killed run appends one durable,
++    manager-readable record to department state; factory/manager.py senses it
++    on the next cycle, raises a breach finding, and delivers it to the
++    human-in-the-loop outbox. A record failure here propagates — records are
++    hard rule 5; an escalation that cannot be recorded must never look
++    handled. Duplicate rows from a crash-resume window are harmless: the
++    manager replays them keyed by run_id and the outbox delivery is
++    fingerprint-deduplicated."""
++    row = {
++        "ts": _now_iso(run.now_fn),
++        "event": "graph_run_escalation",
++        "department": run.dept_dir.name,
++        "loop_id": run.loop_id,
++        "run_id": run.run_id,
++        "graph_run_id": run.run_id,
++        "state": final_state,
++        "termination_reason": run.record.get("termination_reason"),
++        "marker": "open",
++    }
++    with records_lock(run.state_dir):
++        _append_jsonl(run.state_dir / "graph_escalations.jsonl", row)
++    run.log("escalation_bridged", state=final_state,
++            termination_reason=row["termination_reason"])
++
++
+ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
+                  loaded: dict, signer, step_receipts, rungraph, root,
+                  env_base, now_fn, sleep_fn, receipt_ttl_s,
+@@ -1004,7 +1466,8 @@ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
+                 run.persist()
+                 output, failure, attempts_used = _execute_with_policy(
+                     run, node, dept_name=dept_dir.name, root=root,
+-                    env_base=env_base, sleep_fn=sleep_fn)
++                    env_base=env_base, sleep_fn=sleep_fn, signer=signer,
++                    now_fn=now_fn, crash_hook=crash_hook)
+                 # All token work happens INSIDE awaiting_receipt; the state
+                 # exits only after every transition holds a validated token.
+                 run.advance("awaiting_receipt")
+diff --git a/factory/runrecord.py b/factory/runrecord.py
+index 9a1e348..ca383c3 100644
+--- a/factory/runrecord.py
++++ b/factory/runrecord.py
+@@ -10,6 +10,7 @@ import copy
+ import fcntl
+ import json
+ import os
++import re
+ import time
+ from contextlib import contextmanager
+ from datetime import datetime, timezone
+@@ -18,6 +19,12 @@ from typing import Any, Iterator
+ 
+ 
+ SCHEMA = "run-record/v2"
++# Runner-injected spool location (canonical name: kernel/capabilities.py).
++# When present, this process is a graph-runner node: appends land in the
++# spool and the canonical stream is unreachable — the runner validates,
++# stamps identity from its own execution state, signs, and promotes.
++RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
++_GRAPH_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
+ 
+ _REQUIRED_FIELDS = frozenset(
+     {
+@@ -48,6 +55,10 @@ _REQUIRED_FIELDS = frozenset(
+     }
+ )
+ _DERIVED_FIELDS = frozenset({"metered_violation"})
++# Additive, backward-compatible fields: absent in pre-existing records and in
++# emitters that run outside the graph runner. "promotion" is stamped by the
++# runner at promotion time (identity + signature) — never by an emitter.
++_OPTIONAL_FIELDS = frozenset({"graph_run_id", "promotion"})
+ _AUTH_CLASSES = frozenset(
+     {"oauth_cli", "service_oauth", "local_model", "blocked", None}
+ )
+@@ -136,15 +147,24 @@ def _validate_cost(value: Any) -> bool:
+     return value["lane"] == "metered_forbidden"
+ 
+ 
++def _validate_graph_run_id(value: Any) -> None:
++    if not isinstance(value, str) or _GRAPH_RUN_ID.fullmatch(value) is None:
++        _fail("graph_run_id", "must be a safe identifier string")
++
++
+ def build_record(**fields: Any) -> dict[str, Any]:
+     """Validate fields against the locked v2 contract and return a copy."""
+     actual = set(fields)
+     missing = _REQUIRED_FIELDS - actual
+     if missing:
+         _fail(sorted(missing)[0], "is required")
+-    unknown = actual - _REQUIRED_FIELDS
++    unknown = actual - _REQUIRED_FIELDS - _OPTIONAL_FIELDS
+     if unknown:
+         _fail(sorted(unknown)[0], "is not allowed")
++    if "graph_run_id" in fields:
++        _validate_graph_run_id(fields["graph_run_id"])
++    if "promotion" in fields:
++        _require_type("promotion", fields["promotion"], dict)
+ 
+     if fields["schema"] != SCHEMA:
+         _fail("schema", f"must equal {SCHEMA!r}")
+@@ -193,12 +213,16 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
+     """Validate a complete record, including its derived violation marker."""
+     if not isinstance(record, dict):
+         _fail("record", "must be dict")
+-    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS
++    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS - _OPTIONAL_FIELDS
+     if unknown:
+         _fail(sorted(unknown)[0], "is not allowed")
+ 
+     supplied_violation = record.get("metered_violation")
+-    base_fields = {key: record[key] for key in record if key in _REQUIRED_FIELDS}
++    base_fields = {
++        key: record[key]
++        for key in record
++        if key in _REQUIRED_FIELDS or key in _OPTIONAL_FIELDS
++    }
+     validated = build_record(**base_fields)
+     expected_violation = validated.get("metered_violation")
+     if "metered_violation" in record:
+@@ -212,11 +236,22 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
+ 
+ 
+ def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
+-    """Validate and append one fsynced JSON line under an exclusive lock."""
++    """Validate and append one fsynced JSON line under an exclusive lock.
++
++    Runner-mediated appends (review B1, Option C): inside a graph-runner
++    node process (RECORD_SPOOL_ENV present) the row lands in the per-attempt
++    spool — the canonical stream is unreachable from node code through this
++    API. The runner later validates, stamps identity from its OWN execution
++    state, signs, and promotes; any identity the node wrote is overwritten.
++    """
+     validated = validate_record(record)
+-    state_dir = Path(state_dir)
+-    state_dir.mkdir(parents=True, exist_ok=True)
+-    path = state_dir / "runs-v2.jsonl"
++    spool = os.environ.get(RECORD_SPOOL_ENV)
++    if spool:
++        target_dir = Path(spool)
++    else:
++        target_dir = Path(state_dir)
++    target_dir.mkdir(parents=True, exist_ok=True)
++    path = target_dir / "runs-v2.jsonl"
+     line = json.dumps(validated, sort_keys=True, separators=(",", ":")) + "\n"
+     with path.open("a", encoding="utf-8") as handle:
+         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+@@ -276,8 +311,14 @@ def emit_record(
+     evaluator: dict[str, Any] | None = None,
+     approval: dict[str, Any] | None = None,
+     external_actions_taken: int = 0,
++    graph_run_id: str | None = None,
+ ) -> Path:
+-    """Build and append one v2 record with generated identity and timestamp."""
++    """Build and append one v2 record with generated identity and timestamp.
++
++    graph_run_id is an explicit non-runner tag only; under the graph runner
++    the promotion step assigns identity regardless of what is passed here.
++    """
++    optional = {} if graph_run_id is None else {"graph_run_id": graph_run_id}
+     record = build_record(
+         schema=SCHEMA,
+         rev=2,
+@@ -303,6 +344,7 @@ def emit_record(
+         evaluator=evaluator,
+         approval=approval,
+         external_actions_taken=external_actions_taken,
++        **optional,
+     )
+     return append_record(state_dir, record)
+ 
+diff --git a/factory/scores.py b/factory/scores.py
+index 18b9d0c..c294d96 100644
+--- a/factory/scores.py
++++ b/factory/scores.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ 
+ import copy
+ import json
++import os
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
+@@ -11,6 +12,13 @@ from kernel.jsonl_store import append_jsonl
+ 
+ 
+ SCHEMA_VERSION = "score-record/v1"
++# Runner-injected spool location (canonical name: kernel/capabilities.py).
++# When present, appends land in the spool; the runner stamps identity from
++# its own execution state at promotion — never from the emitter's claims.
++RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
++# "promotion" is stamped by the runner at promotion time (identity +
++# signature) — never by an emitter.
++OPTIONAL_FIELDS = frozenset({"promotion"})
+ SOURCES = frozenset({"script", "judge", "human"})
+ FIELDS = frozenset(
+     {
+@@ -27,6 +35,8 @@ FIELDS = frozenset(
+     }
+ )
+ TARGET_FIELDS = frozenset({"run_id", "step_id", "node", "department"})
++# Additive, backward-compatible: pre-existing emitters omit it entirely.
++OPTIONAL_TARGET_FIELDS = frozenset({"graph_run_id"})
+ 
+ 
+ def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
+@@ -39,10 +49,12 @@ def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
+ def validate_score(record: dict[str, Any]) -> dict[str, Any]:
+     if not isinstance(record, dict):
+         raise ValueError("score record must be an object")
+-    if set(record) != FIELDS:
+-        missing = sorted(FIELDS - set(record))
+-        unknown = sorted(set(record) - FIELDS)
++    missing = sorted(FIELDS - set(record))
++    unknown = sorted(set(record) - FIELDS - OPTIONAL_FIELDS)
++    if missing or unknown:
+         raise ValueError(f"score fields mismatch: missing={missing}, unknown={unknown}")
++    if "promotion" in record and not isinstance(record["promotion"], dict):
++        raise ValueError("promotion must be an object")
+     if record["schema_version"] != SCHEMA_VERSION:
+         raise ValueError(f"schema_version must equal {SCHEMA_VERSION}")
+     for field in (
+@@ -67,12 +79,22 @@ def validate_score(record: dict[str, Any]) -> dict[str, Any]:
+     if record["source"] == "judge" and record["judge_model"] is None:
+         raise ValueError("judge_model is required when source is judge")
+     target = record["target_ref"]
+-    if not isinstance(target, dict) or set(target) != TARGET_FIELDS:
+-        raise ValueError("target_ref must contain run_id, step_id, node, department")
++    if (
++        not isinstance(target, dict)
++        or not TARGET_FIELDS <= set(target)
++        or set(target) - TARGET_FIELDS - OPTIONAL_TARGET_FIELDS
++    ):
++        raise ValueError(
++            "target_ref must contain run_id, step_id, node, department "
++            "(graph_run_id optional)"
++        )
+     for field in ("node", "department"):
+         _require_text(f"target_ref.{field}", target[field])
+     for field in ("run_id", "step_id"):
+         _require_text(f"target_ref.{field}", target[field], nullable=True)
++    if "graph_run_id" in target:
++        _require_text("target_ref.graph_run_id", target["graph_run_id"],
++                      nullable=True)
+     try:
+         json.dumps(record, allow_nan=False)
+     except (TypeError, ValueError) as exc:
+@@ -109,5 +131,16 @@ def build_score(
+ 
+ 
+ def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
+-    """Validate and append one score to ``state/scores.jsonl``."""
+-    return append_jsonl(Path(state_dir) / "scores.jsonl", validate_score(record))
++    """Validate and append one score to ``state/scores.jsonl``.
++
++    Runner-mediated appends (review B1, Option C): inside a graph-runner
++    node process (RECORD_SPOOL_ENV present) the row lands in the per-attempt
++    spool — the canonical stream is unreachable from node code through this
++    API. The runner stamps target_ref.department and target_ref.graph_run_id
++    from its own execution state at promotion; target_ref.node stays the
++    SUBJECT of the score (a judge node scoring another node is legitimate).
++    """
++    validated = validate_score(record)
++    spool = os.environ.get(RECORD_SPOOL_ENV)
++    target_dir = Path(spool) if spool else Path(state_dir)
++    return append_jsonl(target_dir / "scores.jsonl", validated)
+diff --git a/kernel/capabilities.py b/kernel/capabilities.py
+index 0636820..ff813ef 100644
+--- a/kernel/capabilities.py
++++ b/kernel/capabilities.py
+@@ -30,6 +30,16 @@ _ALLOWED_ENV = frozenset(
+     }
+ )
+ 
++# Kernel marker injected AFTER the scrub (like OE_DEPARTMENT in
++# factory/launch.py): the graph runner points every node process at its
++# per-attempt record SPOOL. Appenders write there instead of the canonical
++# streams; the runner validates, stamps identity from its own execution
++# state, signs, and promotes. Nothing secret travels to nodes, and no
++# node-supplied identity claim ever reaches a canonical stream (review B1,
++# Option C: runner-mediated appends). Deliberately NOT in _ALLOWED_ENV —
++# an ambient value from outside the runner is dropped.
++RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
++
+ # Capability env widens the strict global allowlist only for a department whose
+ # human-owned charter declares the capability. XDG_RUNTIME_DIR exposes the user
+ # session bus, so it must never become ambient for every confined department.
+diff --git a/kernel/gateways/model.py b/kernel/gateways/model.py
+index 766e7b4..53811c7 100644
+--- a/kernel/gateways/model.py
++++ b/kernel/gateways/model.py
+@@ -7,6 +7,7 @@ from kernel.jsonl_store import append_jsonl
+ import hashlib
+ import json
+ import logging
++import os
+ import re
+ import time
+ from datetime import datetime, timezone
+@@ -31,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
+ 
+ 
+ SCHEMA_VERSION = "step-telemetry/v1"
++# Runner-injected spool location (canonical name: kernel/capabilities.py).
++# When present, telemetry rows land in the spool instead of any caller-given
++# canonical path; the runner stamps identity at promotion.
++RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
+ AUTH_ROUTES = frozenset(
+     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
+ )
+@@ -185,6 +190,7 @@ def call_model(
+     telemetry_path=None,
+     department=None,
+     run_id=None,
++    graph_run_id=None,
+     step_id=None,
+     node=None,
+     operation_name="chat",
+@@ -215,6 +221,7 @@ def call_model(
+     safe_engine = None
+     safe_department = None
+     safe_run_id = None
++    safe_graph_run_id = None
+     safe_step_id = None
+     safe_node = None
+     safe_auth_route = "blocked"
+@@ -233,6 +240,10 @@ def call_model(
+         safe_run_id = _optional_identifier(run_id, "run_id")
+         safe_step_id = _optional_identifier(step_id, "step_id")
+         safe_node = _optional_identifier(node, "node")
++        # graph_run_id is an explicit non-runner tag; under the graph runner
++        # the row is spooled and the promotion step assigns identity from
++        # the runner's own execution state, overwriting any claim made here.
++        safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
+         safe_auth_route = _optional_identifier(auth_route, "auth_route")
+         if safe_auth_route not in AUTH_ROUTES:
+             safe_auth_route = "blocked"
+@@ -352,6 +363,7 @@ def call_model(
+         "loopfactory.price.effective_date": price_effective_date,
+         "loopfactory.department": safe_department,
+         "loopfactory.run_id": safe_run_id,
++        "loopfactory.graph_run_id": safe_graph_run_id,
+         "loopfactory.step_id": safe_step_id,
+         "loopfactory.node": safe_node,
+         "loopfactory.telemetry.source": (
+@@ -359,6 +371,12 @@ def call_model(
+         ),
+         "estimated": metadata.get("estimated", False),
+     }
++    # Runner-mediated appends (review B1, Option C): inside a node process
++    # the canonical telemetry path is unreachable — rows land in the spool
++    # and only the runner's promotion step writes the canonical stream.
++    spool = os.environ.get(RECORD_SPOOL_ENV)
++    if spool:
++        telemetry_path = Path(spool) / "telemetry.jsonl"
+     telemetry_error: Exception | None = None
+     if telemetry_path is not None:
+         try:
+diff --git a/kernel/lock_service.py b/kernel/lock_service.py
+index 661db85..26beac8 100644
+--- a/kernel/lock_service.py
++++ b/kernel/lock_service.py
+@@ -194,6 +194,7 @@ class LockService:
+         *,
+         runner,
+         run_id=None,
++        graph_run_id=None,
+         step_id=None,
+         node=None,
+         operation_name="chat",
+@@ -211,6 +212,7 @@ class LockService:
+                 telemetry_path=self.telemetry_path,
+                 department=self.department,
+                 run_id=run_id,
++                graph_run_id=graph_run_id,
+                 step_id=step_id,
+                 node=node,
+                 operation_name=operation_name,
+diff --git a/tests/test_escalation_bridge.py b/tests/test_escalation_bridge.py
+new file mode 100644
+index 0000000..04230a9
+--- /dev/null
++++ b/tests/test_escalation_bridge.py
+@@ -0,0 +1,396 @@
++"""R2 — runner-to-manager escalation bridge.
++
++A terminal graph `escalated` (or `killed`) state must never vanish into the
++void: the runner appends a durable, manager-readable escalation record to
++department state; the manager's next cycle senses it, raises a breach
++finding, and delivers exactly one human-in-the-loop outbox item. Report +
++escalate only — the bridge grants no new authority and no graph transition
++advances past the failure.
++"""
++import importlib.util
++import json
++from pathlib import Path
++
++from factory import human_in_the_loop as hil
++from factory import manager
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("bridge_kernel_receipts", "kernel/receipts.py")
++REL = _load("bridge_release", "factory/release.py")
++RUN = _load("bridge_runner", "factory/runner.py")
++
++SIGNER = R.LocalSigner(key="test-key")
++
++ESCALATING_NODE = """\
++import json
++print(json.dumps({"status": "broken"}))
++"""
++
++VIOLATOR_NODE = """\
++import json
++print(json.dumps({"status": "ok", "external_actions_taken": 1}))
++"""
++
++OK_NODE = """\
++import json
++print(json.dumps({"status": "ok"}))
++"""
++
++RECORD_NODE = """\
++import json, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "markers.txt").open("a", encoding="utf-8") as fh:
++    fh.write("record\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def _node(node_id, impl, on_fail="escalate", max_retries=0):
++    return {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": max_retries, "backoff_s": 0,
++                           "on_fail": on_fail},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++
++
++def _two_node_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/sense.py"),
++                      _node("N2", "runtime/record.py")],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N1", "kind": "escalation",
++                 "when": "receipt.status != 'ok'"},
++                {"from": "N2", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++
++
++def _make_dept(tmp_path, scripts, manifest):
++    dept = tmp_path / "departments" / "demo"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "charter.yaml").write_text(
++        "department: demo\nowner: test-owner\nautonomy_state: shadow\n"
++        "immutable_safety_invariants:\n  heal_may_not_modify: [x]\n",
++        encoding="utf-8")
++    for name, src in scripts.items():
++        (dept / "runtime" / name).write_text(src, encoding="utf-8")
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    h = REL.pin_release(dept, dept / "releases", source_ref="testsha")
++    REL.flip_current(dept / "releases", h)
++    return dept
++
++
++def _run(dept, tmp_path, fingerprint="trigger-1"):
++    return RUN.run_graph(dept, trigger_fingerprint=fingerprint, signer=SIGNER,
++                         root=tmp_path, sleep_fn=lambda s: None)
++
++
++def _read_jsonl(path):
++    path = Path(path)
++    if not path.exists():
++        return []
++    return [json.loads(line)
++            for line in path.read_text(encoding="utf-8").splitlines()
++            if line.strip()]
++
++
++# --------------------------------------------------------------------------- #
++# The runner writes the bridge record on terminal escalated/killed only
++# --------------------------------------------------------------------------- #
++
++def test_escalated_run_writes_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    rows = _read_jsonl(dept / "state" / "graph_escalations.jsonl")
++    assert len(rows) == 1
++    row = rows[0]
++    assert row["run_id"] == result["run_id"]
++    assert row["graph_run_id"] == result["run_id"]
++    assert row["state"] == "escalated"
++    assert row["department"] == "demo"
++    assert row["loop_id"] == "SG-RUN"
++    assert row["termination_reason"] == "escalation_edge"
++
++
++def test_killed_run_writes_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": VIOLATOR_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    rows = _read_jsonl(dept / "state" / "graph_escalations.jsonl")
++    assert len(rows) == 1
++    assert rows[0]["state"] == "killed"
++    assert rows[0]["termination_reason"] == "shadow_violation"
++
++
++def test_done_run_writes_no_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": OK_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "done"
++    assert not (dept / "state" / "graph_escalations.jsonl").exists()
++
++
++# --------------------------------------------------------------------------- #
++# The manager senses the bridge record and raises a breach finding
++# --------------------------------------------------------------------------- #
++
++def test_sense_graph_escalations_replays_open_and_resolved(tmp_path):
++    state = tmp_path / "state"
++    state.mkdir()
++    path = state / "graph_escalations.jsonl"
++    rows = [
++        {"run_id": "run-a", "state": "escalated", "loop_id": "SG",
++         "termination_reason": "no_edge_satisfied", "marker": "open"},
++        {"run_id": "run-b", "state": "killed", "loop_id": "SG",
++         "termination_reason": "shadow_violation", "marker": "open"},
++        {"run_id": "run-b", "marker": "resolved"},
++    ]
++    path.write_text("".join(json.dumps(r) + "\n" for r in rows),
++                    encoding="utf-8")
++    sensed = manager.sense_graph_escalations(state)
++    assert sensed["graph_escalation_count"] == 1
++    assert sensed["graph_escalations"][0]["run_id"] == "run-a"
++    assert sensed["graph_escalations_unreadable"] is False
++
++
++def test_sense_graph_escalations_unreadable_is_flagged(tmp_path):
++    state = tmp_path / "state"
++    state.mkdir()
++    (state / "graph_escalations.jsonl").write_text(
++        "{not json\n", encoding="utf-8")
++    sensed = manager.sense_graph_escalations(state)
++    assert sensed["graph_escalations_unreadable"] is True
++
++
++def test_compare_raises_breach_per_open_graph_escalation():
++    sensed = {
++        "graph_escalations": [
++            {"run_id": "run-a", "state": "escalated", "loop_id": "SG",
++             "termination_reason": "no_edge_satisfied"},
++        ],
++    }
++    findings = manager.compare(sensed)
++    breaches = [f for f in findings if f["code"] == "graph_run_escalated"]
++    assert len(breaches) == 1
++    assert breaches[0]["severity"] == "breach"
++    assert breaches[0]["subject"] == "run-a"
++    assert "run-a" in breaches[0]["detail"]
++
++
++def test_compare_raises_breach_when_escalation_stream_unreadable():
++    findings = manager.compare({"graph_escalations_unreadable": True})
++    assert any(f["code"] == "graph_escalations_unreadable"
++               and f["severity"] == "breach" for f in findings)
++
++
++# --------------------------------------------------------------------------- #
++# ACCEPTANCE: force a predicate failure -> exactly one terminal graph
++# escalation + one manager breach finding on the next cycle + one outbox
++# item; no graph transition advances.
++# --------------------------------------------------------------------------- #
++
++def test_predicate_failure_reaches_manager_and_outbox_exactly_once(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    state_dir = dept / "state"
++
++    # exactly one terminal graph escalation, and NO transition advanced:
++    # the only receipt-bearing row is the escalation exit — N2 never ran.
++    run_state = json.loads(
++        (state_dir / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert run_state["state"] == "escalated"
++    assert [(t["from"], t["to"], t["kind"]) for t in run_state["transitions"]] \
++        == [("N1", None, "escalation")]
++    assert "N2" not in run_state["nodes"]
++    assert not (state_dir / "markers.txt").exists()
++    assert len(_read_jsonl(state_dir / "graph_escalations.jsonl")) == 1
++
++    # next manager cycle: one breach finding + one outbox item
++    outbox = tmp_path / "outbox.jsonl"
++
++    def escalate_fn(issue, context=None):
++        hil.escalate("demo", issue, outbox, context=context)
++
++    report = manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    breaches = [f for f in report["findings"]
++                if f["code"] == "graph_run_escalated"]
++    assert len(breaches) == 1
++    state_json = json.loads(
++        (state_dir / "STATE.json").read_text(encoding="utf-8"))
++    assert any(f["code"] == "graph_run_escalated"
++               for f in state_json["open_findings"])
++    packets = [row for row in _read_jsonl(outbox)
++               if row.get("kind") == "escalation"
++               and "graph_run_escalated" in row.get("issue", "")]
++    assert len(packets) == 1
++    assert result["run_id"] in packets[0]["issue"]
++
++    # a second cycle must NOT deliver a duplicate outbox item
++    manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    packets = [row for row in _read_jsonl(outbox)
++               if row.get("kind") == "escalation"
++               and "graph_run_escalated" in row.get("issue", "")]
++    assert len(packets) == 1
++
++
++def test_resolution_clears_both_ledgers_and_reopen_realarm(tmp_path):
++    """B2 regression: escalate -> resolve -> re-escalate the SAME run must
++    deliver a SECOND outbox item. Resolution is one coordinated operation
++    over BOTH ledgers (fingerprints first, then the graph sensor, so a crash
++    between the two re-alarms noisily instead of going silent)."""
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    state_dir = dept / "state"
++    outbox = tmp_path / "outbox.jsonl"
++
++    def escalate_fn(issue, context=None):
++        hil.escalate("demo", issue, outbox, context=context)
++
++    def packets():
++        return [row for row in _read_jsonl(outbox)
++                if row.get("kind") == "escalation"
++                and "graph_run_escalated" in row.get("issue", "")]
++
++    manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    assert len(packets()) == 1
++
++    outcome = manager.resolve_graph_escalation(
++        state_dir, department="demo", run_id=result["run_id"])
++    assert outcome["resolved"] == result["run_id"]
++    # both ledgers carry a coordinated resolution marker
++    fp_rows = _read_jsonl(state_dir / "escalation_fingerprints.jsonl")
++    assert any(r.get("marker") == "resolved" for r in fp_rows)
++    esc_rows = _read_jsonl(state_dir / "graph_escalations.jsonl")
++    assert any(r.get("marker") == "resolved"
++               and r.get("run_id") == result["run_id"] for r in esc_rows)
++
++    # resolved: no finding, no delivery
++    report = manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    assert not any(f["code"] == "graph_run_escalated"
++                   for f in report["findings"])
++    assert len(packets()) == 1
++
++    # REOPEN the same run: the alarm must ring again, not dedup into silence
++    with (state_dir / "graph_escalations.jsonl").open(
++            "a", encoding="utf-8") as fh:
++        fh.write(json.dumps({
++            "run_id": result["run_id"], "loop_id": "SG-RUN",
++            "state": "escalated", "termination_reason": "escalation_edge",
++            "marker": "open"}) + "\n")
++    report = manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    assert any(f["code"] == "graph_run_escalated" for f in report["findings"])
++    assert len(packets()) == 2
++
++
++def test_escalation_fingerprints_use_full_digest(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    _run(dept, tmp_path)
++    state_dir = dept / "state"
++    manager.run_manager_cycle(
++        state_dir, escalate_fn=lambda issue, context=None: None,
++        department="demo", dept_dir=dept)
++    rows = _read_jsonl(state_dir / "escalation_fingerprints.jsonl")
++    assert rows and all(len(r["fingerprint"]) == 64 for r in rows)
++
++
++def test_more_than_twenty_open_escalations_all_surface(tmp_path):
++    """B3 regression: 25 open escalations -> 25 breach findings and 25 outbox
++    deliveries in one cycle; only the persisted STATE.json presentation is
++    bounded (20 entries, truncated flag, honest total)."""
++    state_dir = tmp_path / "departments" / "demo" / "state"
++    state_dir.mkdir(parents=True)
++    with (state_dir / "graph_escalations.jsonl").open(
++            "w", encoding="utf-8") as fh:
++        for index in range(25):
++            fh.write(json.dumps({
++                "run_id": f"SG-RUN-{index:03d}", "loop_id": "SG-RUN",
++                "state": "escalated", "termination_reason": "escalation_edge",
++                "marker": "open"}) + "\n")
++    outbox = tmp_path / "outbox.jsonl"
++
++    def escalate_fn(issue, context=None):
++        hil.escalate("demo", issue, outbox, context=context)
++
++    report = manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo")
++    breaches = [f for f in report["findings"]
++                if f["code"] == "graph_run_escalated"]
++    assert len(breaches) == 25
++    assert {f["subject"] for f in breaches} \
++        == {f"SG-RUN-{index:03d}" for index in range(25)}
++    packets = [row for row in _read_jsonl(outbox)
++               if row.get("kind") == "escalation"
++               and "graph_run_escalated" in row.get("issue", "")]
++    assert len(packets) == 25
++    assert report["sensed"]["graph_escalation_count"] == 25
++    state_json = json.loads(
++        (state_dir / "STATE.json").read_text(encoding="utf-8"))
++    persisted = state_json["sensed"]
++    assert len(persisted["graph_escalations"]) == 20
++    assert persisted["graph_escalations_truncated"] is True
++    assert persisted["graph_escalation_count"] == 25
++
++
++def test_resolved_escalation_clears_the_finding(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    state_dir = dept / "state"
++    with (state_dir / "graph_escalations.jsonl").open(
++            "a", encoding="utf-8") as fh:
++        fh.write(json.dumps({"run_id": result["run_id"],
++                             "marker": "resolved"}) + "\n")
++    report = manager.run_manager_cycle(
++        state_dir, department="demo", dept_dir=dept)
++    assert not any(f["code"] == "graph_run_escalated"
++                   for f in report["findings"])
+diff --git a/tests/test_run_identity.py b/tests/test_run_identity.py
+new file mode 100644
+index 0000000..3268ccf
+--- /dev/null
++++ b/tests/test_run_identity.py
+@@ -0,0 +1,1011 @@
++"""R1 (round 3, Option C) — runner-mediated appends unify execution identity.
++
++Nodes never touch the canonical record streams: with OE_RECORD_SPOOL present
++(injected post-scrub by the runner, like OE_DEPARTMENT) every appender writes
++to a per-attempt spool. After the node exits — and BEFORE any transition
++receipt mints — the runner validates each spooled row, stamps identity from
++its OWN execution state (identity is assigned, never claimed), SIGNS each
++promoted row, and appends under the records fence. No security tokens travel
++to nodes at all. factory/rollup.py verifies promotion signatures at read
++time and quarantines unsigned/invalid graph-identity claims as incidents,
++which catches same-uid direct file writes.
++"""
++import importlib.util
++import json
++import sqlite3
++import time
++from pathlib import Path
++
++import pytest
++
++from factory import rollup, runrecord, scores
++from kernel import capabilities, lock_service, receipts
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("identity_kernel_receipts", "kernel/receipts.py")
++REL = _load("identity_release", "factory/release.py")
++RUN = _load("identity_runner", "factory/runner.py")
++PJ = _load("identity_projection", "factory/projection.py")
++
++SIGNER = R.LocalSigner(key="test-key")
++SPOOL_ENV = "OE_RECORD_SPOOL"
++
++
++def _read_jsonl(path):
++    path = Path(path)
++    if not path.exists():
++        return []
++    return [json.loads(line)
++            for line in path.read_text(encoding="utf-8").splitlines()
++            if line.strip()]
++
++
++def _sign_row(row, *, signer=SIGNER, pid="p" * 32, attempt=1):
++    """Replicate the runner's promotion stamp+sign for hand-built fixtures."""
++    stamped = {**row, "promotion": {"schema": "promotion/v1", "id": pid,
++                                    "attempt": attempt}}
++    payload = json.dumps(stamped, sort_keys=True,
++                         separators=(",", ":")).encode()
++    stamped["promotion"] = {**stamped["promotion"],
++                            "sig": signer.sign(payload)}
++    return stamped
++
++
++# --------------------------------------------------------------------------- #
++# The env-name contract is shared across modules; drift would silently break
++# the spool redirect, so the constant must agree everywhere it exists.
++# --------------------------------------------------------------------------- #
++
++def test_record_spool_env_name_agrees_across_modules():
++    assert capabilities.RECORD_SPOOL_ENV == SPOOL_ENV
++    assert RUN.RECORD_SPOOL_ENV == SPOOL_ENV
++    assert runrecord.RECORD_SPOOL_ENV == SPOOL_ENV
++    assert scores.RECORD_SPOOL_ENV == SPOOL_ENV
++
++
++# --------------------------------------------------------------------------- #
++# Appenders: with a spool present, canonical paths are unreachable
++# --------------------------------------------------------------------------- #
++
++def test_runrecord_spools_instead_of_canonical(tmp_path, monkeypatch):
++    spool = tmp_path / "spool"
++    spool.mkdir()
++    monkeypatch.setenv(SPOOL_ENV, str(spool))
++    canonical = tmp_path / "state"
++    runrecord.emit_record(canonical, department="demo", node="n1", status="ok")
++    assert not (canonical / "runs-v2.jsonl").exists()
++    rows = _read_jsonl(spool / "runs-v2.jsonl")
++    assert len(rows) == 1 and rows[0]["status"] == "ok"
++
++
++def test_scores_spool_instead_of_canonical(tmp_path, monkeypatch):
++    spool = tmp_path / "state" / "spooldir"
++    spool.mkdir(parents=True)
++    monkeypatch.setenv(SPOOL_ENV, str(spool))
++    record = scores.build_score(
++        name="qa", value=1.0, label="pass", explanation="ok", source="script",
++        judge_model=None, config_version="v1",
++        target_ref={"run_id": None, "step_id": None, "node": "n1",
++                    "department": "demo"})
++    scores.append_score(tmp_path / "state", record)
++    assert not (tmp_path / "state" / "scores.jsonl").exists()
++    assert len(_read_jsonl(spool / "scores.jsonl")) == 1
++
++
++def test_model_telemetry_spools_instead_of_canonical(tmp_path, monkeypatch):
++    spool = tmp_path / "state" / "spooldir"
++    spool.mkdir(parents=True)
++    monkeypatch.setenv(SPOOL_ENV, str(spool))
++    service = lock_service.LockService(
++        receipts.LocalSigner(key="test"),
++        budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
++        freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
++        nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
++        telemetry_path=tmp_path / "state" / "telemetry.jsonl",
++    )
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++    assert not (tmp_path / "state" / "telemetry.jsonl").exists()
++    rows = _read_jsonl(spool / "telemetry.jsonl")
++    assert len(rows) == 1
++    assert rows[0]["schema_version"] == "step-telemetry/v1"
++
++
++# --------------------------------------------------------------------------- #
++# Appenders outside the runner: unchanged, backward-compatible behavior
++# --------------------------------------------------------------------------- #
++
++def test_runrecord_graph_run_id_round_trips(tmp_path):
++    runrecord.emit_record(
++        tmp_path, department="demo", node="n1", status="ok",
++        graph_run_id="SG-RUN-abc123")
++    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
++    assert rows[0]["graph_run_id"] == "SG-RUN-abc123"
++    runrecord.validate_record(rows[0])
++
++
++def test_runrecord_without_spool_stays_backward_compatible(tmp_path):
++    runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
++    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
++    assert "graph_run_id" not in rows[0]
++    assert "promotion" not in rows[0]
++    runrecord.validate_record(rows[0])
++
++
++def test_runrecord_rejects_unsafe_graph_run_id(tmp_path):
++    with pytest.raises(ValueError):
++        runrecord.emit_record(
++            tmp_path, department="demo", node="n1", status="ok",
++            graph_run_id="bad value with spaces")
++    with pytest.raises(ValueError):
++        runrecord.emit_record(
++            tmp_path, department="demo", node="n1", status="ok",
++            graph_run_id=7)
++    assert not (tmp_path / "runs-v2.jsonl").exists()
++
++
++def test_validate_record_accepts_promoted_rows(tmp_path):
++    runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
++    row = _read_jsonl(tmp_path / "runs-v2.jsonl")[0]
++    promoted = _sign_row({**row, "graph_run_id": "SG-RUN-x"})
++    runrecord.validate_record(promoted)
++
++
++def test_score_validation_accepts_promoted_rows():
++    record = scores.build_score(
++        name="qa", value=1.0, label="pass", explanation="ok", source="script",
++        judge_model=None, config_version="v1",
++        target_ref={"run_id": None, "step_id": None, "node": "n1",
++                    "department": "demo", "graph_run_id": "SG-RUN-x"})
++    scores.validate_score(_sign_row(record))
++
++
++def test_model_telemetry_explicit_tag_without_spool(tmp_path):
++    service = lock_service.LockService(
++        receipts.LocalSigner(key="test"),
++        budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
++        freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
++        nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
++        telemetry_path=tmp_path / "state" / "telemetry.jsonl",
++    )
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model(
++        "sanitized", issued["receipt"], runner=lambda _p: "ok",
++        node="n1", graph_run_id="SG-RUN-explicit")
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
++    assert row["loopfactory.graph_run_id"] == "SG-RUN-explicit"
++    assert row["loopfactory.node"] == "n1"
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[1]
++    assert row["loopfactory.graph_run_id"] is None
++
++
++# --------------------------------------------------------------------------- #
++# rollup: join columns + read-time promotion-signature defense
++# --------------------------------------------------------------------------- #
++
++def test_rollup_schema_marker_bumped_for_new_columns():
++    assert rollup.SCHEMA_VERSION == "rollup/v2"
++
++
++def _rollup_state(tmp_path):
++    state = tmp_path / "departments" / "demo" / "state"
++    state.mkdir(parents=True)
++    (state / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    return state
++
++
++def _write_projection(state, *run_ids, tamper=False):
++    """Write the department's SIGNED execution projection — the only source
++    rollup trusts for graph-run identity (F2)."""
++    body = PJ.build_projection(
++        department="demo", graph_id="SG-RUN", graph_hash="graph-hash",
++        release_hash="release-hash", factory_version={}, nodes=[], edges=[],
++        runs=[{"run_id": run_id, "state": "done",
++               "termination_reason": "terminal_edge", "transitions": []}
++              for run_id in run_ids],
++        generated_at="2026-08-02T00:00:00+00:00")
++    signed = PJ.sign_projection(body, SIGNER)
++    if tamper:  # mutate AFTER signing: the signature no longer verifies
++        signed["runs"].append({"run_id": "injected", "state": "done",
++                               "termination_reason": None, "transitions": []})
++    path = state / "receipts" / "execution-projection.json"
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(signed), encoding="utf-8")
++
++
++def _v2_row(gid, run_id="wrapper-1"):
++    return {
++        "schema": "run-record/v2", "rev": 2, "run_id": run_id,
++        "graph_run_id": gid, "department": "demo", "node": "n1", "epoch": 0,
++        "ts": "2026-08-02T00:00:01+00:00", "attempt": 1, "round": None,
++        "release": None, "trigger": None, "engine": None, "model": None,
++        "auth_class": None, "usage": None, "cost": None, "duration_ms": None,
++        "status": "ok", "errors": [], "artifacts": [], "receipts": [],
++        "evaluator": None, "approval": None, "external_actions_taken": 0,
++    }
++
++
++def _telemetry_row(gid):
++    return {
++        "schema_version": "step-telemetry/v1",
++        "ts": "2026-08-02T00:00:02+00:00", "gen_ai.operation.name": "chat",
++        "gen_ai.provider.name": None, "gen_ai.request.model": None,
++        "gen_ai.response.model": None, "gen_ai.usage.input_tokens": None,
++        "gen_ai.usage.output_tokens": None,
++        "gen_ai.response.finish_reasons": None, "duration_ms": 1,
++        "error.type": None, "loopfactory.cost_usd": None,
++        "loopfactory.auth.route": "blocked", "loopfactory.engine": None,
++        "loopfactory.price.schema_version": None,
++        "loopfactory.price.effective_date": None,
++        "loopfactory.department": "demo", "loopfactory.run_id": None,
++        "loopfactory.graph_run_id": gid, "loopfactory.step_id": None,
++        "loopfactory.node": "n1", "loopfactory.telemetry.source": "legacy_null",
++        "estimated": False,
++    }
++
++
++def _score_row(gid):
++    return {
++        "gen_ai.evaluation.name": "qa", "gen_ai.evaluation.score.value": 1.0,
++        "gen_ai.evaluation.score.label": "pass",
++        "gen_ai.evaluation.explanation": "ok", "source": "script",
++        "judge_model": None, "config_version": "v1",
++        "target_ref": {"run_id": None, "step_id": None, "node": "n1",
++                       "department": "demo", "graph_run_id": gid},
++        "ts": "2026-08-02T00:00:03+00:00",
++        "schema_version": "score-record/v1",
++    }
++
++
++def _write_row(path, row):
++    with path.open("a", encoding="utf-8") as fh:
++        fh.write(json.dumps(row, sort_keys=True) + "\n")
++
++
++def test_rollup_joins_signed_promoted_rows(tmp_path):
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "a" * 8
++    _write_row(state / "runs.jsonl", {
++        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
++        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
++    _write_row(state / "runs-v2.jsonl", _sign_row(_v2_row(gid), pid="a" * 32))
++    _write_row(state / "telemetry.jsonl",
++               _sign_row(_telemetry_row(gid), pid="b" * 32))
++    _write_row(state / "scores.jsonl", _sign_row(_score_row(gid), pid="c" * 32))
++    _write_projection(state, gid)
++
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"], result
++    assert result["schema_version"] == "rollup/v2"
++    bundle = rollup.graph_run_bundle(result["database"], gid)
++    assert {row["run_id"] for row in bundle["run"]} == {gid, "wrapper-1"}
++    assert [row["graph_run_id"] for row in bundle["step_telemetry"]] == [gid]
++    assert [row["graph_run_id"] for row in bundle["score"]] == [gid]
++    connection = sqlite3.connect(result["database"])
++    try:
++        marker = connection.execute(
++            "SELECT schema_version FROM department").fetchone()[0]
++    finally:
++        connection.close()
++    assert marker == "rollup/v2"
++
++
++def test_rollup_quarantines_unsigned_graph_claims(tmp_path):
++    """Read-time defense: a same-uid direct file write claiming graph
++    identity carries no promotion signature — quarantined as an incident,
++    excluded from the joined tables."""
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "b" * 8
++    _write_row(state / "runs-v2.jsonl", _v2_row(gid, run_id="forged-1"))
++    _write_row(state / "telemetry.jsonl", _telemetry_row(gid))
++    _write_row(state / "scores.jsonl", _score_row(gid))
++
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"] is False
++    bundle = rollup.graph_run_bundle(result["database"], gid)
++    assert bundle["run"] == []
++    assert bundle["step_telemetry"] == []
++    assert bundle["score"] == []
++    connection = sqlite3.connect(result["database"])
++    try:
++        codes = [row[0] for row in connection.execute(
++            "SELECT code FROM incident")]
++    finally:
++        connection.close()
++    quarantined = [c for c in codes if c.startswith("graph_identity_")]
++    assert len(quarantined) == 3
++
++
++def test_rollup_quarantines_tampered_promoted_rows(tmp_path):
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "c" * 8
++    row = _sign_row(_v2_row(gid), pid="d" * 32)
++    row["node"] = "n-tampered"  # post-signature mutation
++    _write_row(state / "runs-v2.jsonl", row)
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"] is False
++    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
++
++
++def test_rollup_without_verifier_quarantines_graph_claims(tmp_path):
++    """No signer resolvable -> graph claims are unverifiable -> deny by
++    default, never silently trusted."""
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "e" * 8
++    _write_row(state / "runs-v2.jsonl", _sign_row(_v2_row(gid)))
++    result = rollup.rebuild(tmp_path)
++    assert result["complete"] is False
++    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
++
++
++def test_rollup_ingests_unsigned_rows_without_graph_claims(tmp_path):
++    """Legacy emitters (no graph identity) stay ingestible unsigned."""
++    state = _rollup_state(tmp_path)
++    row = _v2_row(None)
++    del row["graph_run_id"]
++    _write_row(state / "runs-v2.jsonl", row)
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"], result
++    connection = sqlite3.connect(result["database"])
++    try:
++        count = connection.execute(
++            "SELECT COUNT(*) FROM run WHERE run_id = 'wrapper-1'"
++        ).fetchone()[0]
++    finally:
++        connection.close()
++    assert count == 1
++
++
++# --------------------------------------------------------------------------- #
++# runner: spool injection, promotion stamping/signing, fail-closed spool
++# --------------------------------------------------------------------------- #
++
++def _node(node_id, impl, on_fail="escalate", max_retries=0):
++    return {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": max_retries, "backoff_s": 0,
++                           "on_fail": on_fail},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++
++
++def _one_node_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/sense.py")],
++            "edges": [{"from": "N1", "kind": "terminal",
++                       "when": "receipt.status == 'ok'"}],
++        }],
++    }
++
++
++def _make_dept(tmp_path, scripts, manifest):
++    dept = tmp_path / "departments" / "demo"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "charter.yaml").write_text(
++        "department: demo\nowner: test-owner\nautonomy_state: shadow\n"
++        "immutable_safety_invariants:\n  heal_may_not_modify: [x]\n",
++        encoding="utf-8")
++    for name, src in scripts.items():
++        (dept / "runtime" / name).write_text(src, encoding="utf-8")
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    h = REL.pin_release(dept, dept / "releases", source_ref="testsha")
++    REL.flip_current(dept / "releases", h)
++    return dept
++
++
++ENV_CAPTURE = """\
++import json, os, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++(state / "envcap.json").write_text(json.dumps({
++    "spool": os.environ.get("OE_RECORD_SPOOL"),
++    "kernel_key_leaked": "OE_KERNEL_SIGNING_KEY" in os.environ,
++}), encoding="utf-8")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_runner_injects_spool_env_no_secrets(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    captured = json.loads(
++        (dept / "state" / "envcap.json").read_text(encoding="utf-8"))
++    expected = (dept / "state" / "graph_runs" / result["run_id"] / "spool"
++                / "N1-1")
++    assert captured["spool"] == str(expected)
++    assert captured["kernel_key_leaked"] is False
++
++
++def test_runner_records_carry_graph_run_id(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    rows = _read_jsonl(dept / "state" / "runs.jsonl")
++    stamped = [r for r in rows if r.get("run_id") == result["run_id"]]
++    assert stamped and all(
++        r.get("graph_run_id") == result["run_id"] for r in stamped)
++
++
++EMITTER_NODE = """\
++import json, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord, scores
++from kernel import lock_service, receipts
++
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++
++runrecord.emit_record(state, department="demo", node="N1", status="ok")
++
++service = lock_service.LockService(
++    receipts.LocalSigner(key="node-key"),
++    budget_ledger=state / "kernel" / "budget.jsonl",
++    freq_ledger=state / "kernel" / "frequency.jsonl",
++    nonce_ledger=state / "kernel" / "nonces.jsonl",
++    telemetry_path=state / "telemetry.jsonl",
++)
++issued = service.request_model("sanitized", sanitized=True)
++service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++
++scores.append_score(state, scores.build_score(
++    name="qa", value=1.0, label="pass", explanation="ok", source="script",
++    judge_model=None, config_version="v1",
++    target_ref={{"run_id": None, "step_id": None, "node": "N1",
++                 "department": "demo"}}))
++
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
++    """ACCEPTANCE: one execution through factory/runner.py -> promoted,
++    signed, runner-stamped rows across all four streams, joined by the one
++    graph run_id in rollup.sqlite3."""
++    dept = _make_dept(
++        tmp_path, {"sense.py": EMITTER_NODE.format(root=str(ROOT))},
++        _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    gid = result["run_id"]
++    state = dept / "state"
++
++    v2 = _read_jsonl(state / "runs-v2.jsonl")
++    assert len(v2) == 1 and v2[0]["graph_run_id"] == gid
++    assert v2[0]["promotion"]["sig"]
++    telemetry = _read_jsonl(state / "telemetry.jsonl")
++    assert len(telemetry) == 1
++    assert telemetry[0]["loopfactory.graph_run_id"] == gid
++    assert telemetry[0]["loopfactory.node"] == "N1"
++    score_rows = _read_jsonl(state / "scores.jsonl")
++    assert len(score_rows) == 1
++    assert score_rows[0]["target_ref"]["graph_run_id"] == gid
++    assert (RUN.run_control_dir(tmp_path, "demo", gid)
++            / "promotions.jsonl").exists()
++
++    (state / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    built = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert built["complete"], built
++    bundle = rollup.graph_run_bundle(built["database"], gid)
++    run_ids = {row["run_id"] for row in bundle["run"]}
++    assert gid in run_ids
++    assert v2[0]["run_id"] in run_ids
++    assert [row["graph_run_id"] for row in bundle["step_telemetry"]] == [gid]
++    assert [row["graph_run_id"] for row in bundle["score"]] == [gid]
++
++
++FORGING_EMITTER = """\
++import json, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord
++
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++runrecord.emit_record(state, department="evil-dept", node="N-forged",
++                      status="ok", graph_run_id="SG-RUN-forged")
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def test_promotion_stamps_runner_truth_over_forged_claims(tmp_path):
++    """B1 regression (Option C): the node claims another department, node,
++    and run in its emitted record — promotion assigns the runner's own
++    execution identity; the canonical stream never carries the claim."""
++    dept = _make_dept(
++        tmp_path, {"sense.py": FORGING_EMITTER.format(root=str(ROOT))},
++        _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
++    assert len(rows) == 1
++    row = rows[0]
++    assert row["graph_run_id"] == result["run_id"]
++    assert row["department"] == "demo"
++    assert row["node"] == "N1"
++    raw = json.dumps(rows)
++    assert "SG-RUN-forged" not in raw
++    assert "evil-dept" not in raw and "N-forged" not in raw
++
++
++DIRECT_WRITER = """\
++import json, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++row = {
++    "schema": "run-record/v2", "rev": 2, "run_id": "direct-1",
++    "graph_run_id": "SG-RUN-direct-forgery", "department": "demo",
++    "node": "N1", "epoch": 0, "ts": "2026-08-02T00:00:01+00:00",
++    "attempt": 1, "round": None, "release": None, "trigger": None,
++    "engine": None, "model": None, "auth_class": None, "usage": None,
++    "cost": None, "duration_ms": None, "status": "ok", "errors": [],
++    "artifacts": [], "receipts": [], "evaluator": None, "approval": None,
++    "external_actions_taken": 0,
++}
++with (state / "runs-v2.jsonl").open("a", encoding="utf-8") as fh:
++    fh.write(json.dumps(row, sort_keys=True) + "\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_direct_canonical_write_is_quarantined_at_read_time(tmp_path):
++    """B1 regression (Option C): node code bypasses the appenders and writes
++    a graph-claiming row straight into the canonical stream — rollup
++    quarantines it as an incident (no promotion signature)."""
++    dept = _make_dept(tmp_path, {"sense.py": DIRECT_WRITER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    (dept / "state" / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    built = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert built["complete"] is False
++    bundle = rollup.graph_run_bundle(built["database"],
++                                     "SG-RUN-direct-forgery")
++    assert bundle["run"] == []
++    connection = sqlite3.connect(built["database"])
++    try:
++        codes = [row[0] for row in connection.execute(
++            "SELECT code FROM incident")]
++    finally:
++        connection.close()
++    assert any(code.startswith("graph_identity_") for code in codes)
++
++
++MALFORMED_SPOOLER = """\
++import json, os, pathlib
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++spool.mkdir(parents=True, exist_ok=True)
++with (spool / "runs-v2.jsonl").open("a", encoding="utf-8") as fh:
++    fh.write("this is not a record\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_malformed_spool_row_is_node_failure_no_promotion(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": MALFORMED_SPOOLER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"  # on_fail=escalate, fail-closed
++    run_state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert "spool" in run_state["nodes"]["N1"]["reason"]
++    assert not (dept / "state" / "runs-v2.jsonl").exists()
++    assert [(t["from"], t["to"], t["kind"]) for t in run_state["transitions"]] \
++        == [("N1", None, "escalation")]
++
++
++WRONG_STREAM_SPOOLER = """\
++import json, os, pathlib
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++spool.mkdir(parents=True, exist_ok=True)
++with (spool / "surprise.jsonl").open("a", encoding="utf-8") as fh:
++    fh.write(json.dumps({"status": "ok"}) + "\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_unknown_spool_stream_is_node_failure(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": WRONG_STREAM_SPOOLER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    run_state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert "spool" in run_state["nodes"]["N1"]["reason"]
++
++
++SINGLE_EMITTER = """\
++import json, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++runrecord.emit_record(state, department="demo", node="N1", status="ok")
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def _crash_once_at(boundary):
++    state = {"armed": True}
++
++    def hook(name):
++        if name == boundary and state["armed"]:
++            state["armed"] = False
++            raise RuntimeError(f"simulated crash at {boundary}")
++    return hook
++
++
++def test_crash_before_promotion_resumes_and_promotes_exactly_once(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
++        _one_node_manifest())
++    with pytest.raises(RuntimeError, match="pre_promotion"):
++        RUN.run_graph(dept, trigger_fingerprint="c1", signer=SIGNER,
++                      root=tmp_path, sleep_fn=lambda s: None,
++                      crash_hook=_crash_once_at("pre_promotion"))
++    assert not (dept / "state" / "runs-v2.jsonl").exists()
++    second = RUN.run_graph(dept, trigger_fingerprint="c1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True and second["state"] == "done"
++    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
++    assert len(rows) == 1
++    assert rows[0]["graph_run_id"] == second["run_id"]
++
++
++MARKING_EMITTER = """\
++import json, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "execcount.txt").open("a", encoding="utf-8") as fh:
++    fh.write("exec\\n")
++runrecord.emit_record(state, department="demo", node="N1", status="ok")
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def _incident_codes(db_path):
++    connection = sqlite3.connect(db_path)
++    try:
++        return [row[0] for row in connection.execute(
++            "SELECT code FROM incident")]
++    finally:
++        connection.close()
++
++
++def _wrapper_row_count(db_path, gid):
++    connection = sqlite3.connect(db_path)
++    try:
++        return connection.execute(
++            "SELECT COUNT(*) FROM run WHERE graph_run_id = ? AND run_id != ?",
++            (gid, gid)).fetchone()[0]
++    finally:
++        connection.close()
++
++
++def test_crash_mid_promotion_completes_from_original_spool_exactly_once(
++        tmp_path):
++    """F3 regression: a crash between the canonical appends and the
++    completion marker must NOT re-execute the node — re-execution produces a
++    different body under the same promotion id (the probe's two-signed-bodies
++    defect). Recovery completes the promotion from the ORIGINAL spool, so the
++    re-appended rows are byte-identical and collapse to exactly one row."""
++    dept = _make_dept(
++        tmp_path, {"sense.py": MARKING_EMITTER.format(root=str(ROOT))},
++        _one_node_manifest())
++    with pytest.raises(RuntimeError, match="pre_promotion_marker"):
++        RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
++                      root=tmp_path, sleep_fn=lambda s: None,
++                      crash_hook=_crash_once_at("pre_promotion_marker"))
++    executions = (dept / "state" / "execcount.txt").read_text(
++        encoding="utf-8").splitlines()
++    assert len(executions) == 1
++    second = RUN.run_graph(dept, trigger_fingerprint="c2", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True and second["state"] == "done"
++    # the node did NOT run a second time — promotion resumed from the spool
++    assert len((dept / "state" / "execcount.txt").read_text(
++        encoding="utf-8").splitlines()) == 1
++    physical = _read_jsonl(dept / "state" / "runs-v2.jsonl")
++    assert len(physical) == 2
++    assert len({r["promotion"]["id"] for r in physical}) == 1
++    # byte-identical bodies: no conflicting signed rows under one id
++    assert len({json.dumps(r, sort_keys=True) for r in physical}) == 1
++    (dept / "state" / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    built = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert _wrapper_row_count(built["database"], second["run_id"]) == 1
++    assert not [c for c in _incident_codes(built["database"])
++                if c.startswith("graph_identity_")]
++
++
++def test_conflicting_promotion_bodies_are_quarantined(tmp_path):
++    """F3 regression: two validly signed rows sharing one promotion id but
++    differing in content is never last-writer-wins — both are quarantined."""
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "f" * 8
++    first = _sign_row(_v2_row(gid, run_id="wrapper-1"), pid="f" * 32)
++    second = _sign_row(_v2_row(gid, run_id="wrapper-2"), pid="f" * 32)
++    _write_row(state / "runs-v2.jsonl", first)
++    _write_row(state / "runs-v2.jsonl", second)
++    _write_projection(state, gid)
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"] is False
++    assert any(code.startswith("graph_identity_conflict")
++               for code in _incident_codes(result["database"]))
++    assert _wrapper_row_count(result["database"], gid) == 0
++
++
++# --------------------------------------------------------------------------- #
++# F1: the promotion marker is runner-owned and verified before any skip
++# --------------------------------------------------------------------------- #
++
++def test_promotion_marker_lives_outside_department_state(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
++        _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    control = RUN.run_control_dir(tmp_path, "demo", result["run_id"])
++    assert (control / "promotions.jsonl").exists()
++    # nothing marker-shaped remains anywhere the node can reach by its own
++    # sanctioned paths (its state dir and the spool it was handed)
++    assert list((dept / "state").rglob("promotions.jsonl")) == []
++    assert control.resolve() not in (dept / "state").resolve().parents
++    assert not str(control.resolve()).startswith(
++        str((dept / "state").resolve()))
++
++
++FORGED_MARKER_NODE = """\
++import json, os, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord
++
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++
++# The probe: claim the promotion already happened, from every location the
++# node's own sanctioned paths can reach.
++for target in (spool.parent.parent / "promotions.jsonl",
++               spool.parent / "promotions.jsonl",
++               state / "promotions.jsonl"):
++    target.parent.mkdir(parents=True, exist_ok=True)
++    with target.open("a", encoding="utf-8") as fh:
++        fh.write(json.dumps({{"node": "N1", "attempt": 1}}) + "\\n")
++
++runrecord.emit_record(state, department="demo", node="N1", status="ok")
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def test_node_written_marker_does_not_strand_records(tmp_path):
++    """F1 regression: the node forges promotion markers at every path it can
++    reach. Promotion still happens — rows land canonically, not stranded."""
++    dept = _make_dept(
++        tmp_path, {"sense.py": FORGED_MARKER_NODE.format(root=str(ROOT))},
++        _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
++    assert len(rows) == 1
++    assert rows[0]["graph_run_id"] == result["run_id"]
++    assert rows[0]["promotion"]["sig"]
++
++
++def test_unverifiable_marker_repromotes_and_records_incident(tmp_path):
++    """F1 regression: a marker whose signature does not verify is never
++    honored as a skip — the runner re-promotes and records an incident."""
++    import hashlib as _hashlib
++
++    dept = _make_dept(
++        tmp_path, {"sense.py": SINGLE_EMITTER.format(root=str(ROOT))},
++        _one_node_manifest())
++    run_id = "SG-RUN-" + _hashlib.sha256(b"t1").hexdigest()
++    control = RUN.run_control_dir(tmp_path, "demo", run_id)
++    control.mkdir(parents=True, exist_ok=True)
++    with (control / "promotions.jsonl").open("a", encoding="utf-8") as fh:
++        fh.write(json.dumps({
++            "schema": "promotion-marker/v1", "department": "demo",
++            "run_id": run_id, "node": "N1", "attempt": 1,
++            "counts": {"runs-v2.jsonl": 1}, "row_ids": ["deadbeef"],
++            "sig": "not-a-valid-signature"}) + "\n")
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    rows = _read_jsonl(dept / "state" / "runs-v2.jsonl")
++    assert len(rows) == 1  # re-promoted, not silently skipped
++    incidents = _read_jsonl(dept / "state" / "graph_incidents.jsonl")
++    assert any(row.get("code") == "promotion_marker_unverifiable"
++               for row in incidents)
++
++
++# --------------------------------------------------------------------------- #
++# F2: graph-run rows derive from the VERIFIED execution projection
++# --------------------------------------------------------------------------- #
++
++def test_unbacked_graph_claim_in_runs_jsonl_is_quarantined(tmp_path):
++    """F2 regression: an unsigned direct graph claim written into
++    runs.jsonl must not enter the victim's bundle — no projection backing,
++    so it quarantines as an incident."""
++    state = _rollup_state(tmp_path)
++    victim = "SG-RUN-" + "9" * 8
++    _write_row(state / "runs.jsonl", {
++        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
++        "run_id": victim, "graph_run_id": victim, "loop_id": "SG-RUN"})
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"] is False
++    assert rollup.graph_run_bundle(result["database"], victim)["run"] == []
++    assert any(code.startswith("graph_identity_")
++               for code in _incident_codes(result["database"]))
++
++
++def test_graph_rows_backed_by_verified_projection_are_ingested(tmp_path):
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "7" * 8
++    _write_row(state / "runs.jsonl", {
++        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
++        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
++    _write_projection(state, gid)
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"], result
++    assert [row["run_id"] for row in
++            rollup.graph_run_bundle(result["database"], gid)["run"]] == [gid]
++
++
++def test_tampered_projection_quarantines_graph_rows(tmp_path):
++    state = _rollup_state(tmp_path)
++    gid = "SG-RUN-" + "8" * 8
++    _write_row(state / "runs.jsonl", {
++        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
++        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN"})
++    _write_projection(state, gid, tamper=True)
++    result = rollup.rebuild(tmp_path, signer=SIGNER)
++    assert result["complete"] is False
++    assert rollup.graph_run_bundle(result["database"], gid)["run"] == []
++
++
++# --------------------------------------------------------------------------- #
++# F4 / F5: full telemetry validation and hostile spool entries
++# --------------------------------------------------------------------------- #
++
++BAD_TELEMETRY_SPOOLER = """\
++import json, os, pathlib
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++spool.mkdir(parents=True, exist_ok=True)
++row = {
++    "schema_version": "step-telemetry/v1", "ts": "2026-08-02T00:00:00+00:00",
++    "gen_ai.operation.name": "chat", "gen_ai.provider.name": None,
++    "gen_ai.request.model": None, "gen_ai.response.model": None,
++    "gen_ai.usage.input_tokens": -5, "gen_ai.usage.output_tokens": None,
++    "gen_ai.response.finish_reasons": ["not-a-real-reason"],
++    "duration_ms": 1, "error.type": None, "loopfactory.cost_usd": None,
++    "loopfactory.auth.route": "nonsense-route", "loopfactory.engine": None,
++    "loopfactory.price.schema_version": None,
++    "loopfactory.price.effective_date": None,
++    "loopfactory.department": "demo", "loopfactory.run_id": None,
++    "loopfactory.step_id": None, "loopfactory.node": "N1",
++    "loopfactory.telemetry.source": "legacy_null", "estimated": False,
++}
++with (spool / "telemetry.jsonl").open("a", encoding="utf-8") as fh:
++    fh.write(json.dumps(row) + "\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_invalid_telemetry_row_refuses_promotion(tmp_path):
++    """F4: the full telemetry validator runs BEFORE signing — an invalid row
++    never gets signed and rejected downstream."""
++    dept = _make_dept(tmp_path, {"sense.py": BAD_TELEMETRY_SPOOLER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    assert not (dept / "state" / "telemetry.jsonl").exists()
++    run_state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert "spool" in run_state["nodes"]["N1"]["reason"]
++
++
++VALID_V2_BODY = {
++    "schema": "run-record/v2", "rev": 2, "run_id": "linked-1",
++    "department": "demo", "node": "N1", "epoch": 0,
++    "ts": "2026-08-02T00:00:01+00:00", "attempt": 1, "round": None,
++    "release": None, "trigger": None, "engine": None, "model": None,
++    "auth_class": None, "usage": None, "cost": None, "duration_ms": None,
++    "status": "ok", "errors": [], "artifacts": [], "receipts": [],
++    "evaluator": None, "approval": None, "external_actions_taken": 0,
++}
++
++SYMLINK_SPOOLER = """\
++import json, os, pathlib
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++spool.mkdir(parents=True, exist_ok=True)
++# the link target holds a fully VALID record, so only rejecting the
++# non-regular spool entry itself can catch this
++target = spool.parent / "elsewhere.jsonl"
++target.write_text({body!r} + "\\n", encoding="utf-8")
++(spool / "runs-v2.jsonl").symlink_to(target)
++print(json.dumps({{"status": "ok"}}))
++""".format(body=json.dumps(VALID_V2_BODY))
++
++
++def test_symlinked_spool_entry_refuses_promotion(tmp_path):
++    """F5: a spool entry that is not a regular file is refused."""
++    dept = _make_dept(tmp_path, {"sense.py": SYMLINK_SPOOLER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    run_state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert "spool" in run_state["nodes"]["N1"]["reason"]
++    assert not (dept / "state" / "runs-v2.jsonl").exists()
++
++
++OVERSIZE_SPOOLER = """\
++import json, os, pathlib
++spool = pathlib.Path(os.environ["OE_RECORD_SPOOL"])
++spool.mkdir(parents=True, exist_ok=True)
++# every line is a VALID record under the per-row cap, and the row count
++# stays under the per-stream cap: only a FILE-size bound checked before the
++# read can catch this
++body = json.loads({body!r})
++body["errors"] = ["x" * 50000]
++line = json.dumps(body) + "\\n"
++with (spool / "runs-v2.jsonl").open("w", encoding="utf-8") as fh:
++    for _ in range(200):
++        fh.write(line)
++print(json.dumps({{"status": "ok"}}))
++""".format(body=json.dumps(VALID_V2_BODY))
++
++
++def test_oversize_spool_file_refuses_before_full_read(tmp_path):
++    """F5: the size bound is checked BEFORE the file is read into memory."""
++    dept = _make_dept(tmp_path, {"sense.py": OVERSIZE_SPOOLER},
++                      _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    assert not (dept / "state" / "runs-v2.jsonl").exists()

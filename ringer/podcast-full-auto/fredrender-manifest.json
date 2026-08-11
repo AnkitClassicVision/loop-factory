@@ -1,0 +1,18 @@
+{
+  "run_name": "podcast-full-auto",
+  "workdir": "/home/ankit114/ringer-work/podcast-full-auto-fredrender",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "fred-render-march",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "full_access": true,
+      "timeout_s": 5400,
+      "spec": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/podcast/scripts/run_fred_e104_shadow.py > render.log 2>&1; code=$?; echo \"DRIVER_EXIT=$code\" | tee -a render.log; tail -40 render.log",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/podcast-full-auto/fred_render_check.py",
+      "expect_files": ["render.log"],
+      "verified": "Fred's real orchestrator ran end-to-end on HEAD off the seekable composite and REAL safety lane, the publishable_render gate PASSED, and a >1MB final/episode.mp4 exists -- proving the length-mismatch gate is cleared and Fred has an accepted full edit, with all external effects caged (shadow, stopped before publish)"
+    }
+  ]
+}

@@ -1,0 +1,3176 @@
+
+[ringer.py] attempt 1 started 2026-08-03T15:10:10.361754+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview 'You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/procedural-graph.md (edit), departments/podcast/subgraphs.json (edit), interview/QUESTION_BANK.md (edit), ringer/comms-loop-invariant/charter-proposal.md (create). Nothing else. ABSOLUTE RULE: departments/podcast/charter.yaml is a GOVERNANCE file — humans only, forever. You must NOT edit it; your charter output is a PROPOSAL draft at the owned path above. Never touch .git, never commit, never push, never modify runbooks/ or CLAUDE.md. Do not load skills or call MCP/Apps. No network.
+
+READ FIRST (read-only): departments/podcast/procedural-graph.md and subgraphs.json in full (node shape, id scheme, how nodes trace to concept nodes and interview questions), departments/podcast/knowledge/concept-map.md (concept node ids), interview/QUESTION_BANK.md in full (question format Q1-Q16), departments/podcast/runtime/comms_reconcile_sensor.py (created by a previous task in this run — the node you are mapping), departments/podcast/charter.yaml READ-ONLY (to write a proposal consistent with its style), and the motivating spec tasks/2026-08-03-open-loop-comms-gap.md section 4.
+
+WORK ITEM 1 — map the sensor into BOTH map forms. Add a comms_reconcile sensor node to departments/podcast/subgraphs.json following the existing node schema exactly (id style, fields, traceability links), tracing to the most fitting concept node and interview question per the repo'"'"'s traceability rules, referencing the runtime file departments/podcast/runtime/comms_reconcile_sensor.py. Add the matching human-form step to procedural-graph.md where the other sensors are described: the sensor reads the referral tracker report and the referral ledger, applies the open-loop invariant (upstream count > 0 with downstream 0 beyond SLA escalates), and never sends anything. The change must pass: python3 loopfactory.py validate --name podcast (run it; fix within your owned files only).
+
+WORK ITEM 2 — the interview learns the lesson. Add a new question to interview/QUESTION_BANK.md, numbered consistently with the existing Q1-Q16 and placed adjacent to Q14 (escalation/human gates): for EVERY outbound ask class a department will perform, the interview must capture the return path (which component reads the answers) and the return SLA in hours (how long a reply may sit unharvested before escalation). Follow the exact formatting idiom of the existing questions (recommended-answer-first style). Motivate it in one line: an ask without a return path recently shipped and cost real replies.
+
+WORK ITEM 3 — charter proposal DRAFT at ringer/comms-loop-invariant/charter-proposal.md. Markdown containing: a title marking it PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit); the YAML block to add to the podcast charter under a comms_loop_invariant key with: applies_to every outbound ask class, requires return_path and return_sla_hours declared per ask class, escalates_when upstream_count > 0 and downstream_count == 0 beyond SLA, and a never clause that an ask class may not ship without a declared and executed return path; two short paragraphs of rationale citing the 57 asked / 16 replied / 0 harvested incident; and an explicit note that only a human may apply this to charter.yaml.
+
+HOW TO RUN, from repo root: python3 loopfactory.py validate --name podcast (must PASS before you finish).
+
+OUTPUT CONTRACT: the four owned files, plus ./notes.md: which concept node and interview question the new node traces to and why, the validate output tail proving PASS, assumptions.
+
+HARD RULES: match existing formats exactly rather than inventing structure; smallest change that lints; if validate fails for a reason outside your owned files, STOP and report it in notes.md rather than editing other files.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.146.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fc82c-db67-7951-b677-31ec7d77a823
+--------
+user
+You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/procedural-graph.md (edit), departments/podcast/subgraphs.json (edit), interview/QUESTION_BANK.md (edit), ringer/comms-loop-invariant/charter-proposal.md (create). Nothing else. ABSOLUTE RULE: departments/podcast/charter.yaml is a GOVERNANCE file — humans only, forever. You must NOT edit it; your charter output is a PROPOSAL draft at the owned path above. Never touch .git, never commit, never push, never modify runbooks/ or CLAUDE.md. Do not load skills or call MCP/Apps. No network.
+
+READ FIRST (read-only): departments/podcast/procedural-graph.md and subgraphs.json in full (node shape, id scheme, how nodes trace to concept nodes and interview questions), departments/podcast/knowledge/concept-map.md (concept node ids), interview/QUESTION_BANK.md in full (question format Q1-Q16), departments/podcast/runtime/comms_reconcile_sensor.py (created by a previous task in this run — the node you are mapping), departments/podcast/charter.yaml READ-ONLY (to write a proposal consistent with its style), and the motivating spec tasks/2026-08-03-open-loop-comms-gap.md section 4.
+
+WORK ITEM 1 — map the sensor into BOTH map forms. Add a comms_reconcile sensor node to departments/podcast/subgraphs.json following the existing node schema exactly (id style, fields, traceability links), tracing to the most fitting concept node and interview question per the repo's traceability rules, referencing the runtime file departments/podcast/runtime/comms_reconcile_sensor.py. Add the matching human-form step to procedural-graph.md where the other sensors are described: the sensor reads the referral tracker report and the referral ledger, applies the open-loop invariant (upstream count > 0 with downstream 0 beyond SLA escalates), and never sends anything. The change must pass: python3 loopfactory.py validate --name podcast (run it; fix within your owned files only).
+
+WORK ITEM 2 — the interview learns the lesson. Add a new question to interview/QUESTION_BANK.md, numbered consistently with the existing Q1-Q16 and placed adjacent to Q14 (escalation/human gates): for EVERY outbound ask class a department will perform, the interview must capture the return path (which component reads the answers) and the return SLA in hours (how long a reply may sit unharvested before escalation). Follow the exact formatting idiom of the existing questions (recommended-answer-first style). Motivate it in one line: an ask without a return path recently shipped and cost real replies.
+
+WORK ITEM 3 — charter proposal DRAFT at ringer/comms-loop-invariant/charter-proposal.md. Markdown containing: a title marking it PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit); the YAML block to add to the podcast charter under a comms_loop_invariant key with: applies_to every outbound ask class, requires return_path and return_sla_hours declared per ask class, escalates_when upstream_count > 0 and downstream_count == 0 beyond SLA, and a never clause that an ask class may not ship without a declared and executed return path; two short paragraphs of rationale citing the 57 asked / 16 replied / 0 harvested incident; and an explicit note that only a human may apply this to charter.yaml.
+
+HOW TO RUN, from repo root: python3 loopfactory.py validate --name podcast (must PASS before you finish).
+
+OUTPUT CONTRACT: the four owned files, plus ./notes.md: which concept node and interview question the new node traces to and why, the validate output tail proving PASS, assumptions.
+
+HARD RULES: match existing formats exactly rather than inventing structure; smallest change that lints; if validate fails for a reason outside your owned files, STOP and report it in notes.md rather than editing other files.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+codex
+Ankit — I’ll make only the four owned changes plus `./notes.md`. I’ll first read every required source in full, then patch, validate from the repo root, and record exact proof.
+exec
+/bin/bash -lc "wc -l departments/podcast/procedural-graph.md departments/podcast/subgraphs.json departments/podcast/knowledge/concept-map.md interview/QUESTION_BANK.md departments/podcast/runtime/comms_reconcile_sensor.py departments/podcast/charter.yaml tasks/2026-08-03-open-loop-comms-gap.md && sed -n '1,240p' departments/podcast/procedural-graph.md && sed -n '1,260p' departments/podcast/subgraphs.json" in /mnt/d_drive/repos/loop-factory
+ succeeded in 50ms:
+  119 departments/podcast/procedural-graph.md
+  227 departments/podcast/subgraphs.json
+   78 departments/podcast/knowledge/concept-map.md
+  131 interview/QUESTION_BANK.md
+  103 departments/podcast/runtime/comms_reconcile_sensor.py
+  215 departments/podcast/charter.yaml
+  268 tasks/2026-08-03-open-loop-comms-gap.md
+ 1141 total
+# podcast Department — Procedural Graph (F2 output, the WHAT)
+
+Status: DRAFT (F2). Hand-authored from the locked concept map. The authoritative
+machine form is `subgraphs.json` (validated by `factory/graphs.py`); these
+tables are the human-readable companion. If the two disagree, one is wrong —
+fix both, re-lint, re-pin.
+
+Traces to: `knowledge/concept-map.md` (LOCKED 2026-07-22) + `charter.yaml`.
+Every node: declared inputs → output contract → EXECUTED QA check → receipt to
+runs. Scripts get NO QA exemption (C14: this department is script-only in V1 —
+no model-capable nodes; LLM work stays in the estate's loops).
+
+This department is a WATCHDOG (C2): all six lanes are read-only sensing except
+SG-HEAL, which mutates only via known playbooks and is propose-only in shadow.
+It never dispatches externally; its outbound is escalation cards to the
+human-in-the-loop outbox (delivered via the kernel escalation seam once wired).
+
+## Shared Safety Layer usage
+
+Send guards S4/S5/S6/S7 are not_applicable in every lane (read-only funnels, no
+external dispatch — the estate's own dispatch gateway owns sends). S1 identity
+resolution applies where person entities are joined (SG-PIPELINE, SG-MANIFEST).
+S2/S3/S8 are not_applicable per-lane with recorded rationales (no contact
+targeting; no model calls; no cost-incurring nodes under subscription-only C8).
+
+## SG-WATCHDOG — estate health sensing (proving slice, C3)
+
+```
+[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
+```
+
+| # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+|---|---|---|---|---|---|---|
+| N1 | sense_estate | Sense | SCRIPT | internal_read / shadow | output lists EVERY unit in the charter estate inventory; a unit missing from output = check FAILS (silent-gap guard) | C3, C16, Q3 |
+| N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+| N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+| N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
+| N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+
+Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
++ log error patterns for the 7 loops + support lanes, (b) escalation-channel
+liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+(c) VPS reachability + service state (read-only SSH).
+
+## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+
+```
+[pipeline-owned dag-projection-v1 receipt] → N1 dag_supervisor
+  → local observation + critical incident candidates → existing watchdog dedup/outbox
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | dag_supervisor | SCRIPT | recomputes canonical DAG and skip-artifact hashes, fails closed on stale/missing/unreadable projections, and alarms on silent skips; source inspection confirms it never schedules pipeline steps or writes pipeline state | C1, C2, C11, C16, C19, Q1, Q12/Q13 |
+
+The pipeline repository remains the single execution authority and only writer
+of episode state. This lane only reads the exported projection and writes local
+supervisory observations/candidates; scheduling or choosing a next step here is
+a split-brain defect.
+
+## SG-PIPELINE — independent guest-count sensor (C1/C4)
+
+```
+[T daily + on watchdog demand] → S1 → N1 pipeline_sensor → N2 compare_charter → N9 record
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | pipeline_sensor | SCRIPT | count derives from calendar+HubSpot join, NEVER from loop self-reports (independence assertion: source fields logged per counted guest) | C4, C15, Q4 |
+
+## SG-PUBLISHDAY — publish-day verification (C1/C10)
+
+```
+[T publish days 10:30 ET] → N1 publish_verifier → N2 compare_charter → N9 record
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | publish_verifier | SCRIPT | public receipts checked at the PROVIDER (RSS/YouTube/social liveness), not internal state; missing receipt = incident, never a warning | C10, C16, Q12 |
+
+## SG-MANIFEST — guest manifest completeness sensor (C6/C7)
+
+```
+[T daily] → S1 → N1 manifest_sensor → N2 compare_charter → N9 record
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | manifest_sensor | SCRIPT | per-guest completeness computed from HubSpot(read) + episode state; every gap lists the missing field + chase status + fallback available yes/no | C6, C7, C10 |
+
+HubSpot WRITES of manifest status are ESTATE-side (charter estate_decisions);
+this lane is read-only. Unresolved guest identity = suppress + review (C15).
+
+## SG-HEAL — known-pattern auto-heal (C5/C11/C12)
+
+```
+[incident from SG-WATCHDOG] → N1 heal_select → N2 heal_apply (shadow: propose-only)
+                            → N3 heal_verify → N9 record
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | heal_select | SCRIPT | fingerprint matches a versioned playbook entry or lane HALTS and escalates (unknown = never improvise, Q11) | C5, C11, C14 |
+| N2 | heal_apply | SCRIPT | playbook allowlist only (restart unit, recreate tracker, re-run step); anything touching an immutable invariant = refuse; shadow = propose-only receipt | C5, C11 |
+| N3 | heal_verify | SCRIPT | re-sense proves the incident cleared; heal without verified clearance = FAILED heal → escalate; recurrence feeds C12 root-cause item | C12, Q13 |
+
+## Autonomy rollout
+
+Department starts shadow (charter). Ladder per runbooks/promotion-ladder.md:
+shadow → heals live (playbook allowlist) → escalation delivery live. The
+department has NO send/publish/CRM-write class to promote — those live in the
+estate. No lane auto-promotes.
+
+## Intent traceability
+
+Every node lists concept-map refs above. Does-less/does-more check: no
+capability beyond the locked interview — specifically, no outreach drafting, no
+publishing, no CRM writes, no VPS mutation beyond the heal playbook allowlist.
+{
+ "_doc": "Machine form of departments/podcast/procedural-graph.md. Validated by factory/graphs.py. Derives from knowledge/concept-map.md (LOCKED 2026-07-22). Watchdog department: read-only sensing lanes + propose-only heal lane; no external dispatch, no CRM writes, no model-capable nodes (C14).",
+ "subgraphs": [
+  {
+   "id": "SG-WATCHDOG",
+   "concept_refs": [
+    "C1",
+    "C3",
+    "C4",
+    "C12",
+    "C13",
+    "C16"
+   ],
+   "not_applicable": {
+    "S1": "senses infrastructure units, timers, receipts, and channels \u2014 no person entities joined",
+    "S2": "no contact targeting; sensing only",
+    "S3": "no model-capable nodes; script-only lane (C14)",
+    "S8": "no cost-incurring nodes; scripts on local host under subscription-only policy (C8)",
+    "S4": "read-only sensing funnel; no external dispatch \u2014 estate gateway owns sends",
+    "S5": "read-only sensing funnel; no external dispatch",
+    "S6": "read-only sensing funnel; no external dispatch",
+    "S7": "read-only sensing funnel; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "impl": "runtime/sense_estate.py"
+    },
+    {
+     "id": "N2",
+     "impl": "runtime/compare_charter.py"
+    },
+    {
+     "id": "N3",
+     "impl": "runtime/fingerprint_dedup.py"
+    },
+    {
+     "id": "N4",
+     "impl": "runtime/escalate_outbox.py"
+    },
+    {
+     "id": "N5",
+     "impl": "runtime/hopper_sensor.py"
+    },
+    {
+     "id": "N9",
+     "impl": "runtime/record.py"
+    }
+   ]
+  },
+  {
+   "id": "SG-DAG-SUPERVISION",
+   "concept_refs": [
+    "C1",
+    "C2",
+    "C11",
+    "C16",
+    "C19"
+   ],
+   "not_applicable": {
+    "S1": "validates pipeline-owned DAG and episode identifiers without joining person entities",
+    "S2": "no contact targeting; read-only projection supervision",
+    "S3": "no model-capable nodes; deterministic hash and audit validation (C14)",
+    "S8": "no cost-incurring nodes; local deterministic validation only (C8)",
+    "S4": "read-only projection supervision; no external dispatch",
+    "S5": "read-only projection supervision; no external dispatch",
+    "S6": "read-only projection supervision; no external dispatch",
+    "S7": "read-only projection supervision; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "impl": "runtime/dag_supervisor.py"
+    }
+   ]
+  },
+  {
+   "id": "SG-PIPELINE",
+   "concept_refs": [
+    "C1",
+    "C3",
+    "C4",
+    "C15"
+   ],
+   "not_applicable": {
+    "S2": "no contact targeting; read-only count of already-engaged guests",
+    "S3": "no model-capable nodes; script-only lane (C14)",
+    "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+    "S4": "read-only sensing funnel; no external dispatch",
+    "S5": "read-only sensing funnel; no external dispatch",
+    "S6": "read-only sensing funnel; no external dispatch",
+    "S7": "read-only sensing funnel; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "S1",
+     "guard": "S1"
+    },
+    {
+     "id": "N1",
+     "impl": "runtime/pipeline_sensor.py"
+    },
+    {
+     "id": "N2",
+     "impl": "runtime/compare_charter.py"
+    },
+    {
+     "id": "N9",
+     "impl": "runtime/record.py"
+    }
+   ]
+  },
+  {
+   "id": "SG-PUBLISHDAY",
+   "concept_refs": [
+    "C1",
+    "C3",
+    "C10",
+    "C16"
+   ],
+   "not_applicable": {
+    "S1": "verifies public provider receipts for episodes, not person entities",
+    "S2": "no contact targeting; sensing only",
+    "S3": "no model-capable nodes; script-only lane (C14)",
+    "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+    "S4": "read-only verification funnel; no external dispatch",
+    "S5": "read-only verification funnel; no external dispatch",
+    "S6": "read-only verification funnel; no external dispatch",
+    "S7": "read-only verification funnel; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "impl": "runtime/publish_verifier.py"
+    },
+    {
+     "id": "N2",
+     "impl": "runtime/compare_charter.py"
+    },
+    {
+     "id": "N9",
+     "impl": "runtime/record.py"
+    }
+   ]
+  },
+  {
+   "id": "SG-MANIFEST",
+   "concept_refs": [
+    "C6",
+    "C7",
+    "C10",
+    "C15"
+   ],
+   "not_applicable": {
+    "S2": "no contact targeting; completeness sensing of already-engaged guests only",
+    "S3": "no model-capable nodes; script-only lane (C14)",
+    "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+    "S4": "read-only sensing funnel; HubSpot manifest WRITES are estate-side per charter estate_decisions",
+    "S5": "read-only sensing funnel; no external dispatch",
+    "S6": "read-only sensing funnel; no external dispatch",
+    "S7": "read-only sensing funnel; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "S1",
+     "guard": "S1"
+    },
+    {
+     "id": "N1",
+     "impl": "runtime/manifest_sensor.py"
+    },
+    {
+     "id": "N2",
+     "impl": "runtime/compare_charter.py"
+    },
+    {
+     "id": "N9",
+     "impl": "runtime/record.py"
+    }
+   ]
+  },
+  {
+   "id": "SG-HEAL",
+   "concept_refs": [
+    "C5",
+    "C11",
+    "C12",
+    "C14"
+   ],
+   "not_applicable": {
+    "S1": "operates on incident fingerprints from SG-WATCHDOG, not person entities",
+    "S2": "no contact targeting; internal heal lane",
+    "S3": "no model-capable nodes; playbook heals are deterministic scripts (C14)",
+    "S8": "no cost-incurring nodes; subscription-only policy (C8)",
+    "S4": "internal heal lane; no external dispatch \u2014 heals restricted to versioned playbook allowlist (C11), propose-only in shadow",
+    "S5": "internal heal lane; no external dispatch",
+    "S6": "internal heal lane; no external dispatch",
+    "S7": "internal heal lane; no external dispatch"
+   },
+   "nodes": [
+    {
+     "id": "N1",
+     "impl": "runtime/heal_select.py"
+    },
+    {
+     "id": "N2",
+     "impl": "runtime/heal_apply.py"
+    },
+    {
+     "id": "N3",
+     "impl": "runtime/heal_verify.py"
+    },
+    {
+     "id": "N9",
+     "impl": "runtime/record.py"
+    }
+   ]
+  }
+ ],
+ "untraced_allowed": {
+  "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node",
+  "runtime/estate.json": "sensed-inventory data consumed by SG-WATCHDOG N1 (sense_estate.py); configuration, not behavior",
+  "runtime/playbooks.json": "versioned heal allowlist data consumed by SG-HEAL N1 (heal_select.py); owner-reviewed data, not behavior",
+  "runtime/podcast_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one",
+  "runtime/rotate_observations.py": "standalone maintenance CLI for the observation store (dedup + rotation, receipt-emitting, dry-run honest); NOT in the daily chain yet \u2014 becomes a graph node when the v2 build wires it (wayfinder tickets 15/18, 2026-08-02)"
+ }
+}
+
+exec
+/bin/bash -lc "sed -n '1,220p' departments/podcast/knowledge/concept-map.md && sed -n '1,220p' interview/QUESTION_BANK.md && sed -n '1,180p' departments/podcast/runtime/comms_reconcile_sensor.py && sed -n '1,280p' departments/podcast/charter.yaml && sed -n '1,268p' tasks/2026-08-03-open-loop-comms-gap.md" in /mnt/d_drive/repos/loop-factory
+ succeeded in 40ms:
+# podcast Department — Concept Map (F1 output, the WHY)
+
+Status: **LOCKED** — derives ONLY from `interview/intent-interview.md`.
+INTENT LOCK provenance: decided_by Ankit, 2026-07-22, Claude Code
+AskUserQuestion surface, readback round 3 ("LOCK IT").
+
+Rules:
+- Every node cites the interview question it derives from (Q1..Q16 + EDGE rounds).
+- Nothing appears here that the owner did not say or confirm at readback.
+- The procedural graph (F2) must trace every node back to THIS map; anything
+  that traces to nothing is a lint failure.
+
+## Spine (one sentence)
+
+For Ankit, the podcast department GOVERNS the existing OBE podcast loop estate —
+sensing every loop, send lane, publish outcome, guest manifest, and the alert
+channel itself; healing known failures; escalating unknown ones exactly once —
+so that episodes ship on ≤1 hour of Ankit's time, nothing fails silently, the
+pipeline stays ≥6 guests, and every guest has a complete info + promo manifest
+tracked in HubSpot.
+
+## Nodes
+
+| ID | Concept | From | Notes (owner's words where possible) |
+|---|---|---|---|
+| C1 | Outcome owed: ≤1 hr founder time/episode + zero silent failures + pipeline ≥6 guests, co-equal over 90 days | Q1 | "All three, as stated" |
+| C2 | Architecture: govern + harden the existing estate, no migration; department = manager/watchdog; runtime stays in podcast repo + VPS | Q2 | "Govern + harden, no migration" |
+| C3 | V1 proving slice: ONE watchdog with three sensor families — loop/timer/receipt/escalation-channel health, independent pipeline count, publish-day verification | Q3 | "we need all of htes so loop watch dog shou dlhave piple in and publisday" |
+| C4 | Setpoints (provisional, ratify after shadow week): detection ≤30 min (15-min loops) / ≤26 h (daily); pipeline ≥6 via independent calendar+HubSpot join; publish verified by 10:30 ET; founder-time TBD_MEASURE_IN_SHADOW; ops ceiling: sense every 30 min, ≤5 pings/day then digest | Q4 | "Accept provisional" |
+| C5 | Automation posture: FULL AUTO. Estate outreach sends promoted to autosend NOW behind QA gates; auto-heal known patterns (logged); watchdog itself never sends outreach — outbound is escalations only | Q5 | "full auto with sends now and auto-heals adn qa gates beof autosends" |
+| C6 | Guest info manifests: for every guest/episode, gather a complete information manifest (headshot, links, bio, …) AND a promotional info manifest — "not only scheduling but the info as well" | Q5 | owner's new first-class goal |
+| C7 | HubSpot = central source of truth for manifest completeness, requirement statuses, and notes; VPS remains media/pipeline runtime truth (2026-06-10 decision) — defined boundary, not conflict | Q7 | "all data is stored inside of hubspot as cerntral soruce of truth" |
+| C8 | Budget: subscription/OAuth lanes ONLY, $0 API — what can't run on subscription escalates instead of spending; existing send caps stay (12/day, 5 new contacts/day, cadence floor); 4 h/day worker ceiling; 80% auto-stop | Q6 | "Subscription-only, $0 API" |
+| C9 | Kill backstops (should be unreachable if QA + manifests work): reputation-damaging autosend kills that send class; watchdog false-green kills the watchdog; 2-week net plate-load kill; floor-breach kills the class | Q7 | "we should never get to kill if we are proly qa" |
+| C10 | Publish policy: episodes ALWAYS ship on schedule when QA passes; missing manifest items get deterministic fallback assets so promo ships too; chase continues; fallback usage recorded in HubSpot | EDGE-manifest | "Publish with fallback assets" |
+| C11 | Hard floors: no live hand-patching of VPS/runtime (heals = known playbooks, logged); no VPS redeploy from master while v2 unmerged; never suppress/downgrade RED; governance files human-only; PHI entirely out of domain (its appearance = escalation) | Q5, readback r1 | "phi not relevant" |
+| C12 | Escalation policy (PRIORITY): dedup by incident fingerprint — one incident = one thread; escalate once, fix forever — every escalation spawns a root-cause improvement item; repeat escalation of a resolved fingerprint = department defect; target ZERO repeats | readback r2 | "any escaltions dont escalte agin so that is priorty" |
+| C13 | Escalation delivery: Telegram ping (primary) + Linear card (durable); 24 h silence = re-file louder on same thread; NEVER auto-approve on silence | Q14 (evidence-derived, confirmed at readback) | |
+| C14 | Script-vs-LLM triage: sensing, gates, heals, caps, completeness checks, idempotency, reconcile = SCRIPTS; LLM only drafts content and judges it (always cross-model) | Q8 (evidence-derived, confirmed) | |
+| C15 | Boundary rules: prep-stage triple-touch consolidation is a hardening item; sales state stays OUT of podcast fields; frequency/suppression caps apply per contact ACROSS all lanes; unresolved identity = suppress + review; dup contact = create + cross-ref note, never conflate | Q9/Q10 (evidence-derived, confirmed) | |
+| C16 | Subtle failures (lived, now first-class): silent media corruption that survives sampling QA (E102 PTS collapse) and silent infra failure that kills its own alert channel (2026-07-22 prep-sweep IAM) → executed checks as gates + escalation-channel liveness sensing; negative tests: poisoned fixtures must FAIL gates | Q12/Q13 (evidence-derived, confirmed) | |
+| C17 | Cross-department seams: podcast emits handoff packets consumable by a future sales department and other future departments; each department owns its own state; wiring a new consumer is an owner-level estate event | readback r1 | "shoudl als interact with sles and future deparntmetns" |
+| C18 | Records: local receipts/runs/STATE always on under departments/podcast/state/; never recorded: credentials, PHI, raw message bodies | Q15 (evidence-derived, confirmed) | |
+| C19 | DAG projection supervision: the podcast pipeline repo is the single execution authority and only episode-state writer; this department consumes its versioned, content-hashed projection, independently verifies graph/skip integrity and freshness, and escalates gaps without scheduling steps or writing back | Q1, Q12/Q13 (owner-reviewed architecture decision, 2026-07-31) | Enforces the owner's zero-silent-failure requirement without creating split-brain execution authority |
+
+## Edges (what feeds what)
+
+```mermaid
+graph LR
+  C2 --> C3
+  C1 --> C4
+  C3 --> C4
+  C6 --> C7
+  C6 --> C10
+  C5 --> C9
+  C12 --> C13
+  C16 --> C3
+  C14 --> C3
+  C15 --> C5
+  C7 --> C17
+  C4 --> C12
+  C16 --> C19
+  C2 --> C19
+```
+
+## Open questions (never fake definitions)
+
+- Founder-time-per-episode numeric target: TBD_MEASURE_IN_SHADOW (Q4).
+- Manifest field list (exact required items per guest/episode): owner named
+  "headshot, links" explicitly + "etc" — the full field list is derived in the
+  plan from the existing asset-request lane and presented for owner review, not
+  invented here.
+- Manifest completeness target %: TBD_MEASURE_IN_SHADOW.
+
+## INTENT LOCK
+
+Status: **LOCKED**. Provenance: decided_by **Ankit**, date **2026-07-22**,
+surface **Claude Code (AskUserQuestion, readback round 3)**.
+# F1 Question Bank
+
+One question per turn. Recommended answer first. Verbatim capture. See
+`INTERVIEW.md` for the protocol. Sections marked (EDGE) are the grill — they
+are not optional; skipping one requires a recorded rationale.
+
+## Q1 — Core outcome owed
+
+"What does this department OWE the business? Finish the sentence: if this ran
+perfectly for 90 days, the thing that would be visibly different is ___."
+Probe for the measurable artifact (meetings set, tickets closed, posts
+published, invoices reconciled), not activity.
+
+## Q2 — Process inventory
+
+"List every distinct process/funnel/lane this department must manage. Which
+exist today, which are aspirational?" Probe: mini-processes hiding inside big
+ones; adjacent lanes the owner runs manually today; future lanes to keep the
+architecture pluggable for (a new lane later = charter change, never
+self-created by the department).
+
+## Q3 — V1 proving slice
+
+"Which ONE process proves the department works? Everything else phases in
+behind it." Recommend the highest-pain, lowest-blast-radius lane.
+
+## Q4 — Setpoints
+
+Two numbers per the factory contract:
+- Operational setpoint (ceiling, not quota): the pace/volume guardrail.
+- Outcome setpoint: measured by a sensor INDEPENDENT of the department's own
+  classifiers (calendar joins, payment records, third-party feeds). If the
+  target is unknown, record TBD_MEASURE_IN_SHADOW and derive from data —
+  never invent a number.
+Probe: "what data exists today that should set this number?"
+
+## Q5 — NEVER list (hard floors)
+
+"What must this department NEVER do, at any autonomy level, forever?"
+Offer candidates: no external send without approval until promoted; never
+exceed frequency caps; suppression/opt-out honored instantly and permanently;
+never negotiate price/commitments outside a recorded whitelist; never touch
+PHI/patient-adjacent data. Capture modifications verbatim (e.g. "allowed under
+recorded items" becomes a whitelist in the charter, changes always-human).
+
+## Q6 — Budget
+
+Weekly ceilings: model calls, dollars, worker minutes. Engine policy
+(subscription/OAuth lanes vs per-token API). Fail-closed rule: auto-stop at
+80% of any ceiling pending owner review. Recommend conservative provisional
+numbers ratified after a benchmark batch.
+
+## Q7 — Kill conditions (kill, not pause)
+
+Offer: reputation damage; cost exceeds value 4+ consecutive weeks after
+burn-in; gaming its own numbers; any floor breach on external actions. Then
+ask for the owner's own additions. Probe the faux-work condition explicitly:
+"activity happens but nothing converts — kill or coach?" and the plate-load
+rule: the department must remove items from the owner's plate, never add more
+than it removes (net-added for 2 weeks = kill signal).
+
+## Q8 — Problem-type triage (script vs LLM, per piece)
+
+For each piece of each process, classify:
+- Known problem / known solution → SCRIPT, no LLM ever.
+- Known problem / judgment needed → LLM + cross-model QA + gate, draft-only
+  until promoted.
+- Known problem / unknown solution → data exploration first, then govern.
+- Unknown problem → department FLAGS only → proposal card → human.
+If a choice is finite and enumerable, it is a state machine, not an LLM —
+make the owner confirm each LLM assignment is real judgment.
+
+## Q9 (EDGE) — Boundary overlaps
+
+"Who or what else touches the same people/records/systems? Can an entity be in
+two processes at once? Which lane owns it then?" Capture explicit boundary
+rules (e.g. "sales scope starts AFTER the third podcast call") and cross-lane
+caps (frequency/suppression apply PER ENTITY ACROSS ALL lanes).
+
+## Q10 (EDGE) — Weird inputs
+
+Walk each intake: "what's the weirdest thing that ever arrived here?"
+Ambiguous identity, missing stage/fields, duplicates across systems,
+out-of-the-blue arrivals that skip the normal funnel, stale records,
+timezone/locale surprises. Rule: unresolved identity = suppress + review,
+never guess.
+
+## Q11 (EDGE) — Exceptions per step
+
+For each step: on failure — retry (how many times), skip, quarantine, or wake
+a human? What is the ONE question the escalation asks? Anything the owner
+can't answer becomes an open question in the artifact, and the step fails
+closed until answered.
+
+## Q12 (EDGE) — The subtle failure
+
+"What has gone wrong before that was subtle rather than obvious?" Fold the
+answer in as a first-class QA gate, not a footnote.
+
+## Q13 (EDGE) — Gaming / faux work
+
+"How would this department look productive while producing nothing? What
+independent signal would expose it?" Wire that signal into the kill
+controller inputs.
+
+## Q14 — Escalation & human gates
+
+- Escalation targets in order, with response SLAs and the no-reply rule
+  (default: deny and re-file after TTL — NEVER auto-approve).
+- For every action class: human gate or full-auto-with-escalation? Default is
+  fully automated with escalation, EXCEPT the always-human floor: external
+  sends, CRM/EHR/finance writes, publishes, spend over ceiling, charter
+  changes, promotions. Those stay gated until the class earns promotion
+  through the ladder (shadow → draft_only → gated_live → autonomous), and
+  governance files stay human-only forever.
+
+## Q15 — Records & memory
+
+- Local records are always on (runs, heartbeats, STATE, approval queue,
+  briefs) under `departments/<name>/state/`.
+- "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+  ship, Open Brain / memory-surface digests (sanitized only), or none.
+  Anything remote requires deliberate wiring — the seam blocks until wired.
+- Retention: what must never be recorded at all (secrets, PHI, raw message
+  bodies)?
+
+## Q16 — Readback
+
+Present the concept map. Read the whole understanding back. Capture
+corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+(owner sign-off, recorded with provenance). The lock is always human.
+"""Reconcile referral communication counts without performing external actions."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+
+ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
+REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
+
+
+def _read_object(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("input must contain a JSON object")
+    return data
+
+
+def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        if key in container:
+            value = container[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return None
+            return value
+    return None
+
+
+def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return deterministic findings for gaps in the asked-to-harvested chain."""
+    summary = tracker.get("summary")
+    counts = summary if isinstance(summary, dict) else tracker
+    asked = _count(counts, ASKED_KEYS)
+    replied = _count(counts, REPLIED_KEYS)
+
+    referrals = ledger.get("referrals")
+    harvested = len(referrals) if isinstance(referrals, list) else None
+    findings: list[dict[str, Any]] = []
+
+    missing = []
+    if asked is None:
+        missing.append("asked")
+    if replied is None:
+        missing.append("replied")
+    if harvested is None:
+        missing.append("harvested")
+    if missing:
+        findings.append({
+            "code": "count_missing",
+            "counts": missing,
+            "detail": f"Required count is unknown: {', '.join(missing)}.",
+        })
+
+    if asked is not None and replied is not None and asked > 0 and replied == 0:
+        findings.append({
+            "code": "open_loop",
+            "chain": "asked->replied",
+            "asked": asked,
+            "replied": replied,
+            "harvested": harvested,
+            "severity": "warn",
+            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
+        })
+    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
+        findings.append({
+            "code": "open_loop",
+            "chain": "replied->harvested",
+            "asked": asked,
+            "replied": replied,
+            "harvested": harvested,
+            "severity": "action",
+            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
+        })
+    return {"findings": findings}
+
+
+def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
+    del sla_hours
+    try:
+        tracker = _read_object(tracker_path)
+        ledger = _read_object(ledger_path)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return {"findings": [{
+            "code": "input_unreadable",
+            "detail": f"Could not read an input file: {type(exc).__name__}.",
+        }]}
+    return reconcile(tracker, ledger)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tracker", type=Path, required=True)
+    parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument("--sla-hours", type=int)
+    args = parser.parse_args()
+    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+# podcast department charter — v1.0 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-07-22, Claude Code).
+department: podcast
+version: v1.0
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-07-22"
+  surface: claude-code-askuserquestion-readback-r3
+owner: ankit
+mission: >-
+  Govern the existing OBE podcast loop estate (7 governed loops, support lanes,
+  VPS live layer) as its watchdog/manager: sense every loop, send lane, publish
+  outcome, guest manifest, and the alert channel itself; auto-heal known failure
+  patterns (logged); escalate unknown ones exactly once with root-cause
+  follow-through. Outcomes owed over 90 days (co-equal): episodes ship on <=1
+  hour of owner time; zero silent failures; recording pipeline >=6 guests; every
+  guest/episode has a complete info manifest + promotional manifest tracked in
+  HubSpot as the central source of truth.
+
+# Capability declarations (owner-authored; consumed by factory/launch.py).
+# Codex pre-merge review 2026-07-22 finding: XDG_RUNTIME_DIR must not be in the
+# GLOBAL kernel allowlist — it exposes the user session bus to every confined
+# department. It is now granted per-department, only when the charter declares
+# the capability below. For podcast this implements the locked interview's
+# watchdog sensing scope (Q3/C3: timer/receipt/log liveness via systemd user
+# units). Mutating unit actions remain governed by the heal playbook allowlist,
+# shadow mode, and the systemd unit sandbox.
+capabilities:
+  - systemd_user_probe
+
+# The DEPARTMENT starts in shadow (factory hard rule — sensing runs, escalations
+# land in the local outbox, heals are propose-only, delivered_count==0).
+# NOTE: the owner's autosend-NOW decision applies to the PODCAST ESTATE's own
+# gateway (implemented in the podcast repo per the hardening plan, owner
+# authorization recorded in the interview); it is not a promotion of THIS
+# department, which never sends outreach at any autonomy level.
+autonomy_state: shadow
+
+setpoints:
+  operational:
+    metric: escalation_pings_per_day        # ceiling, not quota (Q4)
+    target: 5                               # above this, batch into digest
+    sense_cycle_minutes: 30
+  outcome:
+    metric: silent_failure_detection_latency_minutes
+    target: 30                              # 15-min loops; 26h for daily loops
+    provisional: true                       # ratify after one shadow week
+  outcome_additional:
+    - {metric: detection_latency_daily_loops_hours, target: 26, provisional: true}
+    - {metric: pipeline_guests, target: 6, sensor: independent_calendar_hubspot_join}
+    - {metric: publish_day_verified_by_et, target: "10:30"}
+    - {metric: repeat_escalations_of_resolved_fingerprint, target: 0}   # C12 priority
+    - {metric: founder_minutes_per_episode, target: TBD_MEASURE_IN_SHADOW}
+    - {metric: manifest_completeness_pct, target: TBD_MEASURE_IN_SHADOW}
+  objectives:                               # owner-dictated (Ankit, 2026-08-02)
+    publish_reliability:
+      label: "Episodes online, on time"
+      setpoint: 100
+      minimum: 100
+      target: 100
+      unit: "%"
+    hopper_depth:
+      label: "Recordings in the hopper"
+      setpoint: 6
+      minimum: 2
+      target: 6
+      unit: " recordings"
+    hopper_interviews_ready:            # owner-dictated (Ankit, 2026-08-03): at least one
+      label: "Finished interviews ready to go"   # FINISHED interview in the hopper at all times;
+      setpoint: 2                       # >=2 interviews in the 6-target mix
+      minimum: 1
+      target: 2
+      unit: " interviews"
+    state_drift:                        # owner-dictated (Ankit, 2026-08-03): funnel ledger must
+      label: "Ledger vs evidence drift" # reconcile clean against Gmail/Calendar/HubSpot evidence
+      setpoint: 0                       # every run; any drift is a breach, not a warning
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " mismatches"
+    unledgered_inbound:                 # owner-dictated (Ankit, 2026-08-03): every inbound human
+      label: "Inbound humans missing from ledger"  # exists in FUNNEL-LEDGER.json within one run
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " people"
+  # Owner decisions 2026-08-03 (Ankit): HubSpot is the system of record for people and
+  # touches; the repo FUNNEL-LEDGER.json is the operational state machine, rebuilt by
+  # reconciling against evidence every run. CRM stage writes are approved PHASED: week 1
+  # read-and-reconcile only; then a narrow crm_stage_write class limited to the
+  # obe_funnel_stage + obe_next_action_on contact properties, promoted only after
+  # state_drift has held 0 for 7 consecutive days.
+
+thresholds:
+  weekly_touch_ceiling: 300
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 50
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+execution:  # owner addendum (Ankit, 2026-07-23): factory-wide process discipline
+  headless: true            # every process step runs headless (Claude/Codex/Ringer),
+                            # never dependent on an interactive operator session
+  step_receipts: required   # every step proves completion with an executed
+                            # artifact/output/receipt BEFORE the next step runs;
+                            # a missing/failed receipt summons the manager (heal
+                            # ladder or human-in-the-loop) — never advancement
+
+budget:
+  engine_policy: subscription_oauth_only    # Q6: "$0 API"; reaffirmed factory-wide 2026-07-23
+  api_spend_rule: forbidden_escalate_instead
+  weekly_ceilings:
+    model_calls: 900
+    dollars: 0                              # subscription-only; any API spend fails closed
+    worker_minutes: 1680                    # 4 h/day wall-clock ceiling
+  estate_send_caps:                         # existing caps adopted as send budget (Q6)
+    outbound_per_day: 12
+    new_contacts_per_day: 5
+    per_contact_cadence_floor_days: 4
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+    - escalation_dedup_policy               # C12: one incident = one thread, forever
+    - vps_deploy_guard                      # C11: no master redeploy while v2 unmerged
+
+never:  # department hard floors (Q5 amended at readback; human-only, forever)
+  - department_never_sends_outreach_or_publishes__outbound_is_escalations_only
+  - no_live_hand_patching_of_vps_or_estate_runtime__heals_are_known_playbooks_logged
+  - no_vps_redeploy_from_master_while_v2_branch_unmerged
+  - never_suppress_downgrade_or_auto_ack_a_red_signal
+  - escalation_ttl_expiry_refiles_louder_never_auto_approves
+  - governance_files_human_only
+  - phi_out_of_domain__its_appearance_in_inputs_is_itself_an_escalation
+
+kill_if:  # backstops (Q7) — kill = non-restartable without a new human charter decision
+  - reputation_damaging_autosend: kill that send class back to draft+approve; owner re-promotion required
+  - watchdog_false_green: independent sensor contradicts a green report; watchdog killed + re-authored
+  - plate_load_net_positive_2_weeks: department adds more owner work than it removes
+  - floor_breach_on_external_action: kill the breaching class
+
+escalation:
+  default: fully_automated_with_escalation
+  dedup: incident_fingerprint_one_thread    # C12 part 1
+  recurrence_rule: every_escalation_spawns_root_cause_item__repeat_of_resolved_fingerprint_is_department_defect  # C12 part 2
+  channels: [telegram_ping, linear_card]
+  no_reply_ttl_hours: 24
+  no_reply_action: refile_louder_same_thread_never_auto_approve
+  human_gates:
+    - external_send        # for the department itself; estate autosend is estate-side
+    - crm_write
+    - publish
+    - spend_over_ceiling
+    - charter_change
+    - promotion
+
+estate_decisions:  # owner-authorized changes to the PODCAST ESTATE (provenance: intent interview 2026-07-22)
+  autosend_promotion: >-
+    Outreach/guest email send classes promoted to autosend behind the full QA
+    gateway chain (fact_pack -> deterministic gate -> QA -> ledger -> idempotency
+    -> receipt -> reconcile); the Linear human-APPROVE step is removed for
+    QA-passed sends. Send caps and kill switch stay. ("full auto with sends now
+    ... qa gates beof autosends")
+  hubspot_source_of_truth: >-
+    Guest/episode manifest data, requirement completeness, statuses, and notes
+    tracked in HubSpot via scoped podcast_* properties/notes; sales-owned fields
+    out of scope. VPS remains media/pipeline runtime truth.
+  manifest_goal: >-
+    Every guest/episode gets a complete information manifest (headshot, links,
+    bio, ...) AND a promotional manifest, gathered automatically with chasing.
+    At publish deadline, missing items use deterministic fallback assets; the
+    episode and its promo always ship on schedule when QA passes.
+  writing_style_gate: >-
+    All estate-drafted content is governed by the OB_mybcat writing rules
+    (MyBCAT Writing Style Graph v1; WRITING_GUIDE_CANONICAL rev 2; tropes.fyi
+    anti-AI-writing decision 2026-07-15). Because sends are autosend, the
+    deterministic pre-send gate includes a style validator (zero em dashes,
+    banned-phrase scan, signature block, one CTA, length by warmth) and the
+    cross-model QA judge is instructed from the Style Graph. A style-violating
+    poisoned draft must BLOCK in negative tests. Agents query OB_mybcat for the
+    newest versions at draft time. (Owner addendum 2026-07-22.)
+
+seams:  # C17 — pluggable, wired only by owner-level estate decisions
+  sales_handoff_packets: future_sales_department_consumer
+  future_departments: estate_registry_event_required
+
+funnels:
+  entries:
+    - SG-WATCHDOG
+    - SG-PIPELINE
+    - SG-PUBLISHDAY
+    - SG-MANIFEST
+    - SG-HEAL
+
+memory:
+  local: departments/podcast/state
+  backends: []            # HubSpot is the ESTATE's business truth, not a department memory backend
+  never_recorded: [credentials, phi, raw_message_bodies]
+# Fix spec: the open-loop comms gap
+
+Owner: Ankit
+Author: Claude Code (coordinator), 2026-08-03
+Status: SPEC — no code changed, no governance file edited, nothing sent
+Trigger: two guest referrals arrived (Aug 2 12:16 ET, Aug 3 08:00 ET) and no
+system replied, recorded, or harvested them.
+
+---
+
+## 0. ELI5
+
+The podcast system is good at asking past guests "know anyone for the show?"
+It is not able to hear the answer.
+
+On Jul 31 it asked three past guests. Two people answered with a name. Both
+answers are still sitting unread. Meanwhile, this morning at 08:44, the same
+system escalated that the guest pipeline is 1 booked against a target of 6.
+
+It is starving while the food sits on the counter.
+
+---
+
+## 1. What is actually broken
+
+The outbound half works. The inbound half breaks in four independent places.
+Fixing any one alone changes nothing, which is why this looks like a mystery
+instead of a bug.
+
+| # | Break | Location | Effect |
+|---|---|---|---|
+| B1 | `inbox_review.py` is never scheduled | `scripts/inbox-review-cron.sh` documents a manual `crontab -e`; `scripts/deploy-podcast-vps.sh` never installs it; no systemd timer references it | The only component that reads inbound guest mail and drafts a reply has never run |
+| B2 | Referral ledger written to the wrong key | `server/pipeline/inbox_review.py:224` appends to `ledger["received"]` | `server/pipeline/candidate_ingest.py:188` reads `document.get("referrals")`. A recorded referral lands in a key nothing reads |
+| B3 | Referral ledger written in the wrong shape | `inbox_review.py:361-367` writes `{received_at, from, thread_id, snippet, draft_id}` | `candidate_ingest.py:212-214` requires `record["state"]` to be in `referral_lifecycle.STATES`. No `state` field means the record is rejected even if B2 is fixed |
+| B4 | Reply harvest structurally yields zero | `referral-flywheel` step R3 | The touch tracker detects 16 inbound replies and 8 engaged guests, then R3 processes 0: "its engaged rows require review rather than another automatic request." Detection exists; harvest does not |
+
+Additional defect, lower severity:
+
+| # | Break | Location | Effect |
+|---|---|---|---|
+| B5 | Schema loss on fresh ledger | `inbox_review.py:223` default is `{"asked": [], "received": []}` with no `schema` key | If `REFERRALS.json` is ever absent, the recreated file lacks `schema: referral-ledger-v1`, and `candidate_ingest.py:180` hard-rejects the whole document |
+| B6 | Ask state never advances | Nothing writes `asks[].state`; only `scripts/funnel_status.py` reads it, read-only | Gina Wesley still reads `"state": "asked"` five days after she answered. Reporting permanently understates conversion |
+
+### What is NOT broken (verified, do not "fix")
+
+- `loop_runner.assemble_world` **does** read the referral ledger
+  (`loop_runner.py:126, 137, 153`). The note inside `REFERRALS.json` claiming
+  it "currently hard-codes referrals: []" is **stale and should be deleted**.
+- `referral_lifecycle.py` is a complete, correct state machine.
+- The flywheel does **not** spam. It is `read-propose-only`, `external actions
+  taken: 0`, and explicitly excludes asked-no-reply guests from re-selection.
+  No automatic re-ask will fire at Gina.
+- `followup_due_days` in `REFERRALS.json` has **zero consumers** anywhere in
+  the repo. It is an inert field, not a scheduled nudge.
+- The loop escalated correctly and on time this morning
+  (`referral-flywheel-20260803.ESCALATE`, delivered 08:49).
+
+---
+
+## 2. Root cause, stated as mechanism
+
+Every component needed to close this loop exists and is individually correct.
+Nothing connects them, and **nothing measures that they are disconnected.**
+
+The system counts what it sends. It counts what arrives. It never compares the
+two. A pipeline that asks 57 times, receives 16 replies, and harvests 0 reports
+itself as healthy on every stage it does measure, then separately escalates a
+guest shortage it cannot explain.
+
+That missing comparison is the actual defect. B1 through B6 are symptoms of it.
+
+---
+
+## 3. Fix units
+
+Each unit has a stable ID, an owner lane, and executed proof. No unit is done
+on inspection.
+
+### U1 — Correct the ledger contract (do this first)
+
+Change `_append_referral_ledger` to write a `referral_lifecycle.record_referral`
+shaped record into `referrals[]`, preserving `schema` and `asks`.
+
+- Files: `server/pipeline/inbox_review.py`
+- Fixes: B2, B3, B5
+- PROOF: a test that calls `_append_referral_ledger`, then
+  `candidate_ingest.load_referral_records` on the same file, and asserts the
+  record round-trips with zero problems.
+- RED: assert the test fails against current `main` before the fix. A test that
+  has never been watched fail is not a test.
+
+### U2 — Advance ask state on reply
+
+When a reply is recorded for a guest present in `asks[]`, transition that entry
+out of `asked`.
+
+- Files: `server/pipeline/inbox_review.py`, `server/pipeline/referral_lifecycle.py`
+- Fixes: B6
+- PROOF: seed an `asks[]` entry, record a reply, assert the state changed and
+  `funnel_status.py` reports the guest as replied.
+- RED: same test against current `main` shows the entry still reads `asked`.
+
+### U3 — Delete the stale note
+
+Remove the `note` field in `episodes/REFERRALS.json` claiming `assemble_world`
+hard-codes `referrals: []`. It is false and it misled this investigation for
+several steps.
+
+- PROOF: `grep -c "hard-codes" episodes/REFERRALS.json` returns 0.
+- RED: returns 1 today.
+
+### U4 — Schedule `inbox_review`
+
+Install the job properly instead of as a documented manual step.
+
+- Files: `scripts/deploy-podcast-vps.sh`, new systemd unit + timer
+- Fixes: B1
+- PROOF: `systemctl --user list-timers` shows the unit; the job's own log file
+  exists and has a fresh entry after a forced run.
+- RED: confirm the log path is absent before install, so its later presence
+  means something.
+- GATE: this is the first unit that touches a live send path. Even after U4,
+  REFERRAL intent remains draft-only by design
+  (`inbox_review.py:41`, `AUTOSEND_INTENTS` excludes REFERRAL). Do not widen
+  that list as part of this fix.
+
+### U5 — Close the harvest gap (R3)
+
+Give the flywheel's reply-harvest step a real path from "engaged row" to
+"nominee record." Today it defers to a human review that does not happen.
+
+- Files: `podcast-referral-flywheel-runbook/RUNBOOK.md`, R3 step logic
+- Fixes: B4
+- PROOF: run the flywheel against a fixture with a known inbound referral and
+  assert R3 emits exactly 1 nominee.
+- RED: same fixture against current logic emits 0.
+- NOTE: this is the largest unit and the least specified. See §6.
+
+### U6 — The reconciliation sensor (this is the actual deliverable)
+
+See §4. Without it, this class of failure recurs silently in the next channel.
+
+---
+
+## 4. Process change: the open-loop invariant
+
+**Rule: no outbound ask without a proven return path.**
+
+An "ask" is any outbound message that requests a response — referral requests,
+booking requests, guest confirmations, prep-doc chases, review requests, any
+future channel. For every ask class the system must be able to answer four
+counts:
+
+```
+asked  →  replied  →  harvested  →  acted
+```
+
+**The invariant: if an upstream count is non-zero and the next count downstream
+is zero for longer than that class's SLA, the loop is open and it escalates.**
+
+Applied to today: `asked=57, replied=16, harvested=0`. The drop from 16 to 0 is
+the alarm. It has been true for weeks and nothing was watching, because every
+component was individually reporting success.
+
+This is a pure counting check. It is deterministic, needs no model, and
+generalizes to every comms channel. Per this repo's own rule — "if a decision
+is finite and enumerable, it is a state machine, not an LLM" — it belongs in
+the department's sensor layer, not in a prompt.
+
+### Where it goes
+
+The podcast department in `loop-factory` is the correct home. It is already a
+read-only watchdog over exactly this estate, it already runs every 30 minutes,
+and its F1 interview (`interview/intent-interview.md:62`) **already named
+"inbox review" as a process it was supposed to watch.** That sensor was never
+implemented. This is not new scope; it is the unbuilt half of the original
+charter.
+
+Proposed: `departments/podcast/runtime/comms_reconcile_sensor.py`, following the
+existing sensor pattern (`hopper_sensor.py`, `pipeline_sensor.py`).
+
+### Charter addition (governance — requires Ankit's sign-off, not an agent edit)
+
+```yaml
+comms_loop_invariant:
+  applies_to: every outbound ask class
+  requires:
+    - return_path: the named component that reads the answer
+    - return_sla_hours: how long a reply may sit unharvested
+  escalates_when: upstream_count > 0 and downstream_count == 0 beyond sla
+  never: an ask class may ship without a declared and executed return path
+```
+
+### Factory-level guard (department-agnostic, so every future department inherits it)
+
+Add to `loopfactory.py validate`: any node that emits an outbound ask must
+declare `return_path` and `return_sla_hours`, or the lint fails. This is what
+stops the next department from repeating this exactly.
+
+---
+
+## 5. Governance path — how this actually lands
+
+`runbooks/process-change-qa.md` is explicit, and this spec follows it rather
+than routing around it:
+
+1. Change card — this document.
+2. Patch the maps first: `procedural-graph.md` **and** `subgraphs.json`.
+3. `python3 loopfactory.py validate --name podcast` must PASS.
+4. Re-author the affected nodes to match the patched graph.
+5. Re-shadow: executed checks, simulated sinks, `delivered_count == 0`.
+6. Re-pin: `loopfactory.py release pin --name podcast --source-ref <sha> --flip`.
+7. Verify: `loopfactory.py qa --name podcast`, drift clean.
+
+Two hard limits this spec does not cross:
+
+- **The charter edit in §4 is a governance file.** Per `CLAUDE.md`, charters,
+  thresholds, and runbooks are humans-only, forever. It needs Ankit's sign-off
+  and cannot be applied by an agent or a heal.
+- **No autonomy level rises here.** The department stays in shadow. REFERRAL
+  replies stay draft-only. This fix makes the system *hear*; it does not make
+  it *speak*.
+
+---
+
+## 6. What is not specified yet, honestly
+
+U5 (the R3 harvest gap) is the one unit I cannot size from here. The blocking
+question is:
+
+> Should R3 extract the referred person's name automatically from the reply, or
+> only flag the thread and let Ankit name them?
+
+Automatic extraction is a model call on inbound mail with a real error mode:
+a wrong name becomes outreach to a person who was never referred. Flagging only
+is safe, is honest about what the machine knows, and still collapses the work
+to one click. That question decides whether U5 is a small unit or a large one,
+and it is Ankit's call, not mine.
+
+Everything else in §3 is specified tightly enough to implement.
+
+---
+
+## 7. Immediate, outside the code
+
+Two warm referrals are unread as of this writing. Kevin CC'd the referred guest
+directly, so a delayed reply is visible to a third party. Replying is a human
+action today, not a fix unit, and no automation in this spec would have sent it
+for you — REFERRAL is draft-only by design.
+
+---
+
+## 8. Corrections to the investigation record
+
+Two claims I made before finishing verification were wrong, and both would have
+sent work in the wrong direction:
+
+1. I repeated `REFERRALS.json`'s own note that `assemble_world` hard-codes
+   `referrals: []`. It does not; `loop_runner.py:126` reads the ledger. I took a
+   comment as current state without checking the code it described. That note is
+   now U3.
+2. I said a follow-up nudge would re-ask Gina on Aug 7. It will not.
+   `followup_due_days` has no consumer, and the flywheel is read-propose-only
+   with explicit asked-no-reply exclusion. I asserted a dated consequence
+   without confirming a consumer existed.
+
+Both are the same error: concluding from a plausible artifact before running the
+cheap check that would settle it.
+
+codex
+Ankit — Read-first is complete. The best existing trace is C3 → Q3: C3 defines the watchdog’s sensor families and Q3 selected that watchdog as the proving slice. I’ll add the deterministic read-only node inside `SG-WATCHDOG`; the new interview requirement becomes Q15, shifting Records/Readback to Q16/Q17.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/podcast/procedural-graph.md
+/mnt/d_drive/repos/loop-factory/departments/podcast/subgraphs.json
+/mnt/d_drive/repos/loop-factory/interview/QUESTION_BANK.md
+/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/charter-proposal.md
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..738654cf0dbf38870a2ebac8bb61fa8e2f60b29d
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -36,12 +36,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..738654cf0dbf38870a2ebac8bb61fa8e2f60b29d
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -36,12 +36,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+
+exec
+/bin/bash -lc "sed -n '24,62p' departments/podcast/procedural-graph.md && sed -n '118,155p' interview/QUESTION_BANK.md && python3 -m json.tool departments/podcast/subgraphs.json >/dev/null && python3 loopfactory.py validate --name podcast" in /mnt/d_drive/repos/loop-factory
+ succeeded in 147ms:
+targeting; no model calls; no cost-incurring nodes under subscription-only C8).
+
+## SG-WATCHDOG — estate health sensing (proving slice, C3)
+
+```
+[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
+```
+
+| # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+|---|---|---|---|---|---|---|
+| N1 | sense_estate | Sense | SCRIPT | internal_read / shadow | output lists EVERY unit in the charter estate inventory; a unit missing from output = check FAILS (silent-gap guard) | C3, C16, Q3 |
+| N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+| N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+| N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
+| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+| N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+
+Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
++ log error patterns for the 7 loops + support lanes, (b) escalation-channel
+liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
+open-loop communication reconciliation: it reads the referral tracker report
+and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
+invariant, and emits findings only; it never sends anything.
+
+## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+
+```
+[pipeline-owned dag-projection-v1 receipt] → N1 dag_supervisor
+  → local observation + critical incident candidates → existing watchdog dedup/outbox
+```
+
+| # | Node | impl | QA check (executed) | traces |
+|---|---|---|---|---|
+| N1 | dag_supervisor | SCRIPT | recomputes canonical DAG and skip-artifact hashes, fails closed on stale/missing/unreadable projections, and alarms on silent skips; source inspection confirms it never schedules pipeline steps or writes pipeline state | C1, C2, C11, C16, C19, Q1, Q12/Q13 |
+
+The pipeline repository remains the single execution authority and only writer
+of episode state. This lane only reads the exported projection and writes local
+
+## Q15 — Outbound ask return paths
+
+For EVERY outbound ask class this department will perform, capture:
+- Return path: which named component reads the answers.
+- Return SLA in hours: how long a reply may sit unharvested before escalation.
+Recommend refusing to ship the ask class until both are declared and the return
+path has been executed successfully. An ask without a return path recently
+shipped and cost real replies.
+
+## Q16 — Records & memory
+
+- Local records are always on (runs, heartbeats, STATE, approval queue,
+  briefs) under `departments/<name>/state/`.
+- "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+  ship, Open Brain / memory-surface digests (sanitized only), or none.
+  Anything remote requires deliberate wiring — the seam blocks until wired.
+- Retention: what must never be recorded at all (secrets, PHI, raw message
+  bodies)?
+
+## Q17 — Readback
+
+Present the concept map. Read the whole understanding back. Capture
+corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+(owner sign-off, recorded with provenance). The lock is always human.
+{
+  "department": "podcast",
+  "charter": {
+    "ok": true,
+    "autonomy_state": "shadow"
+  },
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..738654cf0dbf38870a2ebac8bb61fa8e2f60b29d
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -36,12 +36,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+
+codex
+Ankit — Validation already passes. I found one presentation gap before handoff: the human diagram should visibly include N6, not only its table row. I’m making that owned-file-only correction, then I’ll rerun validation and write `notes.md` with the proof tail and assumptions.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/podcast/procedural-graph.md
+/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+exec
+/bin/bash -lc 'python3 loopfactory.py validate --name podcast && python3 -m json.tool departments/podcast/subgraphs.json >/dev/null && rg -n "comms_reconcile|Q15|Q16|Q17|PROPOSAL|comms_loop_invariant" departments/podcast/procedural-graph.md departments/podcast/subgraphs.json interview/QUESTION_BANK.md ringer/comms-loop-invariant/charter-proposal.md ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md' in /mnt/d_drive/repos/loop-factory
+ succeeded in 143ms:
+{
+  "department": "podcast",
+  "charter": {
+    "ok": true,
+    "autonomy_state": "shadow"
+  },
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md:36:- The new interview question is inserted as Q15 beside Q14, so the former Q15
+ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md:37:  and Q16 become Q16 and Q17.
+interview/QUESTION_BANK.md:117:## Q15 — Records & memory
+interview/QUESTION_BANK.md:119:## Q15 — Outbound ask return paths
+interview/QUESTION_BANK.md:128:## Q16 — Records & memory
+interview/QUESTION_BANK.md:138:## Q17 — Readback
+ringer/comms-loop-invariant/charter-proposal.md:1:# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
+ringer/comms-loop-invariant/charter-proposal.md:6:comms_loop_invariant:
+departments/podcast/procedural-graph.md:30:                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
+departments/podcast/procedural-graph.md:41:| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+departments/podcast/procedural-graph.md:42:| N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+departments/podcast/subgraphs.json:47:     "impl": "runtime/comms_reconcile_sensor.py"
+
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..1c199d331c1df154dd59fca3b9500eb66ebce617
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -116,6 +116,17 @@
+ 
+ ## Q15 — Records & memory
+ 
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +135,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+codex
+Ankit — The final scan caught a duplicate old `Q15 — Records & memory` heading left above the inserted question. Validation does not detect prose-heading duplication, so I’m removing that line and rerunning the same proof.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/interview/QUESTION_BANK.md
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..5fc4b768e2d21f124bca36ba5b001f048f3a45e0
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -114,8 +114,17 @@
+   through the ladder (shadow → draft_only → gated_live → autonomous), and
+   governance files stay human-only forever.
+ 
+-## Q15 — Records & memory
++## Q15 — Outbound ask return paths
+ 
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +133,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+exec
+/bin/bash -lc "python3 loopfactory.py validate --name podcast && python3 -m json.tool departments/podcast/subgraphs.json >/dev/null && rg -n '"'^## Q(14|15|16|17)'"' interview/QUESTION_BANK.md" in /mnt/d_drive/repos/loop-factory
+ succeeded in 147ms:
+{
+  "department": "podcast",
+  "charter": {
+    "ok": true,
+    "autonomy_state": "shadow"
+  },
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+106:## Q14 — Escalation & human gates
+117:## Q15 — Outbound ask return paths
+126:## Q16 — Records & memory
+136:## Q17 — Readback
+
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..5fc4b768e2d21f124bca36ba5b001f048f3a45e0
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -114,8 +114,17 @@
+   through the ladder (shadow → draft_only → gated_live → autonomous), and
+   governance files stay human-only forever.
+ 
+-## Q15 — Records & memory
++## Q15 — Outbound ask return paths
+ 
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +133,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+codex
+Ankit — Completed the four owned deliverables plus [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+- Added `N6 comms_reconcile_sensor` to both podcast maps, tracing to C3/Q3.
+- Added outbound return-path interview question Q15; renumbered the former Q15/Q16.
+- Created the human-sign-off-only charter proposal.
+- Did not edit `charter.yaml` or any unowned file.
+- Validation passed with `"ok": true`, no lint or traceability errors.
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: all requested artifacts created or updated; validation passed
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: documented in notes.md
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb8337dc40aea06f3d5912560920cfd57d4..b1c5de4520007c2ff72ac6bf1f71e502fcfaccba
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793289a5128f738e479c2f52b3465b0493ea..c78b9a661ed192b587262d842952657e25a90c0b
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -43,6 +43,10 @@
+      "impl": "runtime/hopper_sensor.py"
+     },
+     {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
++    {
+      "id": "N9",
+      "impl": "runtime/record.py"
+     }
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f1d172083b8d1e0e02499e6c45e847a1bd..5fc4b768e2d21f124bca36ba5b001f048f3a45e0
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -114,8 +114,17 @@
+   through the ladder (shadow → draft_only → gated_live → autonomous), and
+   governance files stay human-only forever.
+ 
+-## Q15 — Records & memory
++## Q15 — Outbound ask return paths
+ 
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
++
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+ - "Do you want a durable copy anywhere else?" Offer the seams: S3 telemetry
+@@ -124,7 +133,7 @@
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+diff --git a/ringer/comms-loop-invariant/charter-proposal.md b/ringer/comms-loop-invariant/charter-proposal.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78cc2441410709b273bf2537bae2f08c07768ce8
+--- /dev/null
++++ b/ringer/comms-loop-invariant/charter-proposal.md
+@@ -0,0 +1,23 @@
++# PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit)
++
++Proposed addition to `departments/podcast/charter.yaml`:
++
++```yaml
++comms_loop_invariant:
++  applies_to: every outbound ask class
++  requires:
++    - return_path: the named component that reads the answers
++    - return_sla_hours: how long a reply may sit unharvested
++  escalates_when: upstream_count > 0 and downstream_count == 0 beyond SLA
++  never: an ask class may not ship without a declared and executed return path
++```
++
++The incident reached 57 asked and 16 replied, but 0 harvested. Each measured
++component could appear healthy while the end-to-end communication loop remained
++open, leaving real replies unused.
++
++This invariant makes the missing handoff observable for every outbound ask
++class. It requires a named answer reader and a time limit, then escalates when
++nonzero upstream work produces zero downstream progress beyond that limit.
++
++Only a human may apply this proposal to `departments/podcast/charter.yaml`.
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c6e1250be48297ba14ebe7995db355561b7b3d18
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -0,0 +1,42 @@
++# Task notes
++
++## Traceability choice
++
++The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
++question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
++watchdog as the department's V1 proving slice. The reconciliation node is a
++read-only sensor in that existing lane, not a new action class.
++
++## Validation proof
++
++Command run from `/mnt/d_drive/repos/loop-factory`:
++
++```text
++python3 loopfactory.py validate --name podcast
++```
++
++Output tail:
++
++```text
++  "maps": {
++    "department": "podcast",
++    "ok": true,
++    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+tokens used
+47,793
+Ankit — Completed the four owned deliverables plus [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+- Added `N6 comms_reconcile_sensor` to both podcast maps, tracing to C3/Q3.
+- Added outbound return-path interview question Q15; renumbered the former Q15/Q16.
+- Created the human-sign-off-only charter proposal.
+- Did not edit `charter.yaml` or any unowned file.
+- Validation passed with `"ok": true`, no lint or traceability errors.
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: all requested artifacts created or updated; validation passed
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: documented in notes.md
+[ringer.py] attempt 1 exited rc=0
+
+[ringer.py] attempt 2 started 2026-08-03T15:12:03.528356+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview 'You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/procedural-graph.md (edit), departments/podcast/subgraphs.json (edit), interview/QUESTION_BANK.md (edit), ringer/comms-loop-invariant/charter-proposal.md (create). Nothing else. ABSOLUTE RULE: departments/podcast/charter.yaml is a GOVERNANCE file — humans only, forever. You must NOT edit it; your charter output is a PROPOSAL draft at the owned path above. Never touch .git, never commit, never push, never modify runbooks/ or CLAUDE.md. Do not load skills or call MCP/Apps. No network.
+
+READ FIRST (read-only): departments/podcast/procedural-graph.md and subgraphs.json in full (node shape, id scheme, how nodes trace to concept nodes and interview questions), departments/podcast/knowledge/concept-map.md (concept node ids), interview/QUESTION_BANK.md in full (question format Q1-Q16), departments/podcast/runtime/comms_reconcile_sensor.py (created by a previous task in this run — the node you are mapping), departments/podcast/charter.yaml READ-ONLY (to write a proposal consistent with its style), and the motivating spec tasks/2026-08-03-open-loop-comms-gap.md section 4.
+
+WORK ITEM 1 — map the sensor into BOTH map forms. Add a comms_reconcile sensor node to departments/podcast/subgraphs.json following the existing node schema exactly (id style, fields, traceability links), tracing to the most fitting concept node and interview question per the repo'"'"'s traceability rules, referencing the runtime file departments/podcast/runtime/comms_reconcile_sensor.py. Add the matching human-form step to procedural-graph.md where the other sensors are described: the sensor reads the referral tracker report and the referral ledger, applies the open-loop invariant (upstream count > 0 with downstream 0 beyond SLA escalates), and never sends anything. The change must pass: python3 loopfactory.py validate --name podcast (run it; fix within your owned files only).
+
+WORK ITEM 2 — the interview learns the lesson. Add a new question to interview/QUESTION_BANK.md, numbered consistently with the existing Q1-Q16 and placed adjacent to Q14 (escalation/human gates): for EVERY outbound ask class a department will perform, the interview must capture the return path (which component reads the answers) and the return SLA in hours (how long a reply may sit unharvested before escalation). Follow the exact formatting idiom of the existing questions (recommended-answer-first style). Motivate it in one line: an ask without a return path recently shipped and cost real replies.
+
+WORK ITEM 3 — charter proposal DRAFT at ringer/comms-loop-invariant/charter-proposal.md. Markdown containing: a title marking it PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit); the YAML block to add to the podcast charter under a comms_loop_invariant key with: applies_to every outbound ask class, requires return_path and return_sla_hours declared per ask class, escalates_when upstream_count > 0 and downstream_count == 0 beyond SLA, and a never clause that an ask class may not ship without a declared and executed return path; two short paragraphs of rationale citing the 57 asked / 16 replied / 0 harvested incident; and an explicit note that only a human may apply this to charter.yaml.
+
+HOW TO RUN, from repo root: python3 loopfactory.py validate --name podcast (must PASS before you finish).
+
+OUTPUT CONTRACT: the four owned files, plus ./notes.md: which concept node and interview question the new node traces to and why, the validate output tail proving PASS, assumptions.
+
+HARD RULES: match existing formats exactly rather than inventing structure; smallest change that lints; if validate fails for a reason outside your owned files, STOP and report it in notes.md rather than editing other files.
+
+Previous attempt failed: +    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+tokens used
+47,793
+Ankit — Completed the four owned deliverables plus [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+- Added `N6 comms_reconcile_sensor` to both podcast maps, tracing to C3/Q3.
+- Added outbound return-path interview question Q15; renumbered the former Q15/Q16.
+- Created the human-sign-off-only charter proposal.
+- Did not edit `charter.yaml` or any unowned file.
+- Validation passed with `"ok": true`, no lint or traceability errors.
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: all requested artifacts created or updated; validation passed
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: documented in notes.md
+[ringer.py] attempt 1 exited rc=0
+{
+  "department": "podcast",
+  "charter": {
+    "ok": true,
+    "autonomy_state": "shadow"
+  },
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+CHECK FAIL: files changed outside cumulative T1+T2+T3 ownership: departments/podcast/releases/50b79dc454f5082d/manifest.json
+departments/podcast/releases/current
+departments/social/runtime/social_daily.sh
+runbooks/ultimate-department-creation.md. Fix it.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.146.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fc82e-9570-74b2-9bbc-1548f65a6013
+--------
+user
+You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/procedural-graph.md (edit), departments/podcast/subgraphs.json (edit), interview/QUESTION_BANK.md (edit), ringer/comms-loop-invariant/charter-proposal.md (create). Nothing else. ABSOLUTE RULE: departments/podcast/charter.yaml is a GOVERNANCE file — humans only, forever. You must NOT edit it; your charter output is a PROPOSAL draft at the owned path above. Never touch .git, never commit, never push, never modify runbooks/ or CLAUDE.md. Do not load skills or call MCP/Apps. No network.
+
+READ FIRST (read-only): departments/podcast/procedural-graph.md and subgraphs.json in full (node shape, id scheme, how nodes trace to concept nodes and interview questions), departments/podcast/knowledge/concept-map.md (concept node ids), interview/QUESTION_BANK.md in full (question format Q1-Q16), departments/podcast/runtime/comms_reconcile_sensor.py (created by a previous task in this run — the node you are mapping), departments/podcast/charter.yaml READ-ONLY (to write a proposal consistent with its style), and the motivating spec tasks/2026-08-03-open-loop-comms-gap.md section 4.
+
+WORK ITEM 1 — map the sensor into BOTH map forms. Add a comms_reconcile sensor node to departments/podcast/subgraphs.json following the existing node schema exactly (id style, fields, traceability links), tracing to the most fitting concept node and interview question per the repo's traceability rules, referencing the runtime file departments/podcast/runtime/comms_reconcile_sensor.py. Add the matching human-form step to procedural-graph.md where the other sensors are described: the sensor reads the referral tracker report and the referral ledger, applies the open-loop invariant (upstream count > 0 with downstream 0 beyond SLA escalates), and never sends anything. The change must pass: python3 loopfactory.py validate --name podcast (run it; fix within your owned files only).
+
+WORK ITEM 2 — the interview learns the lesson. Add a new question to interview/QUESTION_BANK.md, numbered consistently with the existing Q1-Q16 and placed adjacent to Q14 (escalation/human gates): for EVERY outbound ask class a department will perform, the interview must capture the return path (which component reads the answers) and the return SLA in hours (how long a reply may sit unharvested before escalation). Follow the exact formatting idiom of the existing questions (recommended-answer-first style). Motivate it in one line: an ask without a return path recently shipped and cost real replies.
+
+WORK ITEM 3 — charter proposal DRAFT at ringer/comms-loop-invariant/charter-proposal.md. Markdown containing: a title marking it PROPOSAL — REQUIRES HUMAN SIGN-OFF (Ankit); the YAML block to add to the podcast charter under a comms_loop_invariant key with: applies_to every outbound ask class, requires return_path and return_sla_hours declared per ask class, escalates_when upstream_count > 0 and downstream_count == 0 beyond SLA, and a never clause that an ask class may not ship without a declared and executed return path; two short paragraphs of rationale citing the 57 asked / 16 replied / 0 harvested incident; and an explicit note that only a human may apply this to charter.yaml.
+
+HOW TO RUN, from repo root: python3 loopfactory.py validate --name podcast (must PASS before you finish).
+
+OUTPUT CONTRACT: the four owned files, plus ./notes.md: which concept node and interview question the new node traces to and why, the validate output tail proving PASS, assumptions.
+
+HARD RULES: match existing formats exactly rather than inventing structure; smallest change that lints; if validate fails for a reason outside your owned files, STOP and report it in notes.md rather than editing other files.
+
+Previous attempt failed: +    "lint": [],
++    "traceability": [],
++    "drift": null
++  },
++  "ok": true
++}
++```
++
++## Assumptions
++
++- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
++  remains the shared record node.
++- The new interview question is inserted as Q15 beside Q14, so the former Q15
++  and Q16 become Q16 and Q17.
++- The existing runtime accepts `--sla-hours` for interface compatibility but
++  does not yet apply elapsed-time logic. This task maps the specified invariant
++  and does not modify the runtime file outside the ownership boundary.
++- The charter text remains a proposal only. `departments/podcast/charter.yaml`
++  was not edited.
+
+tokens used
+47,793
+Ankit — Completed the four owned deliverables plus [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+- Added `N6 comms_reconcile_sensor` to both podcast maps, tracing to C3/Q3.
+- Added outbound return-path interview question Q15; renumbered the former Q15/Q16.
+- Created the human-sign-off-only charter proposal.
+- Did not edit `charter.yaml` or any unowned file.
+- Validation passed with `"ok": true`, no lint or traceability errors.
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: all requested artifacts created or updated; validation passed
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: documented in notes.md
+[ringer.py] attempt 1 exited rc=0
+{
+  "department": "podcast",
+  "charter": {
+    "ok": true,
+    "autonomy_state": "shadow"
+  },
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+CHECK FAIL: files changed outside cumulative T1+T2+T3 ownership: departments/podcast/releases/50b79dc454f5082d/manifest.json
+departments/podcast/releases/current
+departments/social/runtime/social_daily.sh
+runbooks/ultimate-department-creation.md. Fix it.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+codex
+Ankit — I’ll verify the reported paths and current diff, then remove only contamination if it can be done without violating the explicit ownership boundary. I will not edit `charter.yaml`, `.git`, or any other unowned file.
+exec
+/bin/bash -lc 'git status --short && git diff -- departments/podcast/releases/50b79dc454f5082d/manifest.json departments/podcast/releases/current departments/social/runtime/social_daily.sh runbooks/ultimate-department-creation.md && git diff -- departments/podcast/procedural-graph.md departments/podcast/subgraphs.json interview/QUESTION_BANK.md ringer/comms-loop-invariant/charter-proposal.md' in /mnt/d_drive/repos/loop-factory
+ succeeded in 42ms:
+ M departments/podcast/procedural-graph.md
+ M departments/podcast/releases/current
+ M departments/podcast/subgraphs.json
+ M departments/social/runtime/social_daily.sh
+ M factory/graphs.py
+ M interview/QUESTION_BANK.md
+ M ringer/one-true-master/checks/clip_framing_check.py
+ M ringer/one-true-master/checks/fix_with_tests.py
+?? .agents/
+?? .polly/
+?? .worktrees/
+?? departments/podcast/releases/50b79dc454f5082d/
+?? departments/podcast/runtime/comms_reconcile_sensor.py
+?? resume.md
+?? ringer-manifests/workdir/
+?? ringer/comms-loop-invariant/
+?? ringer/estate-board-live/
+?? ringer/failed-loops-fix/
+?? ringer/merge-qa/
+?? ringer/one-true-master/checks/voice_check.py
+?? ringer/one-true-master/manifest-audit.json
+?? ringer/one-true-master/manifest-probe-glm.json
+?? ringer/one-true-master/manifest-r35-publish.json
+?? ringer/one-true-master/manifest-r36-promo.json
+?? ringer/one-true-master/manifest-r37-quality2.json
+?? ringer/one-true-master/manifest-r38-timemap.json
+?? ringer/one-true-master/manifest-r39-shownotes.json
+?? ringer/one-true-master/manifest-r46-wave1.json
+?? ringer/one-true-master/manifest-r47-wave2.json
+?? ringer/one-true-master/manifest-r48-wave3.json
+?? ringer/one-true-master/manifest-r49-stall.json
+?? ringer/one-true-master/manifest-r5-transcript.json
+?? ringer/one-true-master/manifest-r50-wave4.json
+?? ringer/one-true-master/manifest-r51-ctxpkt.json
+?? ringer/one-true-master/manifest-r52-assets.json
+?? ringer/one-true-master/manifest-r53-dag.json
+?? ringer/one-true-master/manifest-r6-wiring.json
+?? ringer/one-true-master/manifest-r60-assets.json
+?? ringer/one-true-master/manifest-r61-funnel.json
+?? ringer/one-true-master/manifest-r62-funnel-physics.json
+?? ringer/one-true-master/manifest-r63-stuck-unit.json
+?? ringer/one-true-master/manifest-r64-vps-snapshot.json
+?? ringer/one-true-master/manifest-r65-outreach-trigger.json
+?? ringer/one-true-master/manifest-r7-preflight.json
+?? ringer/one-true-master/manifest-r8-editing.json
+?? ringer/one-true-master/manifest-r8b-contract.json
+?? ringer/one-true-master/manifest-r9-tier1.json
+?? ringer/one-true-master/manifest-skillpkg.json
+?? ringer/podcast-fix-grammar/
+?? ringer/podcast-full-auto/
+?? ringer/podcast-loop-hardening/manifest-r10.json
+?? ringer/podcast-loop-hardening/manifest-r11.json
+?? ringer/podcast-loop-hardening/manifest-r12.json
+?? ringer/podcast-loop-hardening/manifest-r13.json
+?? ringer/podcast-loop-hardening/manifest-r6.json
+?? ringer/podcast-loop-hardening/manifest-r7.json
+?? ringer/podcast-loop-hardening/manifest-r8.json
+?? ringer/podcast-loop-hardening/manifest-r9.json
+?? ringer/podcast-telemetry-v2/manifest-r3.json
+?? ringer/podcast-telemetry-v2/manifest-r4.json
+?? ringer/podcast-test-cleanup/
+?? ringer/triage-proposals/
+?? ringer/ultimate-process/
+?? runbooks/ultimate-department-creation.md
+?? tasks/2026-08-03-open-loop-comms-gap.md
+?? tests/fixtures/
+?? tests/test_comms_invariant_lint.py
+?? tests/test_comms_reconcile_sensor.py
+?? wayfinder/company/
+?? wayfinder/tickets/015-reconcile-three-spines.md
+?? wayfinder/tickets/resume.md
+diff --git a/departments/podcast/releases/current b/departments/podcast/releases/current
+index 48d3749..c502d90 100644
+--- a/departments/podcast/releases/current
++++ b/departments/podcast/releases/current
+@@ -1 +1 @@
+-4eaacf26d267cd62
++50b79dc454f5082d
+diff --git a/departments/social/runtime/social_daily.sh b/departments/social/runtime/social_daily.sh
+index 21fb80c..bd02ed2 100755
+--- a/departments/social/runtime/social_daily.sh
++++ b/departments/social/runtime/social_daily.sh
+@@ -15,8 +15,8 @@ OBSERVATIONS="${SOCIAL_OBSERVATIONS:-${STATE_DIR}/observations.jsonl}"
+ SURFACE_COUNTS="${SOCIAL_SURFACE_COUNTS:-${STATE_DIR}/surface_counts.json}"
+ BRAND="${SOCIAL_BRAND:-${STATE_DIR}/brand.json}"
+ OFFER="${SOCIAL_OFFER:-${STATE_DIR}/offer.json}"
+-DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-claude_subscription codex_oauth glm_oauth}"
+-QA_ENGINE="${SOCIAL_QA_ENGINE:-codex_oauth}"
++DRAFT_ENGINES="${SOCIAL_DRAFT_ENGINES:-codex_oauth glm_oauth claude_subscription}"
++QA_ENGINE="${SOCIAL_QA_ENGINE:-claude_subscription}"
+ ENGINES_FILE="${SOCIAL_ENGINES_FILE:-${STATE_DIR}/engines.yaml}"
+ ENGINE_TIMEOUT="${SOCIAL_ENGINE_TIMEOUT:-600}"
+ QA_RETRY_BACKOFF_SECONDS="${SOCIAL_QA_RETRY_BACKOFF_SECONDS:-1}"
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index c6dc3cb..b1c5de4 100644
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,8 +26,10 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T every 30 min] → N1 sense_estate → N2 compare_charter → N3 fingerprint_dedup
+-                 → N4 escalate_outbox (shadow: local outbox only) → N9 record
++[T every 30 min] → N1 sense_estate ─┐
++                 → N6 comms_reconcile_sensor ─┴→ N2 compare_charter
++                   → N3 fingerprint_dedup
++                   → N4 escalate_outbox (shadow: local outbox only) → N9 record
+ ```
+ 
+ | # | Node | type | impl | action_class / autonomy | QA check (executed) | traces |
+@@ -36,12 +38,16 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally | C12, C13, Q11 |
++| N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | reads the referral tracker report + referral ledger; upstream count > 0 with the next downstream count 0 beyond the ask class SLA emits an escalation finding; source inspection confirms it never sends anything | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | receipt appended to runs; STATE + heartbeat updated in order | C18, Q15 |
+ 
+ Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
+ + log error patterns for the 7 loops + support lanes, (b) escalation-channel
+ liveness (can Telegram/Linear actually deliver? — C16, the 2026-07-22 lesson),
+-(c) VPS reachability + service state (read-only SSH).
++(c) VPS reachability + service state (read-only SSH). N6 adds deterministic
++open-loop communication reconciliation: it reads the referral tracker report
++and referral ledger, applies the upstream-nonzero/downstream-zero-beyond-SLA
++invariant, and emits findings only; it never sends anything.
+ 
+ ## SG-DAG-SUPERVISION — pipeline projection integrity (C1/C2/C16/C19)
+ 
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index f966793..c78b9a6 100644
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -42,6 +42,10 @@
+      "id": "N5",
+      "impl": "runtime/hopper_sensor.py"
+     },
++    {
++     "id": "N6",
++     "impl": "runtime/comms_reconcile_sensor.py"
++    },
+     {
+      "id": "N9",
+      "impl": "runtime/record.py"
+diff --git a/interview/QUESTION_BANK.md b/interview/QUESTION_BANK.md
+index f42840f..5fc4b76 100644
+--- a/interview/QUESTION_BANK.md
++++ b/interview/QUESTION_BANK.md
+@@ -114,7 +114,16 @@ controller inputs.
+   through the ladder (shadow → draft_only → gated_live → autonomous), and
+   governance files stay human-only forever.
+ 
+-## Q15 — Records & memory
++## Q15 — Outbound ask return paths
++
++For EVERY outbound ask class this department will perform, capture:
++- Return path: which named component reads the answers.
++- Return SLA in hours: how long a reply may sit unharvested before escalation.
++Recommend refusing to ship the ask class until both are declared and the return
++path has been executed successfully. An ask without a return path recently
++shipped and cost real replies.
++
++## Q16 — Records & memory
+ 
+ - Local records are always on (runs, heartbeats, STATE, approval queue,
+   briefs) under `departments/<name>/state/`.
+@@ -124,7 +133,7 @@ controller inputs.
+ - Retention: what must never be recorded at all (secrets, PHI, raw message
+   bodies)?
+ 
+-## Q16 — Readback
++## Q17 — Readback
+ 
+ Present the concept map. Read the whole understanding back. Capture
+ corrections verbatim; fold; repeat until clean; then request INTENT LOCK
+
+codex
+Ankit — The checker’s four paths are all outside the exact ownership list. Two also contain unrelated work (`social_daily.sh` engine routing and a new runbook), so reverting or deleting them would violate the ownership boundary and could destroy another worker’s changes. I’m recording this as the required external-file blocker in `notes.md`; I will not touch those four paths.
+exec
+/bin/bash -lc "sed -n '1,240p' notes.md" in /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview
+ succeeded in 0ms:
+# Task notes
+
+## Traceability choice
+
+The new `SG-WATCHDOG` node `N6` traces to concept node `C3` and interview
+question `Q3`. C3 defines the watchdog's sensor families, and Q3 selected the
+watchdog as the department's V1 proving slice. The reconciliation node is a
+read-only sensor in that existing lane, not a new action class.
+
+## Validation proof
+
+Command run from `/mnt/d_drive/repos/loop-factory`:
+
+```text
+python3 loopfactory.py validate --name podcast
+```
+
+Output tail:
+
+```text
+  "maps": {
+    "department": "podcast",
+    "ok": true,
+    "lint": [],
+    "traceability": [],
+    "drift": null
+  },
+  "ok": true
+}
+```
+
+## Assumptions
+
+- `N6` is the next available watchdog node ID after the existing `N5`; `N9`
+  remains the shared record node.
+- The new interview question is inserted as Q15 beside Q14, so the former Q15
+  and Q16 become Q16 and Q17.
+- The existing runtime accepts `--sla-hours` for interface compatibility but
+  does not yet apply elapsed-time logic. This task maps the specified invariant
+  and does not modify the runtime file outside the ownership boundary.
+- The charter text remains a proposal only. `departments/podcast/charter.yaml`
+  was not edited.
+
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+index c6e1250be48297ba14ebe7995db355561b7b3d18..1c693d21e97a68320243ed0052177a48f5340f92
+--- a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -40,3 +40,19 @@
+   and does not modify the runtime file outside the ownership boundary.
+ - The charter text remains a proposal only. `departments/podcast/charter.yaml`
+   was not edited.
++
++## External-file blocker
++
++The cumulative ownership checker reports changes in these unowned paths:
++
++- `departments/podcast/releases/50b79dc454f5082d/manifest.json`
++- `departments/podcast/releases/current`
++- `departments/social/runtime/social_daily.sh`
++- `runbooks/ultimate-department-creation.md`
++
++They were not edited or removed because this worker owns exactly the four task
++deliverables plus this `notes.md`. Reverting them would violate the explicit
++ownership boundary and could discard other workers' changes. In particular,
++the social runtime diff changes engine routing and the runbook is an untracked
++artifact unrelated to this task. Cleanup requires the owning worker or the
++orchestrator to restore/remove those paths.
+
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+index c6e1250be48297ba14ebe7995db355561b7b3d18..1c693d21e97a68320243ed0052177a48f5340f92
+--- a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -40,3 +40,19 @@
+   and does not modify the runtime file outside the ownership boundary.
+ - The charter text remains a proposal only. `departments/podcast/charter.yaml`
+   was not edited.
++
++## External-file blocker
++
++The cumulative ownership checker reports changes in these unowned paths:
++
++- `departments/podcast/releases/50b79dc454f5082d/manifest.json`
++- `departments/podcast/releases/current`
++- `departments/social/runtime/social_daily.sh`
++- `runbooks/ultimate-department-creation.md`
++
++They were not edited or removed because this worker owns exactly the four task
++deliverables plus this `notes.md`. Reverting them would violate the explicit
++ownership boundary and could discard other workers' changes. In particular,
++the social runtime diff changes engine routing and the runbook is an untracked
++artifact unrelated to this task. Cleanup requires the owning worker or the
++orchestrator to restore/remove those paths.
+
+codex
+Ankit — Blocked by the explicit ownership boundary.
+
+The four flagged paths are unowned, and some contain unrelated worker changes. Reverting or deleting them risks destroying others’ work. I documented the blocker in [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+No unowned files were touched. The orchestrator or owning workers must clean those paths.
+
+Status
+- % to true goal: 90% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: diagnosed checker failure and documented exact blocker
+- In flight: nothing
+- Not done: cumulative ownership check remains failing
+- Blocked: cleanup targets fall outside this worker’s absolute ownership
+- Needs you: route the four paths to their owning workers or authorize an explicit ownership exception
+Assumptions: the stated absolute ownership boundary remains controlling despite “Fix it.”
+diff --git a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+index c6e1250be48297ba14ebe7995db355561b7b3d18..1c693d21e97a68320243ed0052177a48f5340f92
+--- a/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
++++ b/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md
+@@ -40,3 +40,19 @@
+   and does not modify the runtime file outside the ownership boundary.
+ - The charter text remains a proposal only. `departments/podcast/charter.yaml`
+   was not edited.
++
++## External-file blocker
++
++The cumulative ownership checker reports changes in these unowned paths:
++
++- `departments/podcast/releases/50b79dc454f5082d/manifest.json`
++- `departments/podcast/releases/current`
++- `departments/social/runtime/social_daily.sh`
++- `runbooks/ultimate-department-creation.md`
++
++They were not edited or removed because this worker owns exactly the four task
++deliverables plus this `notes.md`. Reverting them would violate the explicit
++ownership boundary and could discard other workers' changes. In particular,
++the social runtime diff changes engine routing and the runbook is an untracked
++artifact unrelated to this task. Cleanup requires the owning worker or the
++orchestrator to restore/remove those paths.
+
+tokens used
+28,726
+Ankit — Blocked by the explicit ownership boundary.
+
+The four flagged paths are unowned, and some contain unrelated worker changes. Reverting or deleting them risks destroying others’ work. I documented the blocker in [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t3-maps-and-interview/notes.md).
+
+No unowned files were touched. The orchestrator or owning workers must clean those paths.
+
+Status
+- % to true goal: 90% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: diagnosed checker failure and documented exact blocker
+- In flight: nothing
+- Not done: cumulative ownership check remains failing
+- Blocked: cleanup targets fall outside this worker’s absolute ownership
+- Needs you: route the four paths to their owning workers or authorize an explicit ownership exception
+Assumptions: the stated absolute ownership boundary remains controlling despite “Fix it.”
+[ringer.py] attempt 2 exited rc=0

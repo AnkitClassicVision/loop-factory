@@ -1,0 +1,97 @@
+{
+  "schema": "seeit.diagram.v1",
+  "project": {
+    "name": "loop-factory podcast department — daily process",
+    "type": "agent_workflow",
+    "intent": "Every 30 minutes: sense the estate, judge evidence against the charter, card the human, propose an allowlisted heal, prove the run itself. Nothing counts without a receipt; every failure has one road back to action.",
+    "natural_shape": "pipeline_with_feedback_cycle",
+    "evidence_basis": "2026-08-10 11:30 ET run artifacts in departments/podcast/state/ + podcast_daily.sh + procedural-graph.md + systemd user units"
+  },
+  "nodes": [
+    {"id": "timer", "label": "podcast-loop.timer *:00/30", "kind": "trigger", "state": "green", "owner": "systemd", "stage": "gate"},
+    {"id": "mint", "label": "run-manifest MINT (kernel)", "kind": "gate", "state": "green", "owner": "kernel", "stage": "gate", "output": "state/run-manifests/<run_id>.json", "good": "roster hash matches pinned release; run_id issued; all later records bind to it", "qa": "kernel checks roster hash vs pinned release before any node runs", "on_fail": "refusal = the run does not start (deny-by-default); dead chain caught by estate deadman <=26h"},
+    {"id": "sense_estate", "label": "sense_estate", "kind": "sensor", "state": "green", "stage": "sense", "output": "observations.jsonl rows (timer/receipt/log/channel/vps) + sources/estate.json", "good": "every charter estate unit present and ok, receipts fresh", "qa": "silent-gap guard: a unit missing from output fails the check", "on_fail": "non-ok row -> compare -> incident -> card"},
+    {"id": "pipeline_sensor", "label": "pipeline_sensor", "kind": "sensor", "state": "red", "badges": ["blind"], "stage": "sense", "output": "guest-count observation from calendar+HubSpot join", "good": "counts from evidence, source fields logged per guest, never loop self-reports", "qa": "independence assertion; missing source => unknown, never assumed ok", "on_fail": "funnel_blind / funnel_behind incident -> card", "reality": "BLIND: sources/calendar.json absent; sole output is a missing-source row"},
+    {"id": "publish_verifier", "label": "publish_verifier", "kind": "sensor", "state": "yellow", "stage": "sense", "output": "publishday observation checked at the provider (RSS/YouTube/social)", "good": "publish-day receipts verified by 10:30 ET, else explicit no-publish-due", "qa": "provider-level check; missing receipt = incident, never a warning", "on_fail": "exact missing-proof block -> incident -> card", "reality": "only no-publish-due branch observed live so far"},
+    {"id": "manifest_sensor", "label": "manifest_sensor", "kind": "sensor", "state": "red", "badges": ["blind"], "stage": "sense", "output": "per-guest completeness observation", "good": "every gap lists missing field + chase status + fallback y/n", "qa": "HubSpot(read)+episode state; unresolved identity => suppress + review", "on_fail": "gap -> expectation delta -> incident -> card", "reality": "BLIND: sources/guest_manifests.json absent"},
+    {"id": "hopper_sensor", "label": "hopper_sensor", "kind": "sensor", "state": "green", "stage": "sense", "output": "hopper/objectives observation + objectives_observed.json", "good": "hopper depth + interview readiness meet objectives", "qa": "scans episodes hopper + publish schedule evidence directly", "on_fail": "shortfall -> funnel_behind -> incident -> card"},
+    {"id": "funnel_floor_sensor", "label": "funnel_floor_sensor", "kind": "sensor", "state": "green", "badges": ["alarming_now"], "stage": "sense", "output": "six funnel-floor observations + weekly quota (sensor=funnel)", "good": "floors met, computed from FUNNEL-LEDGER evidence only", "qa": "missing ledger => every floor UNKNOWN, never assumed ok", "on_fail": "breach -> funnel_behind; blind gauge -> funnel_blind", "reality": "alarming today: new_outreach_this_week, hopper_depth 0 — mechanism working"},
+    {"id": "floor_compiler", "label": "floor_compiler_run (weekly)", "kind": "compiler", "state": "green", "stage": "sense", "output": "floors.yaml + floors-history.jsonl", "good": "floors derived from charter goals + matured cohort rates", "qa": "weekly gate; FREEZES on state drift / unledgered inbound / red verdict / malformed ledger", "on_fail": "every move or freeze is itself an alarm observation; goals stay human-only"},
+    {"id": "expectation_reconcile", "label": "expectation_reconcile", "kind": "reconciler", "state": "green", "stage": "reconcile", "output": "expectation-receipts/<process>-latest.json (4 processes)", "good": "exit 0: all expectations met, deltas 0", "qa": "exit contract 0/2/1; || true bypass removed, pinned by test_daily_failclosed", "on_fail": "exit 2: findings judged THIS run; exit 1: chain stops"},
+    {"id": "comms_reconcile", "label": "comms_reconcile_sensor", "kind": "reconciler", "state": "green", "stage": "reconcile", "output": "validated reconciliation receipt + observations", "good": "no open loop: upstream nonzero => downstream movement within 48h SLA", "qa": "receipt-gated: invalid/empty receipt HALTS the chain before judging", "on_fail": "findings -> judge; broken tracker stops the run fail-closed"},
+    {"id": "dag_supervisor", "label": "dag_supervisor", "kind": "supervisor", "state": "yellow", "badges": ["alarming_now"], "stage": "reconcile", "output": "projection-integrity observation + incident candidates", "good": "fresh projection, hashes recompute clean, zero silent skips", "qa": "recomputes DAG + skip-artifact hashes; stale/missing = fail closed alarm", "on_fail": "dag_receipt_violation incident -> card; read-only lane, never schedules", "reality": "ALARMING: 9 silent skips in /mnt/d_drive/repos/podcast/state/receipts/dag-projection.json"},
+    {"id": "compare_charter", "label": "compare_charter", "kind": "judge", "state": "green", "stage": "judge", "output": "incident_candidates.json", "good": "every non-ok observation classified with setpoint + evidence path", "qa": "finite transition table, enumerable classes, no LLM", "on_fail": "crash stops chain fail-closed"},
+    {"id": "fingerprint_dedup", "label": "fingerprint_dedup", "kind": "judge", "state": "green", "stage": "judge", "output": "incidents.json + escalation_fingerprints.jsonl", "good": "one open thread per fingerprint", "qa": "dedup test: same fingerprint twice = ONE thread", "on_fail": "recurrence after resolve = department_defect escalation"},
+    {"id": "escalate_outbox", "label": "escalate_outbox", "kind": "actor_internal", "state": "green", "stage": "judge", "output": "escalation card in decisions_outbox.jsonl (eli5 + one question + evidence + fingerprint)", "good": "card complete, digest-deduped; shadow delivered_count==0 external", "qa": "card content check; digest markers fail closed", "on_fail": "unanswered >24h / stale >48h -> conductor re_escalate"},
+    {"id": "verify", "label": "run-manifest VERIFY (kernel)", "kind": "gate", "state": "yellow", "badges": ["unsigned"], "stage": "prove", "output": "run-manifests/<run_id>.verdict.json + runmanifest observation", "good": "green: 0 missing / duplicates / reordered / unexpected", "qa": "diff roster vs runs-v2 bound by LOOP_FACTORY_RUN_ID", "on_fail": "exit 2 advisory: manager warns today, judged next run; blocking flip = owner decision", "reality": "verdicts read ok,unsigned — signature not enforced"},
+    {"id": "manager", "label": "manager tick (factory)", "kind": "manager", "state": "yellow", "badges": ["red_finding_live"], "stage": "prove", "output": "MANAGER_BRIEF.md + heartbeats.jsonl + runs.jsonl + owner sends via outbox", "good": "findings empty or expected ramp; numbers inside ceilings", "qa": "deterministic Sense/Compare/Record vs charter; budget check vs budget_used.json", "on_fail": "red finding escalates to owner", "reality": "budget_telemetry_missing red every cycle: state/budget_used.json producer not wired for podcast"},
+    {"id": "hitl_push", "label": "human_in_the_loop push", "kind": "bridge", "state": "green", "stage": "prove", "output": "approval cards from approval_queue.jsonl into the outbox", "good": "queue drained, approvals in front of the owner", "qa": "queue/outbox accounting; brief counts approvals aged >1d", "on_fail": "aging approvals resurface in the brief every cycle"},
+    {"id": "heal_select", "label": "heal_select", "kind": "healer", "state": "green", "stage": "heal", "output": "playbook selection or recorded refusal -> heals.jsonl", "good": "fingerprint matches versioned playbook, or clean refusal — never improvise", "qa": "allowlist match only", "on_fail": "crash -> heal_failures.jsonl; incident stays open -> card"},
+    {"id": "heal_apply", "label": "heal_apply", "kind": "healer", "state": "yellow", "badges": ["failing_now"], "stage": "heal", "output": "proposed-heal receipt in heals.jsonl (shadow propose-only)", "good": "allowlisted commands only; invariants untouched", "qa": "allowlist enforcement; invariant touch = refuse", "on_fail": "failure row; chain continues; manager senses and drives the ladder", "reality": "restart of podcast-loop-production-publish proposed and FAILING repeatedly"},
+    {"id": "heal_verify", "label": "heal_verify", "kind": "healer", "state": "green", "stage": "heal", "output": "verify receipt in heals.jsonl", "good": "re-sense proves incident cleared (consecutive healthy)", "qa": "heal without verified clearance = FAILED heal", "on_fail": "FAILED heal escalates; recurrence feeds root-cause C12"},
+    {"id": "rotate", "label": "rotate_observations", "kind": "maintenance", "state": "green", "stage": "show", "output": "observations.jsonl bounded to 5000 lines + archive", "good": "retention bounded only after all consumers read", "qa": "hard line cap, runs after judging", "on_fail": "nonzero stops chain tail -> deadman"},
+    {"id": "boards", "label": "board render (estate)", "kind": "renderer", "state": "green", "stage": "show", "output": "estate/state/boards/podcast.html + index.html", "good": "boards rebuilt every run, mtime = last run", "qa": "render exit code inside the chain", "on_fail": "stale board = failed run tail -> deadman"},
+    {"id": "conductor", "label": "conductor_tick (observer)", "kind": "observer", "state": "green", "badges": ["shadow"], "stage": "show", "output": "conductor-shadow.jsonl would-dispatch ledger + heartbeat + driver.lease", "good": "exactly one driver; decisions ordered unblock > floor_gap > routine", "qa": "exclusive lease (second claimant gets durable refusal); deadman 26h liveness", "on_fail": "dispatches NOTHING in shadow; stale/unanswered items queued re_escalate"},
+    {"id": "owner", "label": "Ankit (owner)", "kind": "human", "state": "green", "stage": "human", "output": "answers to cards, approvals, promotion decisions", "good": "cards answered inside 48h SLA; approvals not aging", "qa": "comms_reconcile checks the answer actually returned", "on_fail": "conductor re-escalates; brief counts aging approvals"},
+    {"id": "deadman", "label": "estate deadman timer (26h)", "kind": "watchdog", "state": "green", "stage": "external", "output": "alarm when conductor-heartbeat stale >26h", "good": "silent", "qa": "independent systemd timer, hourly", "on_fail": "this IS the failure path — the watchdog for the watchdog"},
+    {"id": "record_legacy", "label": "record.py", "kind": "legacy", "state": "grey", "stage": "none", "notes": "in the graph as N9 but never invoked by the orchestrator; sensors emit their own records; deletion candidate"}
+  ],
+  "edges": [
+    {"from": "timer", "to": "mint", "strength": "strong", "carries": "trigger"},
+    {"from": "mint", "to": "sense_estate", "strength": "strong", "carries": "run_id binding"},
+    {"from": "sense_estate", "to": "expectation_reconcile", "strength": "strong", "carries": "observations (via 6 sibling sensors)"},
+    {"from": "expectation_reconcile", "to": "comms_reconcile", "strength": "strong", "carries": "receipts"},
+    {"from": "comms_reconcile", "to": "dag_supervisor", "strength": "strong", "carries": "chain continue (halts if receipt invalid)"},
+    {"from": "dag_supervisor", "to": "compare_charter", "strength": "strong", "carries": "observations + alarm verdicts"},
+    {"from": "compare_charter", "to": "fingerprint_dedup", "strength": "strong", "carries": "incident candidates"},
+    {"from": "fingerprint_dedup", "to": "escalate_outbox", "strength": "strong", "carries": "open incidents"},
+    {"from": "escalate_outbox", "to": "verify", "strength": "strong", "carries": "chain order"},
+    {"from": "verify", "to": "manager", "strength": "strong", "carries": "advisory verdict (today)"},
+    {"from": "manager", "to": "hitl_push", "strength": "strong", "carries": "chain order"},
+    {"from": "hitl_push", "to": "heal_select", "strength": "strong", "carries": "chain order"},
+    {"from": "heal_select", "to": "heal_apply", "strength": "strong", "carries": "playbook selection"},
+    {"from": "heal_apply", "to": "heal_verify", "strength": "strong", "carries": "proposed receipt"},
+    {"from": "heal_verify", "to": "rotate", "strength": "strong", "carries": "chain order"},
+    {"from": "rotate", "to": "boards", "strength": "strong", "carries": "bounded evidence"},
+    {"from": "boards", "to": "conductor", "strength": "strong", "carries": "chain order (conductor last)"},
+    {"from": "escalate_outbox", "to": "owner", "strength": "human", "carries": "escalation card (eli5 + one question)", "style": "wavy"},
+    {"from": "manager", "to": "owner", "strength": "human", "carries": "MANAGER_BRIEF + red findings", "style": "wavy"},
+    {"from": "boards", "to": "owner", "strength": "human", "carries": "operator boards (podcast.html)", "style": "wavy"},
+    {"from": "owner", "to": "comms_reconcile", "strength": "conditional", "carries": "answers return, 48h SLA", "style": "dashed"},
+    {"from": "heal_verify", "to": "sense_estate", "strength": "conditional", "carries": "next run re-senses: cleared or re-escalate", "style": "dashed", "loop": true},
+    {"from": "verify", "to": "compare_charter", "strength": "conditional", "carries": "red verdict judged next run", "style": "dashed", "loop": true},
+    {"from": "conductor", "to": "escalate_outbox", "strength": "conditional", "carries": "re_escalate stale >48h / unanswered >24h", "style": "dashed", "loop": true},
+    {"from": "deadman", "to": "owner", "strength": "conditional", "carries": "dead-chain alarm (>26h no heartbeat)", "style": "dashed"}
+  ],
+  "boundaries": [
+    {"name": "SHADOW", "note": "zero external sends anywhere in this department; delivered_count==0; VPS SSH disabled; heals propose-only"},
+    {"name": "kernel confinement", "note": "every node runs via factory/launch.py with no ambient credentials"},
+    {"name": "read-only supervision", "note": "pipeline repo (/mnt/d_drive/repos/podcast) is the only writer of episode state; this department only reads its exported projection"}
+  ],
+  "drift": [
+    {"node": "timer", "spec_says": "runtime/systemd timer file: daily 07:00", "reality_is": "podcast-loop.timer drives the same script every 30 min (*:00/30)", "severity": "low"},
+    {"node": "pipeline_sensor", "spec_says": "guest counts from calendar+HubSpot join", "reality_is": "blind — sources/calendar.json absent; unknown every run", "severity": "high"},
+    {"node": "manifest_sensor", "spec_says": "per-guest completeness from HubSpot+episode state", "reality_is": "blind — sources/guest_manifests.json absent", "severity": "high"},
+    {"node": "manager", "spec_says": "budget ceilings verified against usage telemetry", "reality_is": "state/budget_used.json producer never wired for podcast (sales got one 2026-08-07); red finding every cycle", "severity": "medium"},
+    {"node": "dag_supervisor", "spec_says": "zero silent skips", "reality_is": "9 silent skips alarmed in the pipeline projection", "severity": "medium"},
+    {"node": "heal_apply", "spec_says": "allowlisted restart clears timer incidents", "reality_is": "podcast-loop-production-publish inactive; restart heal failing repeatedly", "severity": "medium"},
+    {"node": "verify", "spec_says": "verdicts signed", "reality_is": "signature null — ok,unsigned", "severity": "low"},
+    {"node": "record_legacy", "spec_says": "N9 record in the graph", "reality_is": "never invoked by the orchestrator", "severity": "low"}
+  ],
+  "open_questions": [
+    "48h comms-return SLA is a provisional default pending owner review",
+    "run-manifest verify blocking flip (advisory -> blocking) is an owner decision at P1 exit",
+    "conductor cutover from shadow ledger to live driving is an owner promotion decision",
+    "escalation delivery live (Telegram) is an unpromoted ladder step; cards stay local today"
+  ],
+  "assumptions": [
+    "states judged from the 2026-08-10 11:30 ET run artifacts; a green node can still carry a live business alarm — color is node health, not funnel health",
+    "no PHI/guest personal data included in this map; evidence paths only"
+  ],
+  "external_touchpoints": [
+    {"system": "HubSpot", "via": "exported source snapshots (read-only)", "purpose": "guest counts, manifest completeness"},
+    {"system": "RSS/YouTube/social", "via": "publish_verifier provider checks", "purpose": "public publish receipts"},
+    {"system": "Telegram/Linear", "via": "channel liveness metadata only (shadow)", "purpose": "escalation delivery once promoted"},
+    {"system": "VPS", "via": "SSH probe (disabled in shadow)", "purpose": "recording worker health"}
+  ]
+}

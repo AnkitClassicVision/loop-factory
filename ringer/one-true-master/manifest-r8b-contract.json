@@ -1,0 +1,24 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r8b",
+  "max_parallel": 3,
+  "worktrees": false,
+  "tasks": [
+    {
+      "key": "edit-contract-research",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "spec": "You are a READ-ONLY researcher. Write only ./report.md in your working directory. Never modify anything in /mnt/d_drive/repos/podcast. No git writes, no MCP, no skills.\n\nTASK. Propose the EDIT CORRECTNESS CONTRACT for an automated two-person video podcast pipeline: the set of rules that, if enforced by executed checks, make the automated edit right the first time, every time. The owner's definition of right: pre-roll/post-roll chatter and retakes cut, dead air handled, camera on the actual speaker, bumpers correct, audio levels correct, nothing desynced, and clips that contain the words they were chosen for.\n\nGROUND IT IN THIS REPO, not in generalities. Read at least: server/pipeline/angle_render.py (the render + camera switching), server/pipeline/media_gates.py (existing gate patterns and how they print WHY), docs/EDITORIAL-CONTEXT-CONTRACT.md and any EDIT-CONTEXT.md, server/pipeline/clip_selector.py and promo_clips.py (clip cutting), and one episode's processed/transcript.json for the real data shape (word timestamps with start_s/end_s per track).\n\nFORMAT: for each rule give NAME / RULE (one sentence) / DETECT (the deterministic measurement, with the exact signal: e.g. word-timestamp gaps for dead air, cross-track repeated n-gram windows for retakes, RMS windows per stem for speaker attribution, EBU R128 integrated loudness for levels) / TEST (an executable check shape) / RED (the poisoned input that must fail it) / COST (cheap-deterministic vs needs-LLM vs needs-human). Prefer deterministic detection; flag LLM-judgment rules explicitly \u2014 the owner's governance requires every step to prove completion with an executed receipt, and an LLM opinion is not a receipt.\n\nCover at minimum: content window boundaries, retake detection, dead-air policy (with a defensible threshold and why), filler policy, speaker-switch correctness, dropout-freeze handling (a 5s auto-switch rule exists), bumper attachment and loudness, final A/V sync certification (a 12-point cross-correlation certifier already exists at 0.0ms \u2014 cite how it should gate the final render), clip-content verification, and staleness (final artifacts must be newer than their inputs \u2014 a real gap found today: preflight passed on files built before the fixes).\n\nOUTPUT: ./report.md. Two-sentence summary first. At least 8 citations in path:line form from files you actually read; invented line numbers are checked and fail.\n",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/review_check.py' report.md '/mnt/d_drive/repos/podcast' 8 retake dead bumper loudness",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "a repo-grounded edit correctness contract with deterministic DETECT/TEST/RED per rule",
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+diff --git a/factory/outbox_push.py b/factory/outbox_push.py
+index a240b29..74d4809 100644
+--- a/factory/outbox_push.py
++++ b/factory/outbox_push.py
+@@ -40,6 +40,7 @@ import hashlib
+ import json
+ import logging
+ import os
++import re
+ import subprocess
+ import sys
+ from datetime import datetime, timezone
+@@ -53,6 +54,17 @@ LOGGER = logging.getLogger(__name__)
+ KINDS = frozenset({"escalation", "approval"})
+ HASH_LIMIT = 200
+ TEXT_LIMIT = 800
++# Owner rule after the 2026-08-05 card-polarity incident: Approve is always
++# safe-forward; stop actions must ride Respond/FIX with an explicitly typed word.
++CARD_POLARITY_STOP_VERBS = (
++    "pause|stop|halt|hold|cancel|delete|remove|kill|unschedule|abort|revoke|"
++    "suspend|disable|block|retract|withdraw"
++)
++CARD_POLARITY_MAPPING_RE = re.compile(
++    rf"\bapprove\b\s*(?:=|means\b|:|->|to\b|[—–-])\s*(?:the\s+)?"
++    rf"(?P<verb>{CARD_POLARITY_STOP_VERBS})\b",
++    re.IGNORECASE,
++)
+ 
+ 
+ class ConfigError(ValueError):
+@@ -300,6 +312,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+     attempts = 0
+     ping_successes = 0
+     card_failures = 0
++    polarity_failures = 0
+     changed = False
+     missing_watch_paths: list[str] = []
+ 
+@@ -348,6 +361,25 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+                 "department": watch["department"],
+                 "kind": watch["kind"],
+             }
++            human_text = "\n".join(
++                (
++                    values["title"],
++                    values["body"],
++                    row.get("eli5", "") if isinstance(row.get("eli5"), str) else "",
++                )
++            )
++            polarity_match = CARD_POLARITY_MAPPING_RE.search(human_text)
++            if polarity_match:
++                polarity_failures += 1
++                LOGGER.error(
++                    "card polarity violation for %s line %d: Approve must never mean "
++                    "'%s' — rephrase so Approve is the safe-forward action and the "
++                    "stop rides Respond with a typed word (owner rule 2026-08-05)",
++                    source,
++                    line_index + 1,
++                    polarity_match.group("verb").lower(),
++                )
++                break
+             ping_argv = _render(config["ping"], values)
+             card_argv = _render(config["card"], values) if config["card_enabled"] else []
+             if dry_run:
+@@ -419,7 +451,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+             ", ".join(missing_watch_paths),
+         )
+         return 4
+-    return 3 if card_failures or (attempts and ping_successes == 0) else 0
++    return 3 if polarity_failures or card_failures or (attempts and ping_successes == 0) else 0
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_outbox_push.py b/tests/test_outbox_push.py
+index 561834c..ef83698 100644
+--- a/tests/test_outbox_push.py
++++ b/tests/test_outbox_push.py
+@@ -133,6 +133,70 @@ def test_card_failure_leaves_row_unconsumed(tmp_path):
+     assert not ledger.exists()
+ 
+ 
++def test_approve_mapped_to_pause_is_rejected_without_consuming_row(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(json.dumps({"eli5": "Approve = pause the launch"}) + "\n")
++    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
++
++    result = _run(_config(tmp_path, watch, ping, card))
++
++    assert result.returncode == 3
++    assert not (tmp_path / "ping.jsonl").exists()
++    assert not (tmp_path / "card.jsonl").exists()
++    assert not (tmp_path / "cursor.json").exists()
++    assert "Approve must never mean 'pause'" in result.stderr
++    assert "owner rule 2026-08-05" in result.stderr
++
++
++def test_real_mixed_case_approve_pause_incident_is_rejected(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(
++        json.dumps({"eli5": "Approve = PAUSE the 10am publish"}) + "\n"
++    )
++    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
++
++    result = _run(_config(tmp_path, watch, ping, card))
++
++    assert result.returncode == 3
++    assert not (tmp_path / "ping.jsonl").exists()
++    assert not (tmp_path / "card.jsonl").exists()
++
++
++def test_stop_verb_not_mapped_to_approve_is_allowed(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(
++        json.dumps(
++            {
++                "eli5": (
++                    "WHAT IT NEEDS: approve the catch-up actions; ops will pause "
++                    "the old timer"
++                )
++            }
++        )
++        + "\n"
++    )
++    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
++
++    result = _run(_config(tmp_path, watch, ping, card))
++
++    assert result.returncode == 0
++    assert len(_calls(tmp_path / "ping.jsonl")) == 1
++    assert len(_calls(tmp_path / "card.jsonl")) == 1
++
++
++def test_approve_to_cancel_is_rejected(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(json.dumps({"eli5": "Approve to cancel the schedule"}) + "\n")
++    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "card")
++
++    result = _run(_config(tmp_path, watch, ping, card))
++
++    assert result.returncode == 3
++    assert not (tmp_path / "ping.jsonl").exists()
++    assert not (tmp_path / "card.jsonl").exists()
++    assert "Approve must never mean 'cancel'" in result.stderr
++
++
+ def test_card_failure_retries_successfully_on_next_tick(tmp_path):
+     watch = tmp_path / "outbox.jsonl"
+     watch.write_text(json.dumps({"eli5": "hello"}) + "\n")

@@ -1,0 +1,87 @@
+{
+  "run_name": "podcast-full-auto",
+  "workdir": "/home/ankit114/ringer-work/podcast-full-auto-scout",
+  "max_parallel": 5,
+  "tasks": [
+    {
+      "key": "editing-deep-dive",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a READ-ONLY scout for the OBE podcast repo at /mnt/d_drive/repos/podcast. You may run git/grep/pytest --collect-only and read any file in that repo (and docs), but you must NOT modify, create, or delete anything inside it. Your only writable output is ./report.md in your current scratch task directory. Do not load skills or call MCP/Apps. No network. No media processing. Use PYTHONDONTWRITEBYTECODE=1 and PYTHONPYCACHEPREFIX=/tmp for any python invocation.\n\nMISSION CONTEXT: the owner wants the pipeline 100% hands-off (except prep/recording calls, human by charter). Your report is source material for an implementation plan whose tasks need EXACT file paths, function signatures, and entry-point commands \u2014 vague findings are useless. Every claim needs file:line evidence.\n\nSCOPE: the post-recording EDITING path \u2014 from assembled raw tracks to a publish-ready edited episode.\n\nINVESTIGATE:\n1. Map the automated chain today: scripts/process_recording_jobs.py -> server/pipeline/recording_worker.py -> assembly (server/pipeline/video_assembly.py, angle_render, reconnect_tracks) -> where does automation STOP? Which module (if any) applies editorial cuts / dead-air removal / retake handling ('Sorry, Redo.' flub cuts like E103's 546.1s-562.6s cut)?\n2. The v2 editorial engine (WP2): find it (grep for editorial/polish/cuts/dead_air across server/ and scripts/), its entry points, inputs (word timings? transcript?), and its current invocation story \u2014 is it callable headless end-to-end, or operator-driven? Read docs/EDIT-PIPELINE-V2-POLISH-PLAN.md, docs/EDITORIAL-CONTEXT-CONTRACT.md, docs/RESIDUE-STATEMENT-podcast-post-production.md, docs/clip-v10-style.md if present.\n3. Reconstruct EXACTLY what operators did manually for E102 and E103: read docs/PILOT-RUNBOOK-NICK-E102.md, docs/POST-RECORDING-VERIFICATION-AUDIT-2026-07-10.md, episodes/FUNNEL-STATE.md history, scripts/nick_e102_*.py and any kevin/E103 scripts + logs/ filenames; list each manual step as 'STEP: <what> | WHY MANUAL: <reason> | AUTOMATABLE VIA: <exact module/function>'.\n4. Transcription + word timings: which module produces them (grep transcribe/word_timings), GPU vs CPU lanes, the operator 'local-GPU directive' \u2014 what makes local-GPU necessary and how a job routes there.\n5. The media QA gates (scripts/gates/*.py, built recently): where exactly they should hook into the automated chain (name the function/line in the worker or assembly where each gate belongs).\n\nREPORT (./report.md): '## Current automated chain' (with file:line per hop), '## Where automation stops', '## Manual steps E102/E103' (the STEP list), '## v2 editorial engine status' (entry point signature, inputs, headless-capable yes/no + blocker), '## Gate hook points' (gate -> exact insertion site), '## Automation design sketch' (the minimal set of new/changed functions to make editing unattended, each with proposed exact path + signature), '## Risks'.",
+      "check": "python3 -c \"import sys; t=open('report.md').read(); qs=['Current automated chain', 'Manual steps', 'editorial engine', 'Gate hook points', 'Automation design sketch']; missing=[q for q in qs if q.lower() not in t.lower()]; print('missing sections:', missing); import re; cites=len(re.findall(r'[A-Za-z0-9_/.-]+\\.(?:py|md|sh):?\\d*', t)); print('citations:', cites); sys.exit(0 if not missing and cites>=15 and len(t.split())>400 else 1)\"",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "report has all required sections, >=15 file citations, and substantive length"
+    },
+    {
+      "key": "clips-social-lane",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a READ-ONLY scout for the OBE podcast repo at /mnt/d_drive/repos/podcast. You may run git/grep/pytest --collect-only and read any file in that repo (and docs), but you must NOT modify, create, or delete anything inside it. Your only writable output is ./report.md in your current scratch task directory. Do not load skills or call MCP/Apps. No network. No media processing. Use PYTHONDONTWRITEBYTECODE=1 and PYTHONPYCACHEPREFIX=/tmp for any python invocation.\n\nMISSION CONTEXT: the owner wants the pipeline 100% hands-off (except prep/recording calls, human by charter). Your report is source material for an implementation plan whose tasks need EXACT file paths, function signatures, and entry-point commands \u2014 vague findings are useless. Every claim needs file:line evidence.\n\nSCOPE: clip generation + social fanout.\n\nINVESTIGATE:\n1. server/pipeline/promo_clips.py: entry points, how clip selection happens (LLM? heuristics?), output contract (clip_{n}_vertical/landscape/youtube_short), branding/captions, where public S3 upload happens (orchestrator ~:524-549? publicize?).\n2. The approved-clip expectation flow in server/pipeline/orchestrator.py (~:2254-2500): how clips become approved expectations, the derived-Short schedule normalization (recently fixed), the publicize gateway action.\n3. server/pipeline/zernio.py + outbound dispatch: per-post targets, idempotency keys, media URL requirements (public S3), launch-day blackout, brand vs personal accounts.\n4. What was still OPERATOR-DRIVEN for E102/E103 clips (naming/staging mismatch 7/15, S3-public fix 7/16, upload_herrera_shorts.py-style one-offs): list each manual step with the STEP|WHY MANUAL|AUTOMATABLE VIA format.\n\nREPORT (./report.md): '## Clip lane map' (file:line hops), '## Social fanout map', '## Manual steps observed', '## Unattended design sketch' (exact functions to add/change so clips are generated, uploaded public, scheduled with zero operator steps once an episode is publish-ready), '## Risks'.",
+      "check": "python3 -c \"import sys; t=open('report.md').read(); qs=['Clip lane map', 'Social fanout map', 'Manual steps', 'design sketch']; missing=[q for q in qs if q.lower() not in t.lower()]; print('missing sections:', missing); import re; cites=len(re.findall(r'[A-Za-z0-9_/.-]+\\.(?:py|md|sh):?\\d*', t)); print('citations:', cites); sys.exit(0 if not missing and cites>=15 and len(t.split())>400 else 1)\"",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "report has all required sections, >=15 file citations, and substantive length"
+    },
+    {
+      "key": "publish-zero-touch",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a READ-ONLY scout for the OBE podcast repo at /mnt/d_drive/repos/podcast. You may run git/grep/pytest --collect-only and read any file in that repo (and docs), but you must NOT modify, create, or delete anything inside it. Your only writable output is ./report.md in your current scratch task directory. Do not load skills or call MCP/Apps. No network. No media processing. Use PYTHONDONTWRITEBYTECODE=1 and PYTHONPYCACHEPREFIX=/tmp for any python invocation.\n\nMISSION CONTEXT: the owner wants the pipeline 100% hands-off (except prep/recording calls, human by charter). Your report is source material for an implementation plan whose tasks need EXACT file paths, function signatures, and entry-point commands \u2014 vague findings are useless. Every claim needs file:line evidence.\n\nSCOPE: what stands between the current publish path and a ZERO-TOUCH launch day.\n\nINVESTIGATE:\n1. The 9:55 cron end-to-end: scripts/daily-cron.sh -> server/app.py /cron/daily -> orchestrator.handle_daily_cron (~:3236) -> warmup/tease/launch emails, publish gate, Transistor + YouTube publish, completion readbacks (publish_completion.py), site verification, social batch. Map every decision point with file:line.\n2. From the incident record (docs/podcast-funnel-AUTOMATION-DIAG-2026-07-16.md 'Publish fanout' row, docs/podcast-next-week-clean-run-checklist-2026-07-09.md, FUNNEL-STATE launch-day notes): list every human rescue that happened on E102/E103 launch days and classify: FIXED-SINCE (cite the fix) vs STILL-POSSIBLE (what would break tomorrow).\n3. The review-queue / publish-reconcile drain: who drains failures today? Is there a retry loop or does a failed provider call sit until a human looks?\n4. E103 publishes tomorrow 2026-07-23 (stage publish-queued): from episodes/ state on the LOCAL copy plus code, predict what tomorrow's 9:55 run will do and name the exact preconditions it must find (media files, content package, receipts). Do NOT contact the VPS.\n\nREPORT (./report.md): '## 9:55 flow map', '## Rescue history: fixed vs still-possible', '## Failure drain gaps', '## E103 tomorrow: preconditions + predicted path', '## Zero-touch design sketch' (exact changes: auto-retry policies, alarms, drain loop), '## Risks'.",
+      "check": "python3 -c \"import sys; t=open('report.md').read(); qs=['flow map', 'fixed vs still-possible', 'drain', 'E103 tomorrow', 'design sketch']; missing=[q for q in qs if q.lower() not in t.lower()]; print('missing sections:', missing); import re; cites=len(re.findall(r'[A-Za-z0-9_/.-]+\\.(?:py|md|sh):?\\d*', t)); print('citations:', cites); sys.exit(0 if not missing and cites>=15 and len(t.split())>400 else 1)\"",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "report has all required sections, >=15 file citations, and substantive length"
+    },
+    {
+      "key": "manifest-arming-seams",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a READ-ONLY scout for the OBE podcast repo at /mnt/d_drive/repos/podcast. You may run git/grep/pytest --collect-only and read any file in that repo (and docs), but you must NOT modify, create, or delete anything inside it. Your only writable output is ./report.md in your current scratch task directory. Do not load skills or call MCP/Apps. No network. No media processing. Use PYTHONDONTWRITEBYTECODE=1 and PYTHONPYCACHEPREFIX=/tmp for any python invocation.\n\nMISSION CONTEXT: the owner wants the pipeline 100% hands-off (except prep/recording calls, human by charter). Your report is source material for an implementation plan whose tasks need EXACT file paths, function signatures, and entry-point commands \u2014 vague findings are useless. Every claim needs file:line evidence.\n\nSCOPE: two seams \u2014 (A) automatic room arming, (B) guest-manifest writes to HubSpot.\n\nINVESTIGATE A (arming):\n1. How arming works: server/app.py /recording/arm (~:1075), recording_state.arm_room, _resolve_episode_dir_for_room; who calls arm today (grep arm_room callers, scripts/set_standing_holds.py? scripts/daily_booking_scan.py? scripts/ensure_daily_recording_webhook.py?).\n2. Where the system KNOWS the next recording: calendar scan (scripts/daily_booking_scan.py), episode.json stages (recording-booked), FUNNEL-STATE. Design the auto-arm: a deterministic job that, N hours before a calendar recording event, arms the room to that episode and alarms on ambiguity (two episodes same room/day = escalate, never guess). Name exact insertion point (existing cron/scan vs new script + systemd timer), function signature, and the failure modes (the 3 historical stale-arming incidents: Kevin, E103 solo unassigned, Fred).\n\nINVESTIGATE B (manifests):\n3. The asset/open-items lane: server/pipeline/open_items.py (item schema ~:10-27), post_prep.py request/chase (~:405-510), where received assets land (episode.json fields? files?).\n4. HubSpot write path: server/pipeline/hubspot.py (PODCAST_PROPERTIES, _require_write_lease, PLACEHOLDER_MODE); the 29 new podcast_manifest_* contact properties (see scripts/create_manifest_properties.py for names). Design the writer: a deterministic sync that maps open-items + episode.json -> podcast_manifest_* fields + per-field status JSON + completeness rollup, runs post-prep and post-publish, respects the write lease. Exact proposed module path + function signatures + which existing cron invokes it.\n\nREPORT (./report.md): '## Arming: current mechanics' (file:line), '## Arming: auto-arm design' (exact), '## Manifest: current asset flow', '## Manifest: HubSpot writer design' (exact field mapping table), '## Risks'.",
+      "check": "python3 -c \"import sys; t=open('report.md').read(); qs=['Arming: current mechanics', 'auto-arm design', 'Manifest: current asset flow', 'HubSpot writer design']; missing=[q for q in qs if q.lower() not in t.lower()]; print('missing sections:', missing); import re; cites=len(re.findall(r'[A-Za-z0-9_/.-]+\\.(?:py|md|sh):?\\d*', t)); print('citations:', cites); sys.exit(0 if not missing and cites>=15 and len(t.split())>400 else 1)\"",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "report has all required sections, >=15 file citations, and substantive length"
+    },
+    {
+      "key": "fred-e104-readiness",
+      "engine": "codex",
+      "task_type": "research",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a READ-ONLY scout for the OBE podcast repo at /mnt/d_drive/repos/podcast. You may run git/grep/pytest --collect-only and read any file in that repo (and docs), but you must NOT modify, create, or delete anything inside it. Your only writable output is ./report.md in your current scratch task directory. Do not load skills or call MCP/Apps. No network. No media processing. Use PYTHONDONTWRITEBYTECODE=1 and PYTHONPYCACHEPREFIX=/tmp for any python invocation.\n\nMISSION CONTEXT: the owner wants the pipeline 100% hands-off (except prep/recording calls, human by charter). Your report is source material for an implementation plan whose tasks need EXACT file paths, function signatures, and entry-point commands \u2014 vague findings are useless. Every claim needs file:line evidence.\n\nSCOPE: Fred Cho's episode (2026-06-10-fred-cho) as the end-to-end PROOF RUN candidate.\n\nINVESTIGATE (LOCAL repo only, do not contact the VPS):\n1. episodes/2026-06-10-fred-cho/: inventory everything present locally (raw/ has 4 webm tracks pulled 7/22 + prep-call transcript; what else \u2014 bio? headshot? links? content?). Read episode.json: stage, assets, publish_date fields.\n2. From FUNNEL-STATE.md + prep materials: what guest assets were received 6/22 (bio, headshot, links per the 6/22 note) and where they physically live.\n3. Enumerate the EXACT processing chain Fred's episode needs from raw tracks to publish-queued, as a checklist with the command/entry point per step under CURRENT code (even where operator-driven): reconnect/assembly -> transcription/word timings -> edit -> gates -> thumbnail/artwork -> content package -> clips -> preflight. For each: INPUT present locally? yes/no.\n4. Recommended publish_date given the calendar (E103 goes 7/23; weekly Wednesday cadence suggests 7/30) \u2014 read publish-calendar patterns in episodes/ or docs.\n\nREPORT (./report.md): '## Fred episode inventory' (file list + episode.json key fields), '## Assets present vs missing', '## Processing checklist' (step | entry point | input present), '## Recommended schedule', '## Blockers for a hands-off run'.",
+      "check": "python3 -c \"import sys; t=open('report.md').read(); qs=['episode inventory', 'present vs missing', 'Processing checklist', 'Blockers']; missing=[q for q in qs if q.lower() not in t.lower()]; print('missing sections:', missing); import re; cites=len(re.findall(r'[A-Za-z0-9_/.-]+\\.(?:py|md|sh):?\\d*', t)); print('citations:', cites); sys.exit(0 if not missing and cites>=15 and len(t.split())>400 else 1)\"",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "report has all required sections, >=15 file citations, and substantive length"
+    }
+  ]
+}

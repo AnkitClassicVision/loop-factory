@@ -1,0 +1,34 @@
+{
+  "created_at": "2026-08-08T23:37:01.259189+00:00",
+  "max_parallel": 1,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "run_name": "triage-infra_restartable",
+  "source_fingerprints": [
+    "1298c6dcb8c2",
+    "8888badf81e9"
+  ],
+  "tasks": [
+    {
+      "check": "test \"$(systemctl --user --failed --plain --no-legend | wc -l)\" -eq 0",
+      "engine": "codex",
+      "expect_files": [],
+      "key": "infra_restartable-1",
+      "spec": "Diagnose and propose a bounded repair for this loop-factory incident. Department: estate. Failing nodes/units: estate-runtime. Observed diagnosis: [estate] needs you: [deadman] estate watchdog alarm: conductor_heartbeat_stale; sales conductor heartbeat stale. Incident fingerprint: 1298c6dcb8c2. Read the relevant charter and runtime evidence before editing. Preserve shadow-first, deny-by-default, receipt-gated behavior. Do not change governance, autonomy, promotion, or human-gate files. Implement only the smallest evidence-backed fix, run the supplied check, and leave changes uncommitted for coordinator review.",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "verified": "post-fix service or release-state check passes"
+    },
+    {
+      "check": "test \"$(systemctl --user --failed --plain --no-legend | wc -l)\" -eq 0",
+      "engine": "codex",
+      "expect_files": [],
+      "key": "infra_restartable-2",
+      "spec": "Diagnose and propose a bounded repair for this loop-factory incident. Department: podcast. Failing nodes/units: podcast-runtime. Observed diagnosis: [podcast] Action needed \u2014 WHAT THIS MEANS: A podcast job has not recently proven that it finished successfully. WHAT IT NEEDS: Ops must check the job and restore a fresh completion record; nothing needed from you unless the job should be retired.. Incident fingerprint: 8888badf81e9. Read the relevant charter and runtime evidence before editing. Preserve shadow-first, deny-by-default, receipt-gated behavior. Do not change governance, autonomy, promotion, or human-gate files. Implement only the smallest evidence-backed fix, run the supplied check, and leave changes uncommitted for coordinator review.",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "verified": "post-fix service or release-state check passes"
+    }
+  ],
+  "workdir": "/mnt/d_drive/repos/loop-factory",
+  "worktrees": true
+}

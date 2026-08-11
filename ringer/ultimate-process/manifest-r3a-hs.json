@@ -1,0 +1,23 @@
+{
+ "run_name": "ultimate-process",
+ "workdir": "/home/ankit114/ringer-work/ultimate-process-r3hs",
+ "worktrees": true,
+ "repo": "/mnt/d_drive/repos/hubspot-daily-2",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "hsd-gate-wiring",
+   "engine": "codex",
+   "task_type": "code-feature",
+   "timeout_s": 3600,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "Your current working directory IS a git worktree. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills; fixture-only tests with INVENTED contacts. NEVER execute scripts/gap_sync.py in any form. NEVER read *.env/*secret*/*token*/*key*/*credential* files. Repo: hubspot-daily-2 worktree. The voice gate exists at /mnt/d_drive/repos/hubspot-daily-2/scripts/voice_gate.py (read it): check_draft(body, *, channel, subject=None, metadata=None) -> {pass, defects[{rule_id,severity,detail}], warns, rule_version, content_hash}; CLI --body-file --channel --subject --metadata-json --receipt-out, exit 0/1/2, PII-free receipts; rules at scripts/voice_rules.json. Invoke via subprocess by absolute path or import via importlib file location \u2014 your call; MISSING/erroring gate must FAIL CLOSED (block the draft path, never skip). MISSION: every HSD outreach draft passes the executed voice gate BEFORE it reaches a human surface or a Gmail draft. FIND the drafting sites first (read-only recon inside this worktree): the daily operator's draft/outreach phases and any warm-recovery/outreach-run scripts that compose email copy \u2014 grep for Gmail draft creation, message composition, subject/body assembly. WIRE: at each site, after copy assembly and before draft-write/surface, call the gate with channel email and metadata {hubspot_bcc_present: bool from the actual send config}; on fail, do NOT create the Gmail draft/surface \u2014 write the PII-free gate receipt beside the lane's receipts, mark the item blocked_voice_gate with defect rule_ids, and continue the run (one bad draft never kills the batch). On pass, attach {voice_gate: {pass, rule_version, content_hash}} to the item's receipt. OWNED FILES: the 1-3 drafting-site files you identify (list them in evidence.md with justification) + tests/test_hsd_voice_wiring.py. Tests (>=6, fixture-only, fake the gate via monkeypatch AND via a real subprocess call on one fixture): failing copy blocks draft creation + writes receipt + batch continues; passing copy proceeds with annotation; missing gate module fails closed; receipt is PII-free. Write ./evidence.md: sites found (file:line), wiring diffs summary, test output. VERIFY: run the repo's existing test suite for touched files + your new tests.",
+   "check": "python3 -c \"import sys,subprocess;from pathlib import Path;e=Path('evidence.md');t=e.read_text(errors='replace').lower() if e.exists() else sys.exit(print('FAIL: evidence.md missing') or 1);r=subprocess.run(['python3','-m','pytest','tests/test_hsd_voice_wiring.py','-q','-p','no:cacheprovider'],capture_output=True,text=True,env={'PYTHONDONTWRITEBYTECODE':'1','PATH':'/usr/bin:/bin'});ok='passed' in r.stdout and r.returncode==0;d=subprocess.run(['git','diff','HEAD'],capture_output=True,text=True).stdout;Path('/home/ankit114/ringer-work/ultimate-process-r3hs/hsdwiring.patch').write_text(d);need=[('sites named','file'),('fail-closed','fail')];fails=[n for n,pat in need if pat not in t]+([] if ok else ['pytest failed: '+r.stdout[-200:]])+([] if len(d)>500 else ['patch too small']);print('HSD-WIRE CHECK:','PASS' if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\"",
+   "expect_files": [],
+   "verified": "every HSD outreach draft is voice-gated fail-closed before surfacing, proven by fixtures incl. one real gate subprocess call"
+  }
+ ]
+}

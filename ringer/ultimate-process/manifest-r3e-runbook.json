@@ -1,0 +1,23 @@
+{
+ "run_name": "ultimate-process",
+ "workdir": "/home/ankit114/ringer-work/ultimate-process-r3rb",
+ "worktrees": true,
+ "repo": "/home/ankit114/repos/Ankit-open-skills",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "guest-email-ingestion",
+   "engine": "codex",
+   "task_type": "code-feature",
+   "timeout_s": 3600,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "Your current working directory IS a git worktree of the Ankit-open-skills repo (runbook home). Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills; NEVER read *.env/*secret*/*token*/*key*/*credential* files. You are editing a RUNBOOK (natural-language process spec executed daily by an LLM worker) plus adding one deterministic helper script in the podcast repo is FORBIDDEN \u2014 runbook-only change; keep everything the runbook can do with the Gmail read access it already has.\n\nMISSION (owner, 2026-08-03): the podcast guest-acquisition loop only checks KNOWN email threads for replies. Today's receipt: pipeline 1/6, 'today's Gmail check found no newer reply', 'No outreach was sent or drafted by this loop'. The owner sources guests via email AND LinkedIn. Upgrade the runbook so every daily run ALSO: (1) FULL-INBOX GUEST SCAN \u2014 search the inbox (last 3 days window) for guest-relevant NEW messages beyond tracked threads: senders matching the prospect list, and guest-shaped cold inbound (podcast-guest language: 'be on your podcast', 'guest spot', 'love the show', referral intros). Classify: known-prospect reply / new-prospect inbound / irrelevant. (2) LINKEDIN HANDOFF INGESTION \u2014 read the handoff artifact at /mnt/d_drive/repos/open-engine/departments/sales/state/handoff/podcast_guest_linkedin.jsonl when present (rows: ts, thread_ref, sender_display, matched_prospect, snippet, needs_reply); treat its needs_reply rows as funnel events equal to email replies. (3) FUNNEL STATE \u2014 every ingested event updates the pipeline count/state the receipt reports (outreach, first responses, conversations, pre-call, booked) so the daily receipt states the funnel truthfully per-stage, not just '1/6'. (4) ROUTE, NEVER SEND \u2014 every needs_reply item becomes an explicit escalation line item with proposed next action (draft-and-QA pass request), exactly like today's Murtaza escalation, one per prospect. Preserve every existing runbook rule (approval gates, no autonomous sends, receipt+QA discipline, escalation format).\n\nREAD FIRST: skill-library/runbooks/operations/podcast-guest-acquisition-runbook/RUNBOOK.md in full, plus its sibling files in that dir; match its exact voice/structure/receipt contract. EDIT that RUNBOOK.md (and dir siblings if the runbook's own conventions require, e.g. a checklist file). OWNED: only files under skill-library/runbooks/operations/podcast-guest-acquisition-runbook/.\n\nPROVE: runbooks are prose \u2014 your check is structural. Write ./evidence.md: the diff, plus a section QUOTING the new runbook passages that implement each of (1)-(4), plus a dry walkthrough: given a fixture day (2 tracked threads no reply, 1 new cold guest email, 1 LinkedIn handoff row needs_reply), state exactly what the upgraded runbook instructs the worker to do step by step and what the receipt would report per stage.",
+   "check": "python3 -c \"import sys,subprocess;from pathlib import Path;e=Path('evidence.md');t=e.read_text(errors='replace').lower() if e.exists() else sys.exit(print('FAIL: evidence.md missing') or 1);d=subprocess.run(['git','diff','HEAD'],capture_output=True,text=True).stdout;Path('/home/ankit114/ringer-work/ultimate-process-r3rb/runbook.patch').write_text(d);import re;bad=re.findall(r'^diff --git a/(?!skill-library/runbooks/operations/podcast-guest-acquisition-runbook/)',d,re.M);need=[('full-inbox scan','inbox'),('linkedin ingestion','linkedin|handoff'),('funnel stages','stage|funnel'),('walkthrough','walkthrough|fixture'),('no-send preserved','never send|no autonomous|approval')];fails=[n for n,pat in need if not re.search(pat,t)]+([] if len(d)>500 else ['patch too small'])+([f'files outside runbook dir: {len(bad)}'] if bad else []);print('RUNBOOK CHECK:','PASS' if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\"",
+   "expect_files": [],
+   "verified": "the guest-acquisition runbook now ingests the full inbox and the LinkedIn handoff, reports the funnel per-stage, and routes every needs-reply through the approval grammar"
+  }
+ ]
+}

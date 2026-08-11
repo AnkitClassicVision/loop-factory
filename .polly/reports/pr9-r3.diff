@@ -1,0 +1,688 @@
+diff --git a/departments/social/runtime/systemd/loop-factory-social-manager.service b/departments/social/runtime/systemd/loop-factory-social-manager.service
+new file mode 100644
+index 0000000..48c8463
+--- /dev/null
++++ b/departments/social/runtime/systemd/loop-factory-social-manager.service
+@@ -0,0 +1,32 @@
++# social department MANAGER tick — oneshot, deterministic, model-free.
++# The manager is the watch loop: it must not share fate with the worker loop
++# it watches (social_daily.sh stalled 2026-07-31 and nothing noticed because
++# nothing independent was ticking). This unit runs Sense→Compare→Decide→Record
++# — including the release-drift sensor — on its own cadence, worker dead or
++# alive. Escalations land in the department decisions outbox, which the
++# existing outbox-push timers already ship to Telegram/Linear.
++# Named loop-factory-social-manager.* to stay distinct from the estate-level
++# units (deploy/systemd/, polly/fix-estate-watchdog) in systemd's flat
++# namespace. NEVER auto-enabled by the factory; the owner links these files
++# into the user-unit search path, then enables, deliberately:
++#   systemctl --user link <abs-path>/loop-factory-social-manager.service <abs-path>/loop-factory-social-manager.timer
++#   systemctl --user daemon-reload
++#   systemctl --user enable --now loop-factory-social-manager.timer
++[Unit]
++Description=social department manager tick (loop-factory)
++
++[Service]
++Type=oneshot
++WorkingDirectory=/mnt/d_drive/repos/loop-factory
++ExecStart=/usr/bin/python3 /mnt/d_drive/repos/loop-factory/factory/manager.py --department social --root /mnt/d_drive/repos/loop-factory --outbox /mnt/d_drive/repos/loop-factory/departments/social/state/decisions_outbox.jsonl
++TimeoutStartSec=120
++# Confinement (deny-by-default; the manager reads local telemetry only):
++NoNewPrivileges=yes
++PrivateTmp=yes
++ProtectSystem=strict
++ProtectHome=read-only
++ReadWritePaths=/mnt/d_drive/repos/loop-factory/departments/social/state
++# The manager is model-free and makes no network calls at all.
++IPAddressDeny=any
++RestrictAddressFamilies=AF_UNIX
++# NO credential-bearing Environment= lines, ever.
+diff --git a/departments/social/runtime/systemd/loop-factory-social-manager.timer b/departments/social/runtime/systemd/loop-factory-social-manager.timer
+new file mode 100644
+index 0000000..881f9fc
+--- /dev/null
++++ b/departments/social/runtime/systemd/loop-factory-social-manager.timer
+@@ -0,0 +1,15 @@
++# social department manager tick timer. Every 30 minutes, staggered to :15/:45
++# so it never collides with the podcast loop's :00/:30 cadence. Independent of
++# social-loop.timer BY DESIGN: the watch loop must keep ticking when the worker
++# loop is dead — that is the failure it exists to catch.
++# NEVER auto-enabled by the factory; the owner enables deliberately.
++[Unit]
++Description=Run the social department manager tick on schedule
++
++[Timer]
++OnCalendar=*:15/30
++Persistent=true
++RandomizedDelaySec=60
++
++[Install]
++WantedBy=timers.target
+diff --git a/docs/drift-reconciliation-2026-08-02.md b/docs/drift-reconciliation-2026-08-02.md
+new file mode 100644
+index 0000000..cd5643a
+--- /dev/null
++++ b/docs/drift-reconciliation-2026-08-02.md
+@@ -0,0 +1,215 @@
++# Drift Reconciliation — podcast + social vs pinned releases (2026-08-02)
++
++Analysis only. Every re-pin / revert below is an OWNER action to run post-merge
++per `runbooks/process-change-qa.md`. Nothing in this report was remediated
++automatically, and the drift-alarm wiring shipped alongside it never
++remediates either — it reports and escalates.
++
++How measured (read-only, no state written):
++
++- `python3 loopfactory.py qa --name podcast` / `--name social` in this branch's
++  worktree (committed tree @ master 3b7eaf9) — full output in the appendix.
++- The same command with `--root /mnt/d_drive/repos/loop-factory` against the
++  live checkout, to capture its uncommitted local state.
++- `git log` / `git diff <pin source_ref>..HEAD` per artifact for provenance.
++
++## Snapshot
++
++| department | pinned `current` | pin source_ref | pinned at | drifted artifacts |
++|---|---|---|---|---|
++| podcast | `77a3e3d095f3cc07` (committed) | `eea9c022` (= 13a351b lineage, PR #6) | pre-2026-07-31 | 6 |
++| social (committed tree) | `31d45329ef6cfeec` | `94534f9` (pinned by 33fa44c, 2026-07-28) | 2026-07-28 | 10 |
++| social (live checkout) | `ac07729f5044185d` — **flip is uncommitted** | `57b161d` (2026-07-28) | uncommitted | same 10 |
++
++The live social checkout carries an uncommitted re-pin: the `ac07729f` release
++dir is untracked and `releases/current` is locally modified to point at it.
++That re-pin legitimately captured the owner's burn-in charter change
++(`57b161d`, "Ankit 2026-07-28"), but it was never committed, and two later
++merged commits drifted past it again.
++
++## podcast — 6 artifacts, all from merged PR #8 (`feat/dag-supervisor`)
++
++All six diverge because of two commits, both merged to master via PR #8
++(merge `3b7eaf9`): `645530b` (dag_supervisor node, 2026-07-31 10:54 -0400) and
++`692ffe4` (daily-cycle wiring, 2026-07-31 11:33 -0400).
++
++| artifact | diff vs pin `77a3e3d0` | provenance | classification | recommendation |
++|---|---|---|---|---|
++| `knowledge/concept-map.md` | +3 lines: DAG-receipt concept node | `645530b` | intended-improvement | re-pin |
++| `procedural-graph.md` | +18/−2: dag supervisor node + transitions | `645530b` | intended-improvement | re-pin |
++| `subgraphs.json` | +17: N1 dag_supervisor node with impl | `645530b` | intended-improvement | re-pin |
++| `runtime/dag_supervisor.py` | new file, +283: hashed DAG-projection verifier | `645530b` | intended-improvement | re-pin |
++| `runtime/compare_charter.py` | +12: charter transitions for dag + ledger sensors | `692ffe4` | intended-improvement | re-pin |
++| `runtime/podcast_daily.sh` | +13: dag_supervisor in the daily chain, exit-2 alarm handling | `692ffe4` | intended-improvement | re-pin |
++
++Runbook compliance of PR #8: steps 1–4 were followed — change documented in
++the PR, maps patched IN THE SAME commits as the runtime (concept map,
++procedural graph, subgraphs all updated), department tests added
++(`tests/test_dag_supervisor.py`, +229 lines, plus a fixture), and
++`loopfactory.py validate --name podcast` PASSES today
++(`{"charter": {"ok": true}, "maps_ok": true, "ok": true}`). Step 6 (re-pin)
++was simply never run. The loop has been executing the new process every 30
++minutes since 2026-07-31 under shadow, which covers the spirit of step 5 but
++not its letter (no recorded re-shadow verdict).
++
++**Podcast verdict: 6/6 intended-improvement. Re-pin; nothing to revert.**
++
++## social — 10 artifacts: merged PR #7 tail + one uncommitted local edit
++
++Nine of ten diverge (vs live pin `ac07729f` @ `57b161d`) because of two
++commits merged to master via PR #7 (merge `22c0a6e`): `7789d7c` ("engine
++fallback, thumbnail pipeline, Linear listener", 2026-07-29 22:57 -0400) and
++`9104e0b` ("auto-create Linear review card after successful run", 2026-07-29
++23:06 -0400). The tenth (`social_daily.sh`) additionally carries an
++**uncommitted** live-checkout edit.
++
++| artifact | diff vs pin | provenance | classification | recommendation |
++|---|---|---|---|---|
++| `charter.yaml` | 1 line: `engine_allowlist` widened `[codex_oauth, claude_subscription]` → `[..., glm_oauth]` | `7789d7c` | intended, **but a governance file was edited inside a feature commit with no owner sign-off cited** (contrast `57b161d`, which cites "Ankit 2026-07-28") | owner ratifies the allowlist widening explicitly, or reverts the line, before re-pin |
++| `runtime/assemble_context.py` | +1: `thumbnail_url` passthrough into the manifest | `7789d7c` | intended-improvement | re-pin (after maps patched) |
++| `runtime/draft_post.py` | +1: `thumbnail_url` passthrough into the draft | `7789d7c` | intended-improvement | re-pin (after maps patched) |
++| `runtime/guards.py` | +2: canonicalize optional `thumbnail_url` string | `7789d7c` | intended-improvement | re-pin (after maps patched) |
++| `runtime/inventory_backcatalog.py` | +7: thumbnail plumbing | `7789d7c` | intended-improvement | re-pin (after maps patched) |
++| `runtime/dispatch.py` | +21/−21: engine-fallback rework | `7789d7c` | intended-improvement | re-pin (after maps patched) |
++| `runtime/create_review_card.py` | new file, +147 | `9104e0b` | intended-improvement, **untraced**: no graph node, no `untraced_allowed` rationale | patch maps, then re-pin |
++| `runtime/linear_read_comments.py` | new file, +74 | `7789d7c` | intended-improvement, **untraced** | patch maps, then re-pin |
++| `runtime/linear_close_issue.py` | new file, +70 | `7789d7c` | intended-improvement, **untraced** | patch maps, then re-pin |
++| `runtime/social_daily.sh` | committed: +58/−? (review-card step, engine fallback). Uncommitted on the live box: 4 lines — `DRAFT_ENGINES` reordered codex-first, `QA_ENGINE` `codex_oauth` → `claude_subscription` | committed part: `7789d7c` + `9104e0b`. Uncommitted part: **no commit, no author, no card** | committed part: intended-improvement. Uncommitted part: **unratified local drift** — plausibly a manual hotfix for the codex-engine outage that stalled the loop on 2026-07-31 (QA retries collapse to `qa_engine_unavailable`), but from the record it is indistinguishable from tamper | owner decides: adopt (commit with a change card) or revert to HEAD (`git checkout -- departments/social/runtime/social_daily.sh` in the live checkout). Both engine orders stay inside the charter allowlist and keep QA cross-model |
++
++Runbook compliance of PR #7: step 2 (patch the maps FIRST) was **skipped** —
++`subgraphs.json` and `procedural-graph.md` were not touched, so
++`loopfactory.py validate --name social` FAILS today with three traceability
++errors (the three new Linear files trace to no node). Consequence: the
++re-pin is mechanically blocked — `loopfactory.py release pin` refuses while
++map QA fails (`loopfactory.py` cmd_release, blocked_by_map_qa) — so social
++CANNOT be re-pinned until the maps are patched. The runbook enforces itself
++here; no shortcut exists or should be taken.
++
++**Social verdict: 9/10 intended-improvement (with the map-patch step skipped);
++1/10 mixed (intended committed change + an unratified uncommitted local edit
++requiring an owner adopt-or-revert decision). No pure rot: every divergence
++traces to a deliberate, attributable change.**
++
++## Totals
++
++| classification | count |
++|---|---|
++| intended-improvement, merged via PR, re-pin missed | 15 |
++| mixed: intended committed change + unratified uncommitted local edit | 1 (`social/runtime/social_daily.sh`) |
++| rot / accident (no attributable intent) | 0 |
++
++The systemic failure is not bad changes — it is that step 6 of
++`runbooks/process-change-qa.md` (re-pin) is not on anyone's critical path, and
++until this PR nothing alarmed on the gap. Podcast even did the hard part
++(maps patched with the code) and still shipped 6 drifted artifacts for 2+ days.
++
++## Recommended owner sequence (post-merge, human-run)
++
++Podcast (unblocked today):
++
++1. Optionally record one clean shadow cycle at HEAD (runbook step 5's letter).
++2. `python3 loopfactory.py release pin --name podcast --source-ref 3b7eaf9 --flip`
++3. `python3 loopfactory.py qa --name podcast` → drift clean; the new
++   manager-tick alarm goes quiet on its own.
++
++Social (blocked until maps are patched):
++
++1. Decide the uncommitted `social_daily.sh` engine swap: adopt (commit, with a
++   change card) or revert to HEAD in the live checkout.
++2. Ratify or revert the `charter.yaml` `engine_allowlist` widening —
++   charter edits are owner sign-off territory.
++3. Patch `procedural-graph.md` + `subgraphs.json` for the Linear
++   review-card lane (`create_review_card`, `linear_read_comments`,
++   `linear_close_issue`) — nodes with impls, or `untraced_allowed` with real
++   rationales. `python3 loopfactory.py validate --name social` must PASS.
++4. Commit the currently-untracked `releases/ac07729f5044185d/` dir and the
++   `current` flip (they are history), or supersede both with the new pin.
++5. Re-shadow the changed nodes (simulate sinks, delivered_count==0).
++6. `python3 loopfactory.py release pin --name social --source-ref <sha> --flip`
++7. `python3 loopfactory.py qa --name social` → clean.
++
++## How social gets recurring drift sensing (cross-review fix, 2026-08-02)
++
++`social_daily.sh` never invokes the manager (`grep -c manager` = 0), so the
++manager-tick drift alarm alone would never have fired for social — and the
++social worker loop is itself dead since 2026-07-31, so wiring the manager
++INTO that driver would leave the watcher sharing fate with the very worker
++whose death it must catch. The fix is a dedicated timer, not a driver edit:
++
++- `departments/social/runtime/systemd/loop-factory-social-manager.service` +
++  `.timer` — every 30 min (staggered :15/:45), runs
++  `factory/manager.py --department social --root … --outbox
++  departments/social/state/decisions_outbox.jsonl`, hardened like the podcast
++  units, fully network-denied (the manager is model-free).
++- `runtime/systemd/` is outside both the release `ARTIFACT_GLOBS` and the
++  traceability globs (podcast precedent), so this adds **zero new drift** to
++  social's already-drifted release — verified: `qa --name social` reports the
++  identical 10 mismatches and 3 traceability errors before and after.
++- Per factory convention the unit is NEVER auto-enabled, and the repo files
++  are not in systemd's user-unit search path until linked. One-time owner
++  sequence (independent of every re-pin decision):
++  1. `systemctl --user link /mnt/d_drive/repos/loop-factory/departments/social/runtime/systemd/loop-factory-social-manager.service /mnt/d_drive/repos/loop-factory/departments/social/runtime/systemd/loop-factory-social-manager.timer`
++  2. `systemctl --user daemon-reload`
++  3. `systemctl --user enable --now loop-factory-social-manager.timer`
++
++## Appendix — executed QA output (worktree, 2026-08-02)
++
++`python3 loopfactory.py qa --name podcast` (exit 1):
++
++```json
++{
++  "department": "podcast",
++  "ok": false,
++  "lint": [],
++  "traceability": [],
++  "drift": {
++    "ok": false,
++    "current": "77a3e3d095f3cc07",
++    "reason": "live tree differs from the pinned release — process changed without re-pin (run the process-change runbook)",
++    "mismatches": [
++      "knowledge/concept-map.md",
++      "procedural-graph.md",
++      "runtime/compare_charter.py",
++      "runtime/dag_supervisor.py",
++      "runtime/podcast_daily.sh",
++      "subgraphs.json"
++    ]
++  }
++}
++```
++
++`python3 loopfactory.py qa --name social` (exit 1):
++
++```json
++{
++  "department": "social",
++  "ok": false,
++  "lint": [],
++  "traceability": [
++    "runtime artifact 'runtime/create_review_card.py' traces to no graph node (add a node impl or an untraced_allowed rationale)",
++    "runtime artifact 'runtime/linear_close_issue.py' traces to no graph node (add a node impl or an untraced_allowed rationale)",
++    "runtime artifact 'runtime/linear_read_comments.py' traces to no graph node (add a node impl or an untraced_allowed rationale)"
++  ],
++  "drift": {
++    "ok": false,
++    "current": "31d45329ef6cfeec",
++    "reason": "live tree differs from the pinned release — process changed without re-pin (run the process-change runbook)",
++    "mismatches": [
++      "charter.yaml",
++      "runtime/assemble_context.py",
++      "runtime/create_review_card.py",
++      "runtime/dispatch.py",
++      "runtime/draft_post.py",
++      "runtime/guards.py",
++      "runtime/inventory_backcatalog.py",
++      "runtime/linear_close_issue.py",
++      "runtime/linear_read_comments.py",
++      "runtime/social_daily.sh"
++    ]
++  }
++}
++```
++
++Against the live checkout (`--root /mnt/d_drive/repos/loop-factory`,
++read-only) the outputs are identical except social's `current` reads
++`ac07729f5044185d` — the uncommitted local pin described above.
+diff --git a/factory/manager.py b/factory/manager.py
+index 5a2a6a6..ee8a9ea 100644
+--- a/factory/manager.py
++++ b/factory/manager.py
+@@ -4,7 +4,8 @@ The second loop of every department. It does NOT draft or send; it watches the
+ worker loop's telemetry and keeps the lane healthy.
+ 
+ Cycle (each wake):  Sense -> Compare -> Decide (Act) -> Record.
+-  Sense    read-only, model-free: run cards, approval queue, receipt, budget.
++  Sense    read-only, model-free: run cards, approval queue, receipt, budget,
++           and release drift (live tree vs pinned release — hard rule 4).
+   Compare  deterministic thresholds (no LLM).
+   Decide   pick whitelisted acts only; SHADOW limits Act to
+            {escalate, daily_brief, record, dispatch, bounded_retry}.
+@@ -30,6 +31,7 @@ from __future__ import annotations
+ import argparse
+ import json
+ import os
++import stat
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ from typing import Any, Callable, Iterable
+@@ -198,6 +200,83 @@ def sense(
+     }
+ 
+ 
++def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
++    """Read-only, model-free release-drift snapshot (graphs.check_drift).
++
++    Deny-by-default: a check that cannot run reports drift_error rather than
++    quietly reading as healthy. A releases/ dir with no `current` pin surfaces
++    as not-ok with the check_drift reason. The ONLY quiet-ish outcome is a
++    department that exists but has never had a releases/ dir (pre-F4), which
++    reports drift_checked=False with a visible skip reason; a missing or
++    unreadable department dir, or a releases path that exists but is not a
++    directory, is a broken deployment and reports drift_error.
++    """
++    dept_dir = Path(dept_dir)
++    release_root = Path(release_root) if release_root else dept_dir / "releases"
++
++    def _error(message: str) -> dict[str, Any]:
++        return {
++            "drift_checked": True,
++            "drift_ok": False,
++            "drift_error": message,
++            "drift_release": None,
++            "drift_mismatch_count": 0,
++            "drift_mismatches": [],
++            "drift_mismatches_truncated": False,
++        }
++
++    try:
++        dept_stat = os.stat(dept_dir)
++    except FileNotFoundError:
++        # os.stat follows symlinks, so a dangling link raises as if absent;
++        # islink (lstat-based) distinguishes the broken-deployment case.
++        if os.path.islink(dept_dir):
++            return _error(f"department path is a dangling symlink: {dept_dir}")
++        return _error(f"department directory does not exist: {dept_dir}")
++    except OSError as exc:
++        return _error(f"department directory unreadable: {type(exc).__name__}: {exc}")
++    if not stat.S_ISDIR(dept_stat.st_mode):
++        return _error(f"department path is not a directory: {dept_dir}")
++
++    try:
++        root_stat = os.stat(release_root)
++    except FileNotFoundError:
++        # only a genuinely absent path is pre-F4; a dangling releases symlink
++        # EXISTS and is a broken deployment — it must breach, never warn.
++        if os.path.islink(release_root):
++            return _error(f"release root is a dangling symlink: {release_root}")
++        return {
++            "drift_checked": False,
++            "drift_skipped_reason": "no releases directory — nothing pinned yet (pre-F4)",
++        }
++    except OSError as exc:
++        return _error(f"release root unreadable: {type(exc).__name__}: {exc}")
++    if not stat.S_ISDIR(root_stat.st_mode):
++        return _error(f"release root exists but is not a directory: {release_root}")
++
++    try:  # fail-closed: an unrunnable check (loader included) is a finding
++        import importlib.util
++
++        graphs_path = Path(__file__).resolve().parent / "graphs.py"
++        spec = importlib.util.spec_from_file_location("graphs", graphs_path)
++        graphs = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(graphs)
++        verdict = graphs.check_drift(dept_dir, release_root)
++    except Exception as exc:
++        return _error(f"{type(exc).__name__}: {exc}")
++    mismatches = sorted(verdict.get("mismatches") or [])
++    return {
++        "drift_checked": True,
++        "drift_ok": bool(verdict.get("ok")),
++        "drift_error": None,
++        "drift_release": verdict.get("current"),
++        "drift_reason": verdict.get("reason"),
++        "drift_mismatch_count": len(mismatches),
++        "drift_mismatches": mismatches[:20],  # bounded for STATE.json
++        "drift_mismatches_truncated": len(mismatches) > 20,
++    }
++
++
+ # --------------------------------------------------------------------------- #
+ # Compare  (deterministic thresholds)
+ # --------------------------------------------------------------------------- #
+@@ -273,6 +352,42 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
+                      observed=None, setpoint=None)
+         )
+ 
++    # release drift (hard rule 4: process change = map change + QA). The
++    # manager only reports and escalates — re-pin/revert is the human-run
++    # process-change runbook, never an automated act.
++    if sensed.get("drift_checked"):
++        if sensed.get("drift_error"):
++            findings.append(
++                _finding("drift_check_failed", "breach",
++                         f"release drift check could not run ({sensed['drift_error']}) — "
++                         "process integrity is unverifiable (deny-by-default)",
++                         observed=None, setpoint=0)
++            )
++        elif sensed.get("drift_ok") is False:
++            count = int(sensed.get("drift_mismatch_count", 0) or 0)
++            if count:
++                sample = ", ".join(sensed.get("drift_mismatches", [])[:5])
++                findings.append(
++                    _finding("release_drift", "breach",
++                             f"{count} artifact(s) differ from pinned release "
++                             f"{sensed.get('drift_release')} ({sample}) — process changed "
++                             "without re-pin; run runbooks/process-change-qa.md",
++                             observed=count, setpoint=0)
++                )
++            else:
++                findings.append(
++                    _finding("release_unpinned", "breach",
++                             sensed.get("drift_reason")
++                             or "releases/ exists but no current release is pinned",
++                             observed=0, setpoint=1)
++                )
++    elif sensed.get("drift_skipped_reason"):
++        findings.append(
++            _finding("drift_unverifiable", "warn",
++                     f"release drift not verifiable: {sensed['drift_skipped_reason']}",
++                     observed=None, setpoint=None)
++        )
++
+     # breach: last worker run errored
+     if sensed.get("last_run_ok") is False:
+         findings.append(
+@@ -496,6 +611,8 @@ def run_manager_cycle(
+     department: str = "department",
+     now: str | datetime | None = None,
+     sense_fn: Callable[..., dict] | None = None,
++    dept_dir=None,
++    release_root=None,
+     **telemetry_paths,
+ ) -> dict[str, Any]:
+     """One full Sense -> Compare -> Decide -> Act -> Record cycle.
+@@ -504,9 +621,15 @@ def run_manager_cycle(
+     telemetry contract (approval queue, touches, conversions). A department
+     with a different worker shape supplies its own sense_fn returning the same
+     flat snapshot keys — the compare/decide/act discipline is what is fixed.
++
++    When dept_dir is given, the release-drift sensor runs on every tick and
++    its snapshot merges into sensed regardless of sense_fn — hard rule 4 is
++    watched on the same cadence as everything else.
+     """
+     state_dir = Path(state_dir)
+     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
++    if dept_dir is not None:
++        sensed.update(sense_drift(dept_dir, release_root))
+     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
+     actions = decide(findings, autonomy_state=autonomy_state)
+     report = act(
+@@ -586,9 +709,13 @@ def main() -> None:
+         def escalate_fn(issue, context=None):  # noqa: E306
+             hil.escalate(args.department, issue, args.outbox, context=context)
+ 
++    # dept_dir passes unconditionally: a CLI invocation whose department dir
++    # cannot be resolved must surface drift_check_failed, never silently take
++    # the legacy no-drift path (that path is for programmatic callers only).
+     report = run_manager_cycle(
+         state_dir, autonomy_state=autonomy, thresholds=thresholds,
+         escalate_fn=escalate_fn, department=args.department,
++        dept_dir=root / "departments" / args.department,
+     )
+     print(json.dumps({
+         "department": args.department,
+diff --git a/tests/test_manager.py b/tests/test_manager.py
+index 385ff8c..fa7061d 100644
+--- a/tests/test_manager.py
++++ b/tests/test_manager.py
+@@ -215,6 +215,215 @@ def test_state_epoch_is_monotonic_across_cycles(tmp_path):
+     assert saved["epoch"] == 1
+ 
+ 
++# --------------------------------------------------------------------------- #
++# Drift sensor (hard rule 4: process change = map change + QA — on cadence)
++# --------------------------------------------------------------------------- #
++
++def _load_release():
++    spec = importlib.util.spec_from_file_location("release", RUNTIME_DIR / "release.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++REL = _load_release()
++
++
++def _pinned_dept(tmp_path):
++    """A minimal department with one runtime artifact, pinned and flipped."""
++    dept = tmp_path / "dept"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "state").mkdir()
++    (dept / "runtime" / "node.py").write_text("def node(): return 1\n", encoding="utf-8")
++    releases = dept / "releases"
++    h = REL.pin_release(dept, releases, source_ref="testsha")
++    REL.flip_current(releases, h)
++    return dept
++
++
++def test_cycle_with_clean_release_has_no_drift_finding(tmp_path):
++    dept = _pinned_dept(tmp_path)
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    codes = {f["code"] for f in report["findings"]}
++    assert report["sensed"]["drift_checked"] is True
++    assert report["sensed"]["drift_ok"] is True
++    assert not codes & {"release_drift", "release_unpinned", "drift_check_failed"}
++
++
++def test_drifted_release_is_breach_and_escalates(tmp_path):
++    dept = _pinned_dept(tmp_path)
++    # edit the process WITHOUT re-pinning: exactly the hard-rule-4 violation
++    (dept / "runtime" / "node.py").write_text("def node(): return 2\n", encoding="utf-8")
++    escalations = []
++    report = M.run_manager_cycle(
++        state_dir=dept / "state", dept_dir=dept, now=NOW,
++        escalate_fn=lambda issue, context=None: escalations.append(issue),
++    )
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["release_drift"]["severity"] == "breach"
++    assert codes["release_drift"]["observed"] == 1
++    assert report["sensed"]["drift_mismatches_truncated"] is False
++    assert any("release_drift" in e for e in escalations)
++    # the alarm lands in the durable records: STATE + heartbeat
++    state = json.loads((dept / "state" / "STATE.json").read_text(encoding="utf-8"))
++    assert "release_drift" in [f["code"] for f in state["open_findings"]]
++    assert (dept / "state" / "heartbeats.jsonl").exists()
++
++
++def test_drift_breach_names_mismatched_artifact_and_runbook(tmp_path):
++    dept = _pinned_dept(tmp_path)
++    (dept / "runtime" / "node.py").write_text("def node(): return 3\n", encoding="utf-8")
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    detail = next(f for f in report["findings"] if f["code"] == "release_drift")["detail"]
++    assert "runtime/node.py" in detail
++    assert "process-change-qa" in detail
++
++
++def test_releases_dir_without_pin_is_breach(tmp_path):
++    dept = tmp_path / "dept"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "state").mkdir()
++    (dept / "releases").mkdir()
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["release_unpinned"]["severity"] == "breach"
++
++
++def test_no_releases_dir_is_visible_warn_not_breach(tmp_path):
++    # pre-F4 department: drift is unverifiable — surface it, don't alarm
++    dept = tmp_path / "dept"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "state").mkdir()
++    escalations = []
++    report = M.run_manager_cycle(
++        state_dir=dept / "state", dept_dir=dept, now=NOW,
++        escalate_fn=lambda issue, context=None: escalations.append(issue),
++    )
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["drift_unverifiable"]["severity"] == "warn"
++    assert escalations == []
++
++
++def test_corrupt_manifest_fails_closed_as_breach(tmp_path):
++    # deny-by-default: a drift check that cannot run must alarm, never pass
++    dept = _pinned_dept(tmp_path)
++    current = (dept / "releases" / "current").read_text(encoding="utf-8").strip()
++    (dept / "releases" / current / "manifest.json").write_text("not json", encoding="utf-8")
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["drift_check_failed"]["severity"] == "breach"
++
++
++def test_drift_alarm_never_remediates(tmp_path):
++    # report-and-alarm only: no re-pin, no revert, no file writes in the dept
++    dept = _pinned_dept(tmp_path)
++    drifted = "def node(): return 2\n"
++    (dept / "runtime" / "node.py").write_text(drifted, encoding="utf-8")
++    current_before = (dept / "releases" / "current").read_text(encoding="utf-8")
++    release_dirs_before = sorted(p.name for p in (dept / "releases").iterdir())
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    assert (dept / "runtime" / "node.py").read_text(encoding="utf-8") == drifted
++    assert (dept / "releases" / "current").read_text(encoding="utf-8") == current_before
++    assert sorted(p.name for p in (dept / "releases").iterdir()) == release_dirs_before
++    assert all(a["act"] in M.SHADOW_ACTS for a in report["actions"])
++
++
++def test_release_root_that_is_a_file_fails_closed(tmp_path):
++    # an existing-but-not-directory releases path is NOT pre-F4 — it is a
++    # broken deployment, and deny-by-default means it alarms
++    dept = tmp_path / "dept"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "state").mkdir()
++    (dept / "releases").write_text("not a directory", encoding="utf-8")
++    escalations = []
++    report = M.run_manager_cycle(
++        state_dir=dept / "state", dept_dir=dept, now=NOW,
++        escalate_fn=lambda issue, context=None: escalations.append(issue),
++    )
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["drift_check_failed"]["severity"] == "breach"
++    assert any("drift_check_failed" in e for e in escalations)
++
++
++def test_dangling_releases_symlink_fails_closed(tmp_path):
++    # a releases symlink whose target is gone EXISTS — it is a broken
++    # deployment, not a pre-F4 department; it must breach, never warn
++    dept = tmp_path / "dept"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "state").mkdir()
++    (dept / "releases").symlink_to(tmp_path / "no-such-target")
++    escalations = []
++    report = M.run_manager_cycle(
++        state_dir=dept / "state", dept_dir=dept, now=NOW,
++        escalate_fn=lambda issue, context=None: escalations.append(issue),
++    )
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["drift_check_failed"]["severity"] == "breach"
++    assert any("drift_check_failed" in e for e in escalations)
++    assert "drift_unverifiable" not in codes
++
++
++def test_missing_dept_dir_is_breach_not_silent(tmp_path):
++    # a dept_dir that cannot be resolved is a misconfiguration, not a
++    # reason to silently skip drift sensing
++    escalations = []
++    report = M.run_manager_cycle(
++        state_dir=tmp_path / "state", dept_dir=tmp_path / "no-such-dept", now=NOW,
++        escalate_fn=lambda issue, context=None: escalations.append(issue),
++    )
++    codes = {f["code"]: f for f in report["findings"]}
++    assert codes["drift_check_failed"]["severity"] == "breach"
++    assert any("drift_check_failed" in e for e in escalations)
++
++
++def test_cli_unresolvable_department_surfaces_breach(tmp_path):
++    # through main(): a mistyped --department must alarm, never silently
++    # fall back to the legacy no-drift path
++    import subprocess
++    import sys
++
++    proc = subprocess.run(
++        [sys.executable, str(RUNTIME_DIR / "manager.py"),
++         "--department", "ghost", "--root", str(tmp_path)],
++        capture_output=True, text=True,
++    )
++    assert proc.returncode == 0, proc.stderr
++    out = json.loads(proc.stdout.splitlines()[-1])
++    assert "drift_check_failed" in out["findings"]
++
++
++def test_mismatch_list_is_bounded_and_flagged(tmp_path):
++    dept = _pinned_dept(tmp_path)
++    for i in range(25):
++        (dept / "runtime" / f"extra_{i:02d}.py").write_text("x = 1\n", encoding="utf-8")
++    report = M.run_manager_cycle(state_dir=dept / "state", dept_dir=dept, now=NOW)
++    sensed = report["sensed"]
++    assert sensed["drift_mismatch_count"] == 25
++    assert len(sensed["drift_mismatches"]) == 20
++    assert sensed["drift_mismatches_truncated"] is True
++
++
++def test_cycle_without_dept_dir_is_unchanged(tmp_path):
++    # legacy callers that pass no dept_dir get no drift keys and no drift findings
++    report = M.run_manager_cycle(state_dir=tmp_path, now=NOW)
++    assert "drift_checked" not in report["sensed"]
++    codes = {f["code"] for f in report["findings"]}
++    assert not codes & {"release_drift", "release_unpinned", "drift_check_failed",
++                        "drift_unverifiable"}
++
++
++def test_compare_flags_release_drift_from_sensed_keys():
++    findings = M.compare(
++        {"week_touches": 0, "drift_checked": True, "drift_ok": False,
++         "drift_release": "abc123", "drift_mismatch_count": 2,
++         "drift_mismatches": ["runtime/a.py", "charter.yaml"]},
++        M.DEFAULT_THRESHOLDS,
++    )
++    codes = {f["code"]: f for f in findings}
++    assert codes["release_drift"]["severity"] == "breach"
++    assert codes["release_drift"]["observed"] == 2
++
++
+ # --------------------------------------------------------------------------- #
+ # End to end
+ # --------------------------------------------------------------------------- #

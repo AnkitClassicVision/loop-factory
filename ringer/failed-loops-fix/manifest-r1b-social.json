@@ -1,0 +1,19 @@
+{
+ "run_name": "failed-loops-fix",
+ "workdir": "/home/ankit114/ringer-work/failed-loops-fix-r1b",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "social-loop-diagnose2",
+   "engine": "codex",
+   "task_type": "code-review",
+   "timeout_s": 2400,
+   "spec": "READ-ONLY diagnosis \u2014 you fix nothing, restart nothing, edit nothing; deliverable is ./report.md only. No MCP, no skills. NEVER read credential-pattern files; never quote draft content bodies (shapes/counts only).\n\nCONTEXT (row social-loop in /mnt/d_drive/repos/loop-factory/estate/state/failed-loops-triage-2026-08-02.md): the social department loop dies daily: every candidate draft is rejected by the CTA gate ('draft must contain exactly one distinct HTTP(S) cta_url', draft_post.py:470-477 in /mnt/d_drive/repos/loop-factory/departments/social/runtime/), the engine fallback chain then burns the whole TimeoutStartSec=600 budget and systemd SIGTERMs it. Triage says: inspect what the engines ACTUALLY emitted before touching gate or prompt.\n\nANSWER WITH EVIDENCE: (1) find the rejected draft artifacts/receipts from recent runs (state receipts, quarantine dir, logs) \u2014 for each attempt, HOW MANY distinct HTTP(S) URLs did the engine emit (0, 1-but-wrong, or >1)? Is the required cta_url present in the sanitized bundle the engine received? (2) Is the failure prompt-side (engine never told the exact URL to use / told to avoid links), gate-side (gate stricter than the prompt promises), or bundle-side (cta_url missing from input)? Quote the relevant prompt-construction lines from draft_post.py and the bundle fields (field names only). (3) The timeout: locate the engine-fallback loop; propose the internal per-engine budget the triage calls for (numbers: N engines x M s vs the 600s unit budget). (4) RECOMMEND the smallest fix (prompt line? gate tolerance? bundle field? per-engine timeout?) with file:line targets, each S/M effort \u2014 for a follow-up fix ring, not for you.\n\n./report.md: FIRST LINE 'DIAGNOSIS: PROMPT-SIDE' or 'DIAGNOSIS: GATE-SIDE' or 'DIAGNOSIS: BUNDLE-SIDE' or 'DIAGNOSIS: MIXED', then findings with Evidence lines (file:line, counts).",
+   "check": "python3 -c \"import sys,re;from pathlib import Path;p=Path('report.md');t=p.read_text(errors='replace') if p.exists() else sys.exit(print('FAIL: report.md missing') or 1);f=t.strip().splitlines()[0].upper();ok=bool(re.match(r'^DIAGNOSIS: (PROMPT-SIDE|GATE-SIDE|BUNDLE-SIDE|MIXED)',f));low=t.lower();need=[('url counts','url'),('prompt evidence','prompt'),('timeout numbers','600|timeout'),('recommendation','recommend')];fails=([] if ok else ['bad first line'])+[n for n,pat in need if not re.search(pat,low)];print('SOCIAL-DIAG CHECK:','PASS \u2014 '+f if not fails else 'FAIL');[print(' - missing',x) for x in fails];sys.exit(1 if fails else 0)\"",
+   "expect_files": [
+    "report.md"
+   ],
+   "verified": "the social CTA failure is attributed (prompt vs gate vs bundle) from real engine output evidence, with the smallest-fix targets named"
+  }
+ ]
+}

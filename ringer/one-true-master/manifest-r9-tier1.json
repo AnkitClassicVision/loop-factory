@@ -1,0 +1,88 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-r9",
+  "max_parallel": 2,
+  "worktrees": false,
+  "tasks": [
+    {
+      "key": "clip-words-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename given below). You have READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py; never write to either. No git, no MCP, no skills, no network.\n\nCONTEXT. A podcast pipeline's editorial decisions are unverified against rendered output. You are building one standalone verification instrument. It must be a RECEIPT, not an opinion: it measures the artifact, prints per-item evidence with WHY on failure, and exits 0 only when the measured property holds. Exit 1 on any violation, exit 2 on unusable inputs (missing files, unreadable media) \u2014 never conflate 'could not measure' with 'passed'.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py first. It already implements: mono 16kHz ffmpeg window extraction, normalized FFT cross-correlation with peak/runner-up margin, dBFS silence handling, and the no-evidence-is-not-a-pass discipline. Reuse its approach (copy the helper functions you need into your file so it stays standalone; do not import from that path).\n\nGENERAL RULES. Pure stdlib + numpy + ffmpeg/ffprobe subprocess only. Every threshold is a named constant with a one-line rationale comment. argparse CLI, --json OUT optional. All timestamps in your output are seconds with 3 decimals. Never write anything except your optional --json output file.\n\nFILE: ./clip_words_check.py \u2014 prove a rendered clip contains the material it was selected from.\n\nCLI: clip_words_check.py --manifest PATH --stems DIR [--clips-dir DIR] [--json OUT]\n\nThe manifest is a polished_clips_manifest.json (read one under /mnt/d_drive/repos/podcast/episodes/*/clips/ for the real shape: entries carry raw_start_s/raw_end_s, final_start_s/final_end_s, and per-variant output files). For each clip entry: extract the clip file's audio, extract the SOURCE window from the correct speaker stem at raw_start_s..raw_end_s (determine the speaker by which stem carries more energy in that window), cross-correlate, and require the clip's audio to LOCATE inside the source window (peak and margin thresholds like the certifier's) at a lag consistent with the manifest's mapping. A clip whose audio does not locate in its claimed source span is cut from the wrong place; report the actual best-match lag so the operator can see how far off it is. Exit 1 if ANY clip fails; list every clip with per-clip verdicts either way.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' clip_words_check.py argparse '2026-06-10,fred-cho' && (grep -qE 'exit\\(2\\)|sys.exit\\(2\\)|return 2' clip_words_check.py || (echo 'FAIL: no unusable-input exit path (exit 2); could-not-measure must not look like pass'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "clip_words_check.py"
+      ],
+      "verified": "a standalone deterministic receipt instrument; red proofs run by the coordinator on real artifacts after the recut"
+    },
+    {
+      "key": "cut-absence-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename given below). You have READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py; never write to either. No git, no MCP, no skills, no network.\n\nCONTEXT. A podcast pipeline's editorial decisions are unverified against rendered output. You are building one standalone verification instrument. It must be a RECEIPT, not an opinion: it measures the artifact, prints per-item evidence with WHY on failure, and exits 0 only when the measured property holds. Exit 1 on any violation, exit 2 on unusable inputs (missing files, unreadable media) \u2014 never conflate 'could not measure' with 'passed'.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py first. It already implements: mono 16kHz ffmpeg window extraction, normalized FFT cross-correlation with peak/runner-up margin, dBFS silence handling, and the no-evidence-is-not-a-pass discipline. Reuse its approach (copy the helper functions you need into your file so it stays standalone; do not import from that path).\n\nGENERAL RULES. Pure stdlib + numpy + ffmpeg/ffprobe subprocess only. Every threshold is a named constant with a one-line rationale comment. argparse CLI, --json OUT optional. All timestamps in your output are seconds with 3 decimals. Never write anything except your optional --json output file.\n\nFILE: ./cut_absence_check.py \u2014 prove removed spans are actually absent from the rendered program, from the media itself.\n\nCLI: cut_absence_check.py --render PATH --stems DIR --cuts JSON [--json OUT]\n\n--cuts is a JSON file: a list of {\"id\": str, \"start_s\": float, \"end_s\": float} in SESSION-GRID seconds (the caller exports these from the applied edit plan). For each cut: extract that span's audio from the loudest-speaker stem (skip spans where both stems are silent, reporting them as UNMEASURABLE, not passed); cross-correlate against the FULL rendered program's audio; the span must NOT locate anywhere (peak below the locate threshold, or located only with a weak margin). A confidently-located cut span means the cut was not applied. ALSO verify the inverse control on each run: pick two KEPT windows adjacent to cuts and require them to LOCATE \u2014 a run whose controls fail cannot certify anything and exits 2. Exit 1 if any cut span is found in the render.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' cut_absence_check.py argparse '2026-06-10,fred-cho' && (grep -qE 'exit\\(2\\)|sys.exit\\(2\\)|return 2' cut_absence_check.py || (echo 'FAIL: no unusable-input exit path (exit 2); could-not-measure must not look like pass'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "cut_absence_check.py"
+      ],
+      "verified": "a standalone deterministic receipt instrument; red proofs run by the coordinator on real artifacts after the recut"
+    },
+    {
+      "key": "speaker-attribution-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename given below). You have READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py; never write to either. No git, no MCP, no skills, no network.\n\nCONTEXT. A podcast pipeline's editorial decisions are unverified against rendered output. You are building one standalone verification instrument. It must be a RECEIPT, not an opinion: it measures the artifact, prints per-item evidence with WHY on failure, and exits 0 only when the measured property holds. Exit 1 on any violation, exit 2 on unusable inputs (missing files, unreadable media) \u2014 never conflate 'could not measure' with 'passed'.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py first. It already implements: mono 16kHz ffmpeg window extraction, normalized FFT cross-correlation with peak/runner-up margin, dBFS silence handling, and the no-evidence-is-not-a-pass discipline. Reuse its approach (copy the helper functions you need into your file so it stays standalone; do not import from that path).\n\nGENERAL RULES. Pure stdlib + numpy + ffmpeg/ffprobe subprocess only. Every threshold is a named constant with a one-line rationale comment. argparse CLI, --json OUT optional. All timestamps in your output are seconds with 3 decimals. Never write anything except your optional --json output file.\n\nFILE: ./speaker_attribution_check.py \u2014 prove the camera shown is the person speaking.\n\nCLI: speaker_attribution_check.py --render PATH --boundaries PATH --stems DIR --offsets JSON [--tolerance FLOAT] [--json OUT]\n\n--boundaries is the render's .boundaries.json sidecar (find one under /mnt/d_drive/repos/podcast/episodes/*/processed/ and read it for the real shape: segments with source-session spans, the chosen angle per segment, and edited-time offsets). --offsets maps angle labels to speaker stems, e.g. {\"host\": \"host_audio.flac\", \"guest\": \"guest_audio.flac\"}. For each segment longer than a minimum (short reaction shots are legitimate style; default the minimum to 4.0s and say why): measure mean RMS dBFS of each speaker's stem over the segment's SOURCE span; if one speaker dominates by a margin (named constant, suggest 6 dB with rationale) and the segment's angle shows the OTHER speaker, that segment fails. Segments inside a known camera-dropout forced-switch window are exempt if the caller passes --dropout-holes JSON (list of {at_abs_s, duration_s}); read the exemption from that file rather than guessing. Report per-segment: span, angle shown, host dBFS, guest dBFS, verdict. Exit 1 on any failure.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' speaker_attribution_check.py argparse '2026-06-10,fred-cho' && (grep -qE 'exit\\(2\\)|sys.exit\\(2\\)|return 2' speaker_attribution_check.py || (echo 'FAIL: no unusable-input exit path (exit 2); could-not-measure must not look like pass'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "speaker_attribution_check.py"
+      ],
+      "verified": "a standalone deterministic receipt instrument; red proofs run by the coordinator on real artifacts after the recut"
+    },
+    {
+      "key": "bumper-loudness-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename given below). You have READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py; never write to either. No git, no MCP, no skills, no network.\n\nCONTEXT. A podcast pipeline's editorial decisions are unverified against rendered output. You are building one standalone verification instrument. It must be a RECEIPT, not an opinion: it measures the artifact, prints per-item evidence with WHY on failure, and exits 0 only when the measured property holds. Exit 1 on any violation, exit 2 on unusable inputs (missing files, unreadable media) \u2014 never conflate 'could not measure' with 'passed'.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py first. It already implements: mono 16kHz ffmpeg window extraction, normalized FFT cross-correlation with peak/runner-up margin, dBFS silence handling, and the no-evidence-is-not-a-pass discipline. Reuse its approach (copy the helper functions you need into your file so it stays standalone; do not import from that path).\n\nGENERAL RULES. Pure stdlib + numpy + ffmpeg/ffprobe subprocess only. Every threshold is a named constant with a one-line rationale comment. argparse CLI, --json OUT optional. All timestamps in your output are seconds with 3 decimals. Never write anything except your optional --json output file.\n\nFILE: ./bumper_check.py \u2014 prove bumpers are present, at the right ends, exactly once, and level-matched.\n\nCLI: bumper_check.py --final PATH --intro PATH --outro PATH [--tolerance-lu FLOAT] [--json OUT]\n\nPRESENCE: cross-correlate the intro bumper's audio against the FIRST (intro duration + 10s) of the final render \u2014 it must locate at approximately lag 0. Same for the outro against the LAST window, locating so it ENDS at approximately the file end. UNIQUENESS: correlate each bumper against the full program body between the bumpers; a confident match there means a bumper leaked into the middle \u2014 fail. LEVELS: measure integrated loudness (EBU R128 via ffmpeg loudnorm print_format=json or ebur128 filter \u2014 state which and why) for the intro span, the outro span, and the program body; the bumper-to-body delta must be within --tolerance-lu (default 3.0 LU, named constant with rationale). Report all three loudness numbers and both locate lags. Exit 1 on missing, duplicated, misplaced, or level-mismatched bumpers.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' bumper_check.py argparse '2026-06-10,fred-cho' && (grep -qE 'exit\\(2\\)|sys.exit\\(2\\)|return 2' bumper_check.py || (echo 'FAIL: no unusable-input exit path (exit 2); could-not-measure must not look like pass'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "bumper_check.py"
+      ],
+      "verified": "a standalone deterministic receipt instrument; red proofs run by the coordinator on real artifacts after the recut"
+    },
+    {
+      "key": "freshness-check",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are an implementation worker. Write exactly ONE Python file in your current working directory (filename given below). You have READ access to /mnt/d_drive/repos/podcast and to /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py; never write to either. No git, no MCP, no skills, no network.\n\nCONTEXT. A podcast pipeline's editorial decisions are unverified against rendered output. You are building one standalone verification instrument. It must be a RECEIPT, not an opinion: it measures the artifact, prints per-item evidence with WHY on failure, and exits 0 only when the measured property holds. Exit 1 on any violation, exit 2 on unusable inputs (missing files, unreadable media) \u2014 never conflate 'could not measure' with 'passed'.\n\nSHARED MACHINERY. Read /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/certify_episode.py first. It already implements: mono 16kHz ffmpeg window extraction, normalized FFT cross-correlation with peak/runner-up margin, dBFS silence handling, and the no-evidence-is-not-a-pass discipline. Reuse its approach (copy the helper functions you need into your file so it stays standalone; do not import from that path).\n\nGENERAL RULES. Pure stdlib + numpy + ffmpeg/ffprobe subprocess only. Every threshold is a named constant with a one-line rationale comment. argparse CLI, --json OUT optional. All timestamps in your output are seconds with 3 decimals. Never write anything except your optional --json output file.\n\nFILE: ./freshness_check.py \u2014 prove final artifacts are newer than every input that shaped them.\n\nCLI: freshness_check.py --episode DIR [--json OUT]\n\nBuild the dependency DAG from the episode directory's real layout (read /mnt/d_drive/repos/podcast/episodes/2026-06-10-fred-cho/ for the shape, but hard-code NOTHING episode-specific): raw/*.webm -> processed/timeline.json + processed/stems/* -> processed/composite*.mp4 -> processed/angle_switched.mp4 + its .boundaries.json -> final/episode.mp4 + final/episode.mp3 -> clips/*. Also: processed/transcript.json depends on stems; content/episode_content.json depends on transcript. For every edge where both sides exist: the descendant's mtime must be >= the ancestor's. Report every violation as 'STALE: X (mtime) predates its input Y (mtime)'. Missing optional artifacts are reported as ABSENT, never as stale, and never as passed. This exists because a real preflight passed on a program built the day BEFORE its own inputs were fixed. Exit 1 on any stale edge.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/script_check.py' freshness_check.py argparse '2026-06-10,fred-cho' && (grep -qE 'exit\\(2\\)|sys.exit\\(2\\)|return 2' freshness_check.py || (echo 'FAIL: no unusable-input exit path (exit 2); could-not-measure must not look like pass'; exit 1)) && echo 'PASS: instrument shape verified'",
+      "expect_files": [
+        "freshness_check.py"
+      ],
+      "verified": "a standalone deterministic receipt instrument; red proofs run by the coordinator on real artifacts after the recut"
+    }
+  ]
+}

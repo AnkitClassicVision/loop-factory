@@ -1,0 +1,634 @@
+
+[ringer.py] attempt 1 started 2026-07-29T14:43:17.112278+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index 'ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/inventory_backcatalog.py. Do not modify, create, delete, or stage anything else. Do not touch .git, do not commit, do not push.
+
+GOAL: Add an optional `thumbnail_url` field to podcast inventory rows.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py
+
+CHANGES:
+1. In `_rss_rows()` (~line 59), after building the row dict, add thumbnail_url. Try to extract it from the RSS item'"'"'s itunes:image element: `img_el = item.find('"'"'{http://www.itunes.com/dtds/podcast-1.0.dtd}image'"'"')` then use `img_el.get('"'"'href'"'"', '"'"''"'"') if img_el is not None else '"'"''"'"'`. Add to the row dict: `'"'"'thumbnail_url'"'"': thumbnail_url`.
+2. Do NOT add `thumbnail_url` to the REQUIRED set (line 15). It is optional.
+3. In `_validate()` (~line 99), if `thumbnail_url` key exists in the row, validate it is a string. If not a string, set it to empty string. Do not raise.
+4. In `run()` merge logic (~line 135-142), preserve `thumbnail_url` from existing rows during merge, same pattern as `last_resurfaced_at` and `prior_engagement`: if old row has thumbnail_url and new row does not, keep the old value.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('"'"'/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py'"'"').read()); print('"'"'syntax ok'"'"')"` and confirm syntax is valid.
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.145.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fae54-7462-7881-9808-d349c37e222a
+--------
+user
+ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/inventory_backcatalog.py. Do not modify, create, delete, or stage anything else. Do not touch .git, do not commit, do not push.
+
+GOAL: Add an optional `thumbnail_url` field to podcast inventory rows.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py
+
+CHANGES:
+1. In `_rss_rows()` (~line 59), after building the row dict, add thumbnail_url. Try to extract it from the RSS item's itunes:image element: `img_el = item.find('{http://www.itunes.com/dtds/podcast-1.0.dtd}image')` then use `img_el.get('href', '') if img_el is not None else ''`. Add to the row dict: `'thumbnail_url': thumbnail_url`.
+2. Do NOT add `thumbnail_url` to the REQUIRED set (line 15). It is optional.
+3. In `_validate()` (~line 99), if `thumbnail_url` key exists in the row, validate it is a string. If not a string, set it to empty string. Do not raise.
+4. In `run()` merge logic (~line 135-142), preserve `thumbnail_url` from existing rows during merge, same pattern as `last_resurfaced_at` and `prior_engagement`: if old row has thumbnail_url and new row does not, keep the old value.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')"` and confirm syntax is valid.
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+Ankit — I’ll make the single-file change, run the exact syntax check, then write only `./notes.md` in the scratch directory.
+codex
+I’m using the repo’s required Codex Operating Card to keep the edit inside the ownership boundary and attach executed proof.
+exec
+/bin/bash -lc "sed -n '1,240p' /home/ankit114/.claude/skills/codex-operating-card/SKILL.md && sed -n '1,230p' /mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index
+ succeeded in 0ms:
+---
+name: codex-operating-card
+description: "Operate Codex with Nate-style project induction, read-only-first task starts, one-thread-one-outcome discipline, UI/browser evidence, self-review gates, and durable-rule extraction. Use when working in Codex on a repo, starting a new Codex thread, doing project induction, implementing or reviewing code, doing frontend/UI QA, or deciding whether to promote a prompt pattern into AGENTS.md or a skill."
+---
+
+# Codex Operating Card
+
+Purpose: make Codex behave like a repo worker with a tight work contract, not a wandering owner. These prompts are operating defaults, not safety gates. For production writes, deploys, PHI/PII, secrets, CRM/EHR/finance writes, external sends, or autonomy changes, follow the relevant deterministic gate and human approval rules.
+
+## Default behavior
+
+Use this operating card unless the user explicitly overrides it:
+
+1. Read first. Do not edit until you can explain the current project shape.
+2. One thread = one outcome. If a new goal appears, propose a new thread.
+3. Prefer read-only or sandbox mode unless write access is explicitly intended.
+4. Before changes, state likely files, risk, test plan, and rollback path.
+5. Treat AGENTS.md and project docs as local law. If missing, infer lightly and flag gaps.
+6. For UI work, use browser or visual evidence rather than guessing.
+7. Verify with actual command output, visual check, or a named source before claiming done.
+8. End with: Changed, Verified by, Risks left, Next action.
+9. If the task reveals a reusable rule, propose AGENTS.md or skill capture, but do not write it without approval.
+
+## Prompt pack
+
+For exact copy/paste prompts, read `references/prompt-pack.md` and choose the smallest prompt that matches the work:
+
+- Project induction prompt: first pass on a repo.
+- Task starter prompt: normal implementation.
+- UI/browser evidence prompt: frontend or visual QA.
+- Review gate prompt: before accepting Codex output.
+- Durable-rule extraction prompt: after a repeated pattern appears.
+
+## Output contract
+
+For routine work, keep the final terse:
+
+- Changed: files/behavior changed.
+- Verified by: real command, screenshot/visual check, or source.
+- Risks left: only what matters.
+- Next action: one step.
+
+Do not call work complete if verification did not run. Say `Partial` or `Blocked` instead.
+"""Build the SG-REPUBLISH back-catalog index from declared sources."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+from urllib.request import urlopen
+import xml.etree.ElementTree as ET
+
+
+LOG = logging.getLogger(__name__)
+REQUIRED = {
+    "item_id",
+    "source_type",
+    "title",
+    "url",
+    "published_at",
+    "body_path",
+    "last_resurfaced_at",
+    "prior_engagement",
+}
+
+
+def _write(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _missing(out: Path, reason: str) -> int:
+    LOG.error(reason)
+    _write(out, {"status": "missing", "reason": reason})
+    return 3
+
+
+def _iso(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("published_at is empty")
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _text(item: ET.Element, *names: str) -> str:
+    for name in names:
+        node = item.find(name)
+        if node is not None and node.text and node.text.strip():
+            return node.text.strip()
+    return ""
+
+
+def _rss_rows(source: str) -> list[dict]:
+    if source.startswith(("http://", "https://")):
+        with urlopen(source, timeout=20) as response:  # nosec: declared read source
+            root = ET.fromstring(response.read())
+    else:
+        root = ET.parse(source).getroot()
+    rows = []
+    for item in root.findall(".//item"):
+        url = _text(item, "link")
+        item_id = _text(item, "guid") or url
+        body_path = _text(item, "body_path", "bodyPath")
+        row = {
+            "item_id": item_id,
+            "source_type": "podcast",
+            "title": _text(item, "title"),
+            "url": url,
+            "published_at": _iso(_text(item, "pubDate", "published_at")),
+            "body_path": body_path,
+            "last_resurfaced_at": None,
+            "prior_engagement": {"score": 0.0},
+        }
+        rows.append(row)
+    return rows
+
+
+def _json_rows(path: Path) -> list[dict]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(value, dict):
+        value = value.get("items")
+    if not isinstance(value, list):
+        raise ValueError("items source must be a JSON list or an object with items[]")
+    return value
+
+
+def _index_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _validate(row: dict) -> dict:
+    if not isinstance(row, dict) or not REQUIRED.issubset(row):
+        raise ValueError(f"content_item missing fields: {sorted(REQUIRED - set(row or {}))}")
+    for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+        if not isinstance(row[field], str):
+            raise ValueError(f"content_item.{field} must be a string")
+    if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+        raise ValueError("content_item item_id, title, and url must be non-empty")
+    row["published_at"] = _iso(row["published_at"])
+    if row["last_resurfaced_at"] is not None:
+        row["last_resurfaced_at"] = _iso(str(row["last_resurfaced_at"]))
+    engagement = row["prior_engagement"]
+    if not isinstance(engagement, dict) or isinstance(engagement.get("score"), bool):
+        raise ValueError("content_item.prior_engagement.score must be numeric")
+    engagement["score"] = float(engagement["score"])
+    return row
+
+
+def run(*, rss: list[str], items: list[Path], index: Path | None, out: Path) -> int:
+    if not rss and not items:
+        return _missing(out, "no inventory source supplied")
+    try:
+        existing = {_validate(row)["item_id"]: row for row in _index_rows(index)} if index else {}
+        incoming: list[dict] = []
+        for source in rss:
+            source_rows = _rss_rows(source)
+            if not source_rows:
+                return _missing(out, f"RSS source contained zero items: {source}")
+            incoming.extend(source_rows)
+        for source in items:
+            source_rows = _json_rows(source)
+            if not source_rows:
+                return _missing(out, f"items source contained zero items: {source}")
+            incoming.extend(source_rows)
+        if not incoming:
+            return _missing(out, "inventory source contained zero items")
+        merged = dict(existing)
+        for raw in incoming:
+            row = _validate(dict(raw))
+            old = existing.get(row["item_id"])
+            if old:
+                row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                row["prior_engagement"] = old["prior_engagement"]
+            merged[row["item_id"]] = row
+        rows = [_validate(row) for _, row in sorted(merged.items())]
+        if not rows:
+            return _missing(out, "inventory index contained zero valid rows")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        return 0
+    except (OSError, ValueError, TypeError, ET.ParseError, json.JSONDecodeError) as exc:
+        return _missing(out, f"inventory source unreadable or invalid: {exc}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--rss", action="append", default=[])
+    parser.add_argument("--items", type=Path, action="append", default=[])
+    parser.add_argument("--index", type=Path)
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
+    raise SystemExit(run(rss=args.rss, items=args.items, index=args.index, out=args.out))
+
+
+if __name__ == "__main__":
+    main()
+
+codex
+Scope: the runtime file plus scratch `notes.md`. Main risk is accidentally overwriting an incoming thumbnail during merge; the test is the exact AST parse command. Rollback is the isolated diff to the owned runtime file.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+
+exec
+/bin/bash -lc "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')\"
+git -C /mnt/d_drive/repos/loop-factory diff -- departments/social/runtime/inventory_backcatalog.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+
+ succeeded in 113ms:
+syntax ok
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef..cf3cb20 100644
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@ def _rss_rows(source: str) -> list[dict]:
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@ def _validate(row: dict) -> dict:
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@ def run(*, rss: list[str], items: list[Path], index: Path | None, out: Path) ->
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+
+codex
+Step 2 of 2: the owned file parses successfully, and the diff contains only the requested optional-field behavior. I’m recording that result in the scratch notes now.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index/notes.md
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+diff --git a/ringer-manifests/workdir/thumbnail-in-index/notes.md b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..86d36b54abebeefd3261645d4df29acb21f75375
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+@@ -0,0 +1,12 @@
++# Thumbnail URL inventory update
++
++- Added RSS extraction of the iTunes image `href` into optional `thumbnail_url`.
++- Added tolerant validation: when present, a non-string `thumbnail_url` becomes an empty string.
++- Preserved an existing row's `thumbnail_url` when an incoming merged row omits the key.
++- Left `thumbnail_url` out of the `REQUIRED` set.
++
++Verification:
++
++`PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')"`
++
++Result: `syntax ok`
+
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+diff --git a/ringer-manifests/workdir/thumbnail-in-index/notes.md b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..86d36b54abebeefd3261645d4df29acb21f75375
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+@@ -0,0 +1,12 @@
++# Thumbnail URL inventory update
++
++- Added RSS extraction of the iTunes image `href` into optional `thumbnail_url`.
++- Added tolerant validation: when present, a non-string `thumbnail_url` becomes an empty string.
++- Preserved an existing row's `thumbnail_url` when an incoming merged row omits the key.
++- Left `thumbnail_url` out of the `REQUIRED` set.
++
++Verification:
++
++`PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')"`
++
++Result: `syntax ok`
+
+codex
+Ankit —
+
+- Changed: Added optional `thumbnail_url` extraction, validation, and merge preservation.
+- Verified by: Exact AST command returned `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index/notes.md)
+- Risks left: None identified.
+- Next action: None.
+diff --git a/departments/social/runtime/inventory_backcatalog.py b/departments/social/runtime/inventory_backcatalog.py
+index fb5ceef2a2a037e66ac5e37814822922df094185..cf3cb2004adf71741d2478daa0a3e997048074ee
+--- a/departments/social/runtime/inventory_backcatalog.py
++++ b/departments/social/runtime/inventory_backcatalog.py
+@@ -67,11 +67,14 @@
+         url = _text(item, "link")
+         item_id = _text(item, "guid") or url
+         body_path = _text(item, "body_path", "bodyPath")
++        img_el = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
++        thumbnail_url = img_el.get("href", "") if img_el is not None else ""
+         row = {
+             "item_id": item_id,
+             "source_type": "podcast",
+             "title": _text(item, "title"),
+             "url": url,
++            "thumbnail_url": thumbnail_url,
+             "published_at": _iso(_text(item, "pubDate", "published_at")),
+             "body_path": body_path,
+             "last_resurfaced_at": None,
+@@ -102,6 +105,8 @@
+     for field in ("item_id", "source_type", "title", "url", "published_at", "body_path"):
+         if not isinstance(row[field], str):
+             raise ValueError(f"content_item.{field} must be a string")
++    if "thumbnail_url" in row and not isinstance(row["thumbnail_url"], str):
++        row["thumbnail_url"] = ""
+     if not row["item_id"].strip() or not row["title"].strip() or not row["url"].strip():
+         raise ValueError("content_item item_id, title, and url must be non-empty")
+     row["published_at"] = _iso(row["published_at"])
+@@ -139,6 +144,8 @@
+             if old:
+                 row["last_resurfaced_at"] = old["last_resurfaced_at"]
+                 row["prior_engagement"] = old["prior_engagement"]
++                if "thumbnail_url" in old and "thumbnail_url" not in row:
++                    row["thumbnail_url"] = old["thumbnail_url"]
+             merged[row["item_id"]] = row
+         rows = [_validate(row) for _, row in sorted(merged.items())]
+         if not rows:
+diff --git a/ringer-manifests/workdir/thumbnail-in-index/notes.md b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..86d36b54abebeefd3261645d4df29acb21f75375
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-index/notes.md
+@@ -0,0 +1,12 @@
++# Thumbnail URL inventory update
++
++- Added RSS extraction of the iTunes image `href` into optional `thumbnail_url`.
++- Added tolerant validation: when present, a non-string `thumbnail_url` becomes an empty string.
++- Preserved an existing row's `thumbnail_url` when an incoming merged row omits the key.
++- Left `thumbnail_url` out of the `REQUIRED` set.
++
++Verification:
++
++`PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/inventory_backcatalog.py').read()); print('syntax ok')"`
++
++Result: `syntax ok`
+
+tokens used
+42,081
+Ankit —
+
+- Changed: Added optional `thumbnail_url` extraction, validation, and merge preservation.
+- Verified by: Exact AST command returned `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-index/notes.md)
+- Risks left: None identified.
+- Next action: None.
+[ringer.py] attempt 1 exited rc=0

@@ -1,0 +1,88 @@
+diff --git a/scripts/obe_escalation_card.py b/scripts/obe_escalation_card.py
+index b0854c8..e80d941 100644
+--- a/scripts/obe_escalation_card.py
++++ b/scripts/obe_escalation_card.py
+@@ -32,10 +32,19 @@ import obe_tg_notify  # noqa: E402
+ 
+ 
+ def create_card(loop: str, text: str, date_tag: str, dry_run: bool) -> dict:
++    paragraphs = text.strip().split("\n\n", 1)
++    first_paragraph = paragraphs[0].strip()
++    body = (
++        f"YOUR MOVE: Approve = approve the {loop} loop escalation, "
++        "Respond = tell it what to do instead.\n\n"
++        f"WHAT THIS MEANS:\n{first_paragraph}"
++    )
++    if len(paragraphs) > 1 and paragraphs[1].strip():
++        body += f"\n\nDetail\n{text.strip()}"
+     cmd = [
+         sys.executable, str(TICKET),
+         "--title", f"[loop-escalation] {loop} — {date_tag}",
+-        "--body", text,
++        "--body", body,
+         "--bare",
+         "--kind", "automation_alert",
+         "--source", f"podcast-loop-{loop}",
+diff --git a/tests/test_obe_escalation_card.py b/tests/test_obe_escalation_card.py
+index 35a2f14..df2d021 100644
+--- a/tests/test_obe_escalation_card.py
++++ b/tests/test_obe_escalation_card.py
+@@ -5,6 +5,58 @@ from datetime import datetime
+ from scripts import obe_escalation_card as escalation
+ 
+ 
++def test_create_card_uses_bare_ticket(monkeypatch):
++    calls = []
++    monkeypatch.setattr(
++        escalation.subprocess, "run",
++        lambda argv, **kwargs: calls.append((argv, kwargs)) or type(
++            "Result", (), {"stdout": '{"created": true}', "stderr": ""}
++        )(),
++    )
++
++    escalation.create_card("health", "Needs owner decision", "20260805", False)
++
++    assert "--bare" in calls[0][0]
++
++
++def test_create_card_blocks_poisoned_non_bare_transport(monkeypatch):
++    calls = []
++
++    def guarded_run(argv, **kwargs):
++        assert "--bare" in argv, "non-bare transport would add the Open Engine template"
++        calls.append((argv, kwargs))
++        return type("Result", (), {"stdout": '{"created": true}', "stderr": ""})()
++
++    monkeypatch.setattr(escalation.subprocess, "run", guarded_run)
++
++    result = escalation.create_card(
++        "health", "Needs owner decision\n\nFull escalation detail", "20260805", False,
++    )
++
++    assert result["created"] is True
++    assert len(calls) == 1
++
++
++def test_create_card_passes_minimal_decision_body(monkeypatch):
++    calls = []
++    monkeypatch.setattr(
++        escalation.subprocess, "run",
++        lambda argv, **kwargs: calls.append((argv, kwargs)) or type(
++            "Result", (), {"stdout": '{"created": true}', "stderr": ""}
++        )(),
++    )
++
++    escalation.create_card(
++        "health", "Needs owner decision\n\nFull escalation detail", "20260805", False,
++    )
++
++    argv = calls[0][0]
++    body = argv[argv.index("--body") + 1]
++    assert body.startswith("YOUR MOVE:")
++    assert "WHAT THIS MEANS:" in body
++    assert "Detail\nNeeds owner decision\n\nFull escalation detail" in body
++
++
+ def _run(monkeypatch, tmp_path, *, buzzed=True, ledger=None, card=None):
+     escalate_file = tmp_path / "ESCALATE.md"
+     escalate_file.write_text("Needs owner decision\nFull escalation detail", encoding="utf-8")

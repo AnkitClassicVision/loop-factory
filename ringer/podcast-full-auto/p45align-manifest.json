@@ -1,0 +1,19 @@
+{
+  "run_name": "podcast-full-auto",
+  "workdir": "/home/ankit114/ringer-work/podcast-full-auto-p45align",
+  "max_parallel": 1,
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/podcast",
+  "tasks": [
+    {
+      "key": "publish-test-alignment",
+      "engine": "codex",
+      "task_type": "test-hardening",
+      "timeout_s": 3000,
+      "spec": "You are a fix worker on the OBE podcast repo. Your current working directory IS a git worktree of /mnt/d_drive/repos/podcast - edit files here directly. Do NOT git commit, branch, or push; leave changes uncommitted. No skills/MCP/network. PYTHONDONTWRITEBYTECODE=1.\n\nBASE STATE: worktree HEAD includes the publish-safety change set: (a) publish_expectation is materialized at publish-queue time and GATES unit execution - handle_publish returns {'blocked': 'publish_expectation_missing', 'missing': [...]} when a fixture never materialized one; (b) handle_publish gained a now= kwarg and both drivers route through _handle_publish_claimed (per-episode claim); (c) terminal-ambiguity discipline at create boundaries. 15 tests currently RED at HEAD for FIXTURE reasons only.\n\nTASK: raise the 15 red tests to the new contracts WITHOUT weakening what they prove. NO production edits.\n\nOWNERSHIP: you own ONLY tests/test_publishing.py and tests/test_publish_reconcile.py. If any failure turns out to require a production change, STOP and explain in fix-summary instead of asserting broken behavior.\n\nTHE FAILURE CLASSES (run the two files first to see all 15):\n1. 'publish_expectation_missing' blocks - fixtures must materialize a complete expectation the way production now does at queue time (find the production materialization helper in server/pipeline/orchestrator.py and call it, or construct the exact object it produces: episode_id, episode_number, title, title_slug, site URL pattern, show-notes hash, approved_clips). Prefer invoking the real helper over hand-built dicts.\n2. Monkeypatched handle_publish lambdas raising TypeError on the new now= kwarg - update fakes to accept (episode_dir, *, now=None) and any other threaded kwargs.\n3. Claim-wrapper interactions - where a test called handle_publish directly and asserted driver behavior, decide per test whether it should now call the claimed wrapper or the inner method; preserve each test's original intent (e.g., error-queues-incident tests still prove the incident path).\n4. Reconcile expectations - test_publish_reconcile.py fixtures must carry the unified publish_expectation (or legacy key where the test PROVES migration - keep at least one legacy-key test proving the shared migration helper).\n\nPreserve every original assertion's substance; adjust setup, not the invariants. ALL tests in both files must pass.\n\nHOW TO RUN: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_publishing.py tests/test_publish_reconcile.py -q -p no:cacheprovider\n\nOUTPUT CONTRACT: uncommitted changes + ./fix-summary.md ('# Fix Summary','## Summary','## Files Changed','## Verification','## Assumptions', <500 words) listing per test what setup changed.",
+      "check": "python3 '/home/ankit114/repos/ringer/templates/fix-swarm/checks/fix-swarm.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_publishing.py tests/test_publish_reconcile.py -q -p no:cacheprovider' --patch '/home/ankit114/ringer-work/podcast-full-auto-p45align/publish-test-alignment.patch' --summary fix-summary.md --exported-summary '/home/ankit114/ringer-work/podcast-full-auto-p45align/publish-test-alignment.summary.md' --owned-files 'tests/test_publishing.py,tests/test_publish_reconcile.py'",
+      "expect_files": [],
+      "verified": "both publish test files fully green under expectation-gated, claimed, terminal-ambiguity contracts"
+    }
+  ]
+}

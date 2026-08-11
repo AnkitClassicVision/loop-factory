@@ -1,0 +1,20 @@
+{
+  "run_name": "failed-loops-fix",
+  "workdir": "/home/ankit114/ringer-work/failed-loops-fix-r2",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "social-cta-fix",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 3600,
+      "engine_args": ["-c", "model_reasoning_effort=high"],
+      "spec": "Your current working directory IS a git worktree of the loop-factory repo. Edit files here directly. Do NOT git commit/branch/push/stash. No MCP, no network, no model calls, no skills — all tests fixture-only.\n\nOWNED FILES (only these; the test file is new):\n  departments/social/runtime/draft_post.py\n  departments/social/runtime/social_daily.sh\n  tests/test_social_cta_fix.py\n\nCONTEXT — a verified read-only diagnosis (94% confidence, full report quoted below in relevant part) found the social loop's daily failure is PROMPT-SIDE plus a missing per-engine budget. The CTA gate (draft_post.py:470-477 area) is CORRECT and must NOT be weakened; the bundle is CORRECT and must not change. Implement EXACTLY the diagnosis's three fixes:\n\n1. PROMPT CONTRACT (the ~lines 550-564 prompt construction in draft_post.py): make the drafting prompt state explicitly: set output cta_url to the exact offer.cta_url value from the sanitized bundle; include that same URL verbatim in body; emit NO other HTTP(S) URL anywhere. Keep all existing prompt content; add the contract crisply.\n2. PER-ENGINE WHOLE-ATTEMPT TIMEOUT (social_daily.sh ~lines 197-225 fallback loop): wrap each engine fallback invocation in a 150-second whole-attempt budget (timeout command or equivalent) so 3 engines x 150s = 450s stays under the unit's 600s TimeoutStartSec, and PRESERVE the terminal all_draft_engines_failed receipt write (~lines 227-229) — it must still execute within budget when every engine fails. Preserve every other line of the script byte-for-byte.\n3. REJECTED-OUTPUT OBSERVABILITY (draft_post.py ~lines 678-703 receipt replacement): before a rejected attempt's receipt is replaced, persist ONLY safe diagnostics to the state dir (e.g. rejected_attempts.jsonl): engine, round, cta_url type/presence, distinct HTTP(S) URL count, whether the sole URL equals offer.cta_url, whether it occurs in body, timestamp. NEVER persist or log the draft body or any content text.\n\ntests/test_social_cta_fix.py — at least 7 fixture tests (reuse the monkeypatch patterns from tests/test_engine_usage_parse.py): the built prompt contains the exact-cta contract wording including the literal offer.cta_url; a compliant fixture response passes the gate unchanged; a zero-URL fixture response still fails the gate (gate NOT weakened); a multi-URL response still fails; a rejected attempt writes one diagnostics row with url_count and equals_offer fields and NO body text (assert body absent from the file); diagnostics file is append-only across two rejections; the daily script text contains the 150s wrapper on each engine attempt and still contains the all_draft_engines_failed receipt write.\n\nVERIFY: 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' full suite green. You fail for touching files outside the owned list, fewer than 7 new 'def test_' functions, or the verify command failing.",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' --patch /home/ankit114/ringer-work/failed-loops-fix-r2/social-cta.patch --owned-files 'departments/social/runtime/draft_post.py,departments/social/runtime/social_daily.sh,tests/test_social_cta_fix.py' --min-new-tests 7",
+      "expect_files": [],
+      "verified": "the drafting prompt now promises exactly what the CTA gate checks, each engine attempt has a 150s budget under the unit limit, and rejected attempts leave safe diagnostics — gate and bundle untouched"
+    }
+  ]
+}

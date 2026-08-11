@@ -1,0 +1,135 @@
+diff --git a/scripts/obe_draft_to_linear_bridge.py b/scripts/obe_draft_to_linear_bridge.py
+index b76b2f2..10d5fd1 100644
+--- a/scripts/obe_draft_to_linear_bridge.py
++++ b/scripts/obe_draft_to_linear_bridge.py
+@@ -53,7 +53,10 @@ def _tg(kind: str, **kw) -> None:
+             obe_tg_notify.notify_card_created(kw["card"], kw["to"], kw["subject"],
+                                               kw["draft_id"], preview=kw.get("preview", ""))
+         elif kind == "blocked":
+-            obe_tg_notify.notify_blocked_once(kw["draft_id"], kw["to"], kw["subject"], kw["reason"])
++            obe_tg_notify.notify_blocked_once(
++                kw["draft_id"], kw["to"], kw["subject"], kw["reason"],
++                card=kw.get("card", ""),
++            )
+     except Exception as exc:  # noqa: BLE001 — the buzz must never break the bridge
+         print(f"tg notify failed ({kind}): {exc}", file=sys.stderr)
+ 
+@@ -1283,6 +1286,7 @@ def main() -> int:
+             results.append(entry)
+             _tg("blocked", draft_id=candidate["gmail_draft_id"], to=candidate["to"],
+                 subject=candidate["subject"],
++                card=entry.get("card") or "",
+                 reason=f"voice_qa={candidate['voice_qa']} "
+                        f"context_packet={candidate['context_packet_verdict'] or 'n/a'} "
+                        f"receipt={candidate['voice_qa_receipt']}")
+diff --git a/scripts/obe_tg_notify.py b/scripts/obe_tg_notify.py
+index f90833a..6e0e79d 100644
+--- a/scripts/obe_tg_notify.py
++++ b/scripts/obe_tg_notify.py
+@@ -99,8 +99,9 @@ def notify_escalation(card: str, loop: str, summary: str, preview: str,
+ 
+ 
+ def notify_blocked_once(draft_id: str, to: str, subject: str, reason: str,
+-                        send=_send, state_path: Path | None = None) -> bool:
+-    """One buzz per draft id when pre-card QA blocks it; later blocks stay quiet."""
++                        send=_send, state_path: Path | None = None,
++                        card: str = "") -> bool:
++    """One actionable buzz per blocked draft; later blocks stay quiet."""
+     state_path = state_path or BLOCKED_STATE
+     try:
+         state = json.loads(state_path.read_text(encoding="utf-8"))
+@@ -111,8 +112,23 @@ def notify_blocked_once(draft_id: str, to: str, subject: str, reason: str,
+     key = draft_id or f"{to}|{subject}"
+     if key in state:
+         return True  # already told the owner about this draft
+-    sent = send(["notify-blocked", "--to", to, "--subject", subject,
+-                 "--reason", reason, "--draft-id", draft_id or ""])
++    sent = False
++    if card:
++        try:
++            sent = notify_escalation(
++                card, "draft-bridge", f"Blocked draft: {subject}",
++                f"To: {to}\nDraft: {draft_id or '(unknown)'}\nReason: {reason}",
++                send=send,
++            )
++        except Exception as exc:  # best-effort lane; plain text remains the fallback
++            _log_failure("blocked_card", str(exc), card=card, draft_id=draft_id or "")
++    if not sent:
++        try:
++            sent = send(["notify-blocked", "--to", to, "--subject", subject,
++                         "--reason", reason, "--draft-id", draft_id or ""])
++        except Exception as exc:  # no notification failure may break the bridge
++            _log_failure("blocked_plain", str(exc), draft_id=draft_id or "")
++            sent = False
+     if sent:
+         state[key] = _iso()
+         try:
+diff --git a/tests/test_obe_tg_notify.py b/tests/test_obe_tg_notify.py
+index 252748f..2e7b41d 100644
+--- a/tests/test_obe_tg_notify.py
++++ b/tests/test_obe_tg_notify.py
+@@ -29,19 +29,64 @@ def test_bridge_hook_cannot_reach_ssh_under_tests(monkeypatch, tmp_path):
+     assert logged and logged[0]["kind"] == "suppressed"
+ 
+ 
++def test_blocked_notice_with_card_uses_proposal_escalation_lane(tmp_path):
++    calls = []
++    ok = notify.notify_blocked_once(
++        "r-card", "g@example.com", "Subj", "voice_qa=fail", card="ANK-42",
++        send=lambda args: calls.append(args) or True,
++        state_path=tmp_path / "blocked.json",
++    )
++    assert ok
++    assert calls[0][:3] == ["prompt", "--kind", "escalation"]
++    assert "ANK-42" in calls[0]
++    assert "external_send" not in calls[0]
++
++
+ def test_blocked_notice_dedupes_per_draft(tmp_path):
+     calls = []
+     state = tmp_path / "blocked.json"
+     ok = notify.notify_blocked_once("r-1", "g@example.com", "Subj", "voice_qa=fail",
++                                    card="ANK-42",
+                                     send=lambda args: calls.append(args) or True,
+                                     state_path=state)
+     again = notify.notify_blocked_once("r-1", "g@example.com", "Subj", "voice_qa=fail",
++                                       card="ANK-42",
+                                        send=lambda args: calls.append(args) or True,
+                                        state_path=state)
+     assert ok and again
+     assert len(calls) == 1  # second block of the same draft stays quiet
+ 
+ 
++def test_blocked_notice_without_card_uses_plain_text(tmp_path):
++    calls = []
++    ok = notify.notify_blocked_once(
++        "r-plain", "g@example.com", "Subj", "reason",
++        send=lambda args: calls.append(args) or True,
++        state_path=tmp_path / "blocked.json",
++    )
++    assert ok
++    assert calls[0][0] == "notify-blocked"
++
++
++def test_blocked_card_failure_falls_back_without_raising(monkeypatch, tmp_path):
++    calls = []
++    monkeypatch.setattr(notify, "FAILURE_LOG", tmp_path / "fail.jsonl")
++
++    def send(args):
++        calls.append(args)
++        if args[0] == "prompt":
++            raise RuntimeError("card lane down")
++        return True
++
++    ok = notify.notify_blocked_once(
++        "r-fallback", "g@example.com", "Subj", "reason", card="ANK-42",
++        send=send, state_path=tmp_path / "blocked.json",
++    )
++    assert ok
++    assert calls[0][:3] == ["prompt", "--kind", "escalation"]
++    assert calls[1][0] == "notify-blocked"
++
++
+ def test_blocked_notice_failure_not_marked_notified(tmp_path):
+     state = tmp_path / "blocked.json"
+     sent = notify.notify_blocked_once("r-2", "g@example.com", "Subj", "reason",

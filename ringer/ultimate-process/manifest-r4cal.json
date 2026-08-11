@@ -1,0 +1,19 @@
+{
+  "run_name": "ultimate-process",
+  "workdir": "/home/ankit114/ringer-work/ultimate-process-r4cal",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/hubspot-daily-2",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "gate-calibration",
+      "engine": "claude",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "spec": "Your current working directory IS a git worktree of /mnt/d_drive/repos/hubspot-daily-2. Do NOT git commit/branch/push/stash. No MCP, no network, no skills; fixture-only tests with invented contacts. NEVER touch scripts/gap_sync.py.\n\nTWO CALIBRATIONS to the voice gate (scripts/voice_gate.py + scripts/voice_rules.json exist at HEAD \u2014 read both fully; 25 existing tests in tests/test_voice_gate.py must stay green, extend never delete):\n1. PARAGRAPH BUDGET MISCOUNT (live evidence: a compliant 3-paragraph email counted 5 because greeting 'Hey Vishal,' and signature 'Ankit' counted as paragraphs). Fix the paragraph_budget check: exclude from the count (a) a FIRST block that is a greeting line (matches the greeting rule's own pattern, <=60 chars), and (b) a FINAL block that is the signature (the signature rule's own terminal-line logic, <=3 short lines). Body paragraphs between them count as before.\n2. GUEST-EMAIL CHANNEL (owner directive 2026-08-03: 'guest emails must give the prep call link ONLY, 15-20 min'): add channel 'email-guest' to the rules schema \u2014 inherits every email rule, but its one-URL rule REQUIRES the single URL to be exactly https://meetings.hubspot.com/ankit98/podcast-prep (params.required_url; any other URL or a missing URL = block with defect id guest_prep_link_required), and add a WARN rule guest_duration_wording: warn if body mentions a meeting duration other than 15-20 min (regex for '30 min', '45 min', '1 hour', 'an hour' etc.) \u2014 the 2026-05-19 wrong-calendar mistake class. bump rules version to 2.\nTESTS: >=7 new in tests/test_voice_gate.py: the exact live fixture (greeting + 3 paras + prep-link CTA + 'Ankit') PASSES on email-guest; 4 body paragraphs still blocks; guest email with the WRONG booking URL blocks with guest_prep_link_required; guest email with zero URLs blocks; '30 minutes' wording warns on email-guest; plain email channel unchanged (regression: one-URL any-URL still passes); version 2 in receipts.\nVERIFY: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_voice_gate.py -q -p no:cacheprovider. Write ./evidence.md (diff summary + test output).",
+      "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_voice_gate.py -q -p no:cacheprovider' --patch /home/ankit114/ringer-work/ultimate-process-r4cal/calibration.patch --owned-files 'scripts/voice_gate.py,scripts/voice_rules.json,tests/test_voice_gate.py' --min-new-tests 7",
+      "expect_files": [],
+      "verified": "the gate counts real body paragraphs only and the email-guest channel enforces the prep-call link as the one URL with duration-wording warns"
+    }
+  ]
+}

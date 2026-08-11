@@ -1,0 +1,285 @@
+diff --git a/departments/podcast/runtime/compare_charter.py b/departments/podcast/runtime/compare_charter.py
+index 982f58b..1fb9ed6 100644
+--- a/departments/podcast/runtime/compare_charter.py
++++ b/departments/podcast/runtime/compare_charter.py
+@@ -67,6 +67,121 @@ FAILURE_HINT_CLASSES = {
+     ("receipt", "fail", "receipt_hollow"): ("receipt_hollow", "high"),
+ }
+ 
++MEANINGS = {
++    "dag_receipt_violation": {
++        "what_it_means": "A required podcast step was skipped or its proof of completion cannot be trusted.",
++        "what_it_needs": "Ops must repair the skipped step and confirm who approved any intentional skip; nothing needed from you unless approval is disputed.",
++    },
++    "timer_failed": {
++        "what_it_means": "A scheduled podcast job tried to run and failed.",
++        "what_it_needs": "Ops must repair or retire the scheduled job; you only need to decide if the job should no longer run.",
++    },
++    "receipt_stale": {
++        "what_it_means": "A podcast job has not recently proven that it finished successfully.",
++        "what_it_needs": "Ops must check the job and restore a fresh completion record; nothing needed from you unless the job should be retired.",
++    },
++    "log_error": {
++        "what_it_means": "A podcast job recorded an error while running.",
++        "what_it_needs": "Ops must use the approved repair steps or bring you a specific decision if none apply.",
++    },
++    "channel_failed": {
++        "what_it_means": "The podcast alert route is not working, so important problems may not reach you.",
++        "what_it_needs": "Ops must restore the approved alert route; nothing needed from you unless a different route is required.",
++    },
++    "vps_service_failed": {
++        "what_it_means": "A podcast service on the hosted server is down.",
++        "what_it_needs": "Ops must repair the service through an approved playbook or ask you to approve a different recovery path.",
++    },
++    "timer_unknown": {
++        "what_it_means": "The system cannot tell whether a scheduled podcast job is working.",
++        "what_it_needs": "Ops must restore the job status check; you only need to decide if the job should be retired.",
++    },
++    "ledger_blind": {
++        "what_it_means": "The system cannot read the record that shows whether podcast messages were sent.",
++        "what_it_needs": "Ops must restore that send record; nothing needed from you unless the sending process should change.",
++    },
++    "hopper_blind": {
++        "what_it_means": "The watchdog gauge that checks episodes are publishing on time has no data to read; the podcast itself may be fine, but this gauge is blind.",
++        "what_it_needs": "An ops repair of the publish-schedule data file; nothing needed from you unless you want it handled differently.",
++    },
++    "ledger_failed": {
++        "what_it_means": "The record of podcast message sends shows a failure.",
++        "what_it_needs": "Ops must repair the failed send path and confirm the affected message status; nothing needed from you unless a resend needs approval.",
++    },
++    "receipt_unknown": {
++        "what_it_means": "The system cannot tell whether a podcast job finished successfully.",
++        "what_it_needs": "Ops must restore the job's completion record; nothing needed from you unless the job should be retired.",
++    },
++    "log_unknown": {
++        "what_it_means": "The system cannot read the podcast job's error record.",
++        "what_it_needs": "Ops must restore access to the job record; nothing needed from you unless the record location should change.",
++    },
++    "channel_unknown": {
++        "what_it_means": "The system cannot confirm that podcast alerts can reach you.",
++        "what_it_needs": "Ops must test and restore the approved alert route; nothing needed from you unless a new route is required.",
++    },
++    "vps_unknown": {
++        "what_it_means": "The system cannot tell whether a podcast service on the hosted server is running.",
++        "what_it_needs": "Ops must restore the service status check; nothing needed from you unless server access is required.",
++    },
++    "timer_warning": {
++        "what_it_means": "A scheduled podcast job is showing an early warning but has not fully failed.",
++        "what_it_needs": "Ops should inspect the job before its next run; nothing needed from you unless it should be retired.",
++    },
++    "receipt_warning": {
++        "what_it_means": "A podcast job's proof of completion is getting old and may soon be overdue.",
++        "what_it_needs": "Ops should confirm the next successful run updates the completion record; nothing needed from you.",
++    },
++    "log_warning": {
++        "what_it_means": "A podcast job recorded a warning that may become a failure.",
++        "what_it_needs": "Ops should inspect the warning and apply the approved repair if needed; nothing needed from you.",
++    },
++    "channel_warning": {
++        "what_it_means": "The podcast alert route is showing signs it may stop working.",
++        "what_it_needs": "Ops should test and repair the alert route; nothing needed from you unless a different route is required.",
++    },
++    "vps_warning": {
++        "what_it_means": "A podcast service on the hosted server is showing signs it may fail.",
++        "what_it_needs": "Ops should inspect and repair the service; nothing needed from you unless a different recovery path needs approval.",
++    },
++    "pipeline_below_target": {
++        "what_it_means": "There are too few confirmed podcast guests ready for recording.",
++        "what_it_needs": "The podcast team must identify and clear the missing guest work; you only need to help if an owner decision is blocking them.",
++    },
++    "pipeline_warn": {
++        "what_it_means": "The number of confirmed podcast guests is close to falling below target.",
++        "what_it_needs": "The podcast team should fill the guest gaps before they affect recording; nothing needed from you unless they flag a decision.",
++    },
++    "pipeline_unknown": {
++        "what_it_means": "The system cannot count how many podcast guests are ready for recording.",
++        "what_it_needs": "Ops must restore the guest-status data; nothing needed from you unless the tracking process should change.",
++    },
++    "publish_missing": {
++        "what_it_means": "Something required for today's podcast release is missing.",
++        "what_it_needs": "The publishing owner must restore the missing item or tell you exactly what decision is blocking release.",
++    },
++    "publish_unknown": {
++        "what_it_means": "The system cannot confirm whether today's podcast release is complete.",
++        "what_it_needs": "Ops must restore the release check; nothing needed from you unless the publishing owner reports a real release problem.",
++    },
++    "manifest_incomplete": {
++        "what_it_means": "Required guest details are missing before the episode can be published safely.",
++        "what_it_needs": "The podcast team must complete the missing guest details before publishing; nothing needed from you unless they cannot obtain them.",
++    },
++    "manifest_gap": {
++        "what_it_means": "Some guest details may be incomplete ahead of publishing.",
++        "what_it_needs": "The podcast team should complete the guest details before publish day; nothing needed from you unless they flag a blocker.",
++    },
++    "manifest_unknown": {
++        "what_it_means": "The system cannot confirm whether all required guest details are complete.",
++        "what_it_needs": "Ops must restore the guest-details check; nothing needed from you unless the podcast team reports missing information.",
++    },
++    "receipt_hollow": {
++        "what_it_means": "A podcast job created an empty completion record that does not prove the work finished.",
++        "what_it_needs": "Ops must rerun or repair the job so it produces a complete record; nothing needed from you unless the job itself should change.",
++    },
++}
++
+ QUESTIONS = {
+     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
+     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
+@@ -245,6 +360,7 @@ def compare_observations(
+                 "observed": _observed_for(row),
+                 "evidence": [str(row.get("evidence", ""))],
+                 "one_question": QUESTIONS[sensor],
++                **MEANINGS[failure_class],
+             }
+         )
+     return candidates
+diff --git a/departments/podcast/runtime/escalate_outbox.py b/departments/podcast/runtime/escalate_outbox.py
+index b359a96..c3634ed 100644
+--- a/departments/podcast/runtime/escalate_outbox.py
++++ b/departments/podcast/runtime/escalate_outbox.py
+@@ -17,7 +17,8 @@ if str(REPO_ROOT) not in sys.path:
+     sys.path.insert(0, str(REPO_ROOT))
+ 
+ from factory import runrecord
+-from factory.human_in_the_loop import escalate
++from factory.human_in_the_loop import _atomic_write, escalate
++from departments.podcast.runtime.compare_charter import MEANINGS
+ from departments.podcast.runtime import record as record_node
+ 
+ 
+@@ -28,6 +29,38 @@ _DEFECT_MARKER = re.compile(r"^department_defect:[1-9][0-9]*$")
+ LOGGER = logging.getLogger(__name__)
+ 
+ 
++def _plain_copy(failure_class: str) -> tuple[str, str]:
++    meaning = MEANINGS.get(failure_class)
++    if meaning is None:
++        return (
++            "A podcast process needs attention and the team could not fix it automatically.",
++            "Ops must investigate and bring you a specific decision only if one is required.",
++        )
++    return meaning["what_it_means"], meaning["what_it_needs"]
++
++
++def _eli5(failure_class: str) -> str:
++    what_it_means, what_it_needs = _plain_copy(failure_class)
++    return (
++        "[podcast] Action needed — "
++        f"WHAT THIS MEANS: {what_it_means} "
++        f"WHAT IT NEEDS: {what_it_needs}"
++    )
++
++
++def _replace_latest_eli5(path: Path, eli5: str) -> None:
++    lines = path.read_text(encoding="utf-8").splitlines()
++    for index in range(len(lines) - 1, -1, -1):
++        if not lines[index].strip():
++            continue
++        packet = json.loads(lines[index])
++        packet["eli5"] = eli5
++        lines[index] = json.dumps(packet)
++        _atomic_write(path, "\n".join(lines) + "\n")
++        return
++    raise ValueError("escalation did not append an outbox row")
++
++
+ def _load_incidents(path: Path) -> dict[str, dict[str, Any]]:
+     if not path.exists():
+         return {}
+@@ -79,6 +112,7 @@ def _load_outbox_markers(
+         evidence = context.get("evidence")
+         issue = packet.get("issue")
+         timestamp = packet.get("ts")
++        failure_class = issue.split(":", 1)[0] if isinstance(issue, str) else ""
+         marker_matches_state = (
+             (marker == "open" and incident_state == "open")
+             or (
+@@ -100,7 +134,7 @@ def _load_outbox_markers(
+             and len(issue) > len(question) + 2
+             and isinstance(timestamp, str)
+             and bool(timestamp)
+-            and packet.get("eli5") == f"[podcast] needs you: {issue}"
++            and packet.get("eli5") == _eli5(failure_class)
+         )
+         if not structurally_valid:
+             _outbox_warning(path, line_number, "packet does not match podcast escalation schema")
+@@ -174,6 +208,7 @@ def escalate_new_incidents(
+                     "one_question": question,
+                 },
+             )
++            _replace_latest_eli5(outbox_path, _eli5(str(incident.get("failure_class"))))
+             durable_markers[durable_key] = timestamp
+             incident[escalated_field] = True
+             incident[escalated_at_field] = timestamp
+diff --git a/departments/podcast/tests/test_compare_charter.py b/departments/podcast/tests/test_compare_charter.py
+index b5506a6..dfd482c 100644
+--- a/departments/podcast/tests/test_compare_charter.py
++++ b/departments/podcast/tests/test_compare_charter.py
+@@ -43,3 +43,25 @@ def test_every_declared_failure_transition_classifies(sensor, status):
+     )
+ 
+     assert len(candidates) == 1
++
++
++def test_every_failure_class_has_plain_english_meaning_and_need():
++    failure_classes = {
++        failure_class
++        for failure_class, _severity in compare_charter.FAILURE_CLASSES.values()
++    } | {
++        failure_class
++        for failure_class, _severity in compare_charter.FAILURE_HINT_CLASSES.values()
++    }
++
++    assert failure_classes == set(compare_charter.MEANINGS)
++    for failure_class in failure_classes:
++        meaning = compare_charter.MEANINGS[failure_class]
++        assert meaning["what_it_means"].strip()
++        assert meaning["what_it_needs"].strip()
++        assert not {
++            "sensor",
++            "verifier",
++            "fingerprint",
++            "observation",
++        } & set(meaning["what_it_means"].lower().split())
+diff --git a/departments/podcast/tests/test_escalate_outbox_copy.py b/departments/podcast/tests/test_escalate_outbox_copy.py
+new file mode 100644
+index 0000000..41541a3
+--- /dev/null
++++ b/departments/podcast/tests/test_escalate_outbox_copy.py
+@@ -0,0 +1,37 @@
++import json
++
++from departments.podcast.runtime import escalate_outbox
++from departments.podcast.runtime import record
++
++
++def test_hopper_blind_escalation_leads_with_plain_language(tmp_path):
++    technical_question = (
++        "Hopper/publish-reliability evidence is unavailable — what broke the "
++        "publish schedule source or the publish-day verifier?"
++    )
++    incidents_path = tmp_path / "incidents.json"
++    outbox_path = tmp_path / "decisions_outbox.jsonl"
++    record.atomic_write_json(
++        incidents_path,
++        {
++            "123456789abc": {
++                "fingerprint": "123456789abc",
++                "failure_class": "hopper_blind",
++                "state": "open",
++                "evidence": ["fixture://hopper"],
++                "one_question": technical_question,
++                "escalated": False,
++                "escalated_at": None,
++            }
++        },
++    )
++
++    escalate_outbox.escalate_new_incidents(incidents_path, outbox_path)
++
++    row = json.loads(outbox_path.read_text(encoding="utf-8"))
++    assert row["eli5"].startswith("[podcast]")
++    assert "WHAT THIS MEANS:" in row["eli5"]
++    assert "WHAT IT NEEDS:" in row["eli5"]
++    assert not row["eli5"].startswith("hopper_blind")
++    assert row["context"]["one_question"] == technical_question
++    assert technical_question not in row["eli5"]
