@@ -5,6 +5,34 @@ reference files, do not restate them._
 
 ---
 
+## Podcast guest-acquisition: contact truth (2026-08-11)
+
+Full detail: `~/handoffs/2026-08-11-podcast-contact-truth.md`. Supersedes the
+2026-08-10 entry below, which is kept for its defect log.
+
+**Done.** U12 absence alarm WIRED AND PINNED as SG-WATCHDOG N15 (release
+`4fd7685746c604dc`, full seven-step governed path, `qa` drift-clean). Contact-state
+resolver built to Ankit's authority ruling — actual data wins, ledgers are
+second order, timestamps arbitrate, a Bee-recorded call after a Gmail thread is
+the later truth — plus four adapters (gmail, linkedin, bee, hubspot) built as
+four sequential Ringer rounds r14-r17, all PASS on attempt 1, landed and
+re-verified against landed code. U13 and U14 checks added.
+
+**Five defects found that green checks had been hiding:** two un-symlinked
+ringer checkouts meant the loop could not start its worker at all; U8 and U9
+were never invoked by the runner, so every prior green seam measured
+hand-supplied inputs; a cold-open near-miss caught by cross-model QA; the
+placeholder Gmail reused one draft id, defeating the hold-3 gate; and the time
+bounds were work limiters rather than hang detectors.
+
+**Not done.** Wire the resolver into the feeder (the next action). Credentials
+for gmail/linkedin/hubspot — bee is the only channel currently reachable, so
+the resolver returns UNKNOWN and nothing clears a cold open. U11 real draft
+still unexecuted; the chain now reaches QA, which said REVISE twice, correctly.
+Candidate supply remains the real constraint: `considered 14, selected 0`.
+
+---
+
 ## Podcast guest-acquisition: the silent zero is closed (2026-08-10)
 
 ### Goal
