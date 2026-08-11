@@ -33,13 +33,29 @@ nothing pushed)
 - **U12 absence alarm:** built, five states proven, watched failing first.
   **Deliberately NOT wired** — see below.
 
-**Not done, both owner decisions**
+**Ankit approved both open decisions the same evening.**
 
-1. **U11 live Gmail.** Never executed. First external effect of the job.
-2. **Wiring U12 into SG-WATCHDOG.** That changes the roster of a department
-   already minting run manifests hourly, so it is a governed release re-pin,
-   not an edit. Carried as `untraced_allowed` with that rationale: validate
-   passes, drift null, nothing scheduled.
+- **U12 is WIRED AND PINNED.** Full seven-step governed path; release
+  `4fd7685746c604dc`; `qa --name podcast` drift-clean (`195cdf6`, `a182db6`).
+  The node needed re-authoring first: it exited 2 on a non-ok state, and a
+  Sense node exiting non-zero mid-chain stops the nodes behind it, so a drought
+  would have taken the watchdog down with it.
+- **U11 is NOT achieved.** Two blockers, one fixed:
+  - FIXED `648d9e7`: two un-symlinked ringer checkouts. Ringer resolves its
+    trusted codex-oauth wrapper relative to its own `ringer.py`; the config
+    trusts `/mnt/d_drive/repos/ringer`, the runner defaulted to `~/repos/ringer`,
+    so **every worker run was refused** and the loop escalated instead. Owner:
+    /mnt/d_drive is canonical.
+  - OPEN, and this is the "loops don't drive" mechanism: the producer sits
+    behind the re-entry loop at `run_podcast_loop.sh:643`, which only exits if
+    the worker claims a send or proves exhaustion. The live worker wrote
+    `sends: 0` beside candidates it had just marked `eligible: True`, which is
+    exactly what the verdict computer refuses, so it re-enters until the weekly
+    worker-minutes cap and the producer is never reached. The fix is a RUNBOOK
+    change (`sends: N` is a proposal the deterministic producer fulfils, the
+    worker sends nothing), not code.
+  - W33 worker-minutes: 29.8 min against a 28 min cap. The lane is over budget
+    for this week.
 
 **Standing constraint:** candidate supply, not machinery. 13 of 14 live inbox
 records have no email. The automation now produces honest, explained zeros.
