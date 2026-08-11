@@ -392,7 +392,15 @@ def check_cli(worktree: Path) -> None:
         env = {k: v for k, v in os.environ.items()
                if k not in ("GMAIL_CREDENTIALS_PATH", "GMAIL_FULL_TOKEN_PATH",
                             "HUBSPOT_API_KEY", "BEE_API_KEY", "LINKEDIN_EXPORT_PATH")}
-        env.update({"PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(worktree)})
+        # Deliberately NO PYTHONPATH. The scheduled runner does not set one, and
+        # Python puts the SCRIPT's directory on sys.path, not the working
+        # directory — so a feeder that imports server.pipeline dies at the import
+        # line under systemd while passing a check that helpfully set the path.
+        # It did exactly that on 2026-08-11, and only a live run caught it. A
+        # check may control the inputs; it may not make the environment kinder
+        # than production.
+        env.update({"PYTHONDONTWRITEBYTECODE": "1"})
+        env.pop("PYTHONPATH", None)
         done = subprocess.run(
             [sys.executable, str(worktree / "scripts/guest_candidate_feed.py"),
              "--inbox", str(root / "inbox.json"), "--ledger", str(root / "ledger.json"),
