@@ -54,6 +54,28 @@ text and they have no address, which is an intake data gap, and **1** already
 CONTACTED. Nothing new reaches the producer; r22 is reporting only. U11 real Gmail draft still never executed. Progress-based
 re-entry stop still unbuilt.
 
+**Identity proposals (r23-r26).** Warm records with no address route to
+HubSpot for an email; cold ones to Unipile for a profile. Exactly one plausible
+match proposes; two or more propose nobody. Nothing is applied. The queue lives
+at `episodes/_loop_receipts/identity-proposals-20260811.json`, 0600, in a
+gitignored directory, and carries names deliberately because nobody can confirm
+an identity against an alias.
+
+Live: hubspot reached, unipile reached, **5 email proposals**, 8 no match.
+Every proposal is confidence 55 on exact-name-match alone — nothing in the
+intake notes corroborated CRM company or city.
+
+**LinkedIn name search finds none of the 7 cold candidates** (3 of 7 sampled,
+HTTP 200, results=0). The request is correct now; LinkedIn simply does not know
+them by name. That fork is Ankit's: capture a LinkedIn URL at intake, use a
+different identity source, or accept they stay unreachable.
+
+Three more defects, all measured rather than guessed: Unipile people search is a
+POST with a classic/people body, not a GET; its results carry first_name and
+last_name, not name, so a successful search would have matched nobody; and
+HubSpot 429s on the fifth back-to-back lookup, which one try around the whole
+source loop turned into the loss of four good proposals.
+
 Earlier detail: `~/handoffs/2026-08-11-podcast-contact-truth.md`. Supersedes the
 2026-08-10 entry below, which is kept for its defect log.
 
