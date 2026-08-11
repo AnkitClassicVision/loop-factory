@@ -42,14 +42,20 @@ from __future__ import annotations
 import argparse
 from datetime import date, datetime, timedelta, timezone
 import json
+import logging
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from factory import runrecord
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PIPELINE_REPO = Path("/mnt/d_drive/repos/podcast")
 DEFAULT_WINDOW_DAYS = 3
@@ -175,29 +181,89 @@ def evaluate(
     }
 
 
+def _append(state_dir: Path, observation: dict[str, Any]) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(observation, sort_keys=True) + "\n")
+
+
+def run(
+    state_dir: Path,
+    pipeline_repo: Path = DEFAULT_PIPELINE_REPO,
+    *,
+    now: datetime | None = None,
+    window_days: int = DEFAULT_WINDOW_DAYS,
+    receipts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Node entry point: record the finding, never crash the daily chain.
+
+    The signal travels through the OBSERVATION, not through the exit code. That
+    is the department's convention for a Sense node — N2 compare_charter reads
+    observations and classifies them — and it is also the safer shape here: a
+    non-zero exit from a sensor mid-chain would stop the nodes behind it, so an
+    outreach drought would take the whole watchdog down with it.
+    """
+    state_dir = Path(state_dir)
+    started = time.perf_counter()
+    current = now or datetime.now(timezone.utc)
+    result = evaluate(Path(pipeline_repo), today=current.date(),
+                      window_days=window_days, receipts_dir=receipts_dir)
+    receipts = (Path(receipts_dir) if receipts_dir
+                else Path(pipeline_repo) / "episodes" / "_loop_receipts")
+    observation = {
+        "ts": current.isoformat(),
+        "sensor": "outreach_absence",
+        "subject": "guest_outreach_produced",
+        "status": result["status"],
+        "evidence": str(receipts / "guest-outreach-ledger.json"),
+        "detail": result["detail"],
+        "metrics": {
+            "count": result["drafts_in_window"],
+            "floor": 1,
+            "window_days": result["window_days"],
+        },
+    }
+    _append(state_dir, observation)
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="outreach_absence_sensor",
+            status="ok" if result["status"] == "ok" else "error",
+            release=runrecord.read_release(state_dir.parent),
+            trigger={"kind": "time", "id": "podcast-daily",
+                     "dedupe_key": f"{current.date().isoformat()}-outreach_absence_sensor"},
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=[] if result["status"] == "ok" else [f"guest_outreach_produced:{result['status']}"],
+            artifacts=[str(state_dir / "observations.jsonl")],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("outreach_absence_sensor failed to append its runs-v2 record")
+    return observation
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-dir", type=Path,
+                        default=REPO_ROOT / "departments/podcast/state")
+    parser.add_argument("--sources", type=Path, help="unused; accepted for chain uniformity")
     parser.add_argument("--pipeline-repo", type=Path, default=DEFAULT_PIPELINE_REPO)
+    parser.add_argument("--shadow", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--receipts-dir", type=Path)
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
-    parser.add_argument("--today", type=date.fromisoformat,
-                        default=datetime.now(timezone.utc).date())
-    parser.add_argument("--out", type=Path)
+    parser.add_argument("--print", action="store_true", help="also print the finding")
     args = parser.parse_args(argv)
     if args.window_days < 1:
         parser.error("--window-days must be at least 1")
-
-    observation = evaluate(
-        args.pipeline_repo, today=args.today,
-        window_days=args.window_days, receipts_dir=args.receipts_dir,
-    )
-    if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(observation, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(observation, indent=2))
-    # Exit 0 ok, 2 needs a human (alarm, drought or unknown). Never 1 for a
-    # measured state: 1 is reserved for the sensor itself failing.
-    return 0 if observation["status"] == "ok" else 2
+    try:
+        observation = run(args.state_dir, args.pipeline_repo,
+                          window_days=args.window_days, receipts_dir=args.receipts_dir)
+        if args.print:
+            print(json.dumps(observation, indent=2))
+    except Exception:
+        LOGGER.exception("outreach_absence_sensor refused to crash the daily chain")
+    return 0
 
 
 if __name__ == "__main__":

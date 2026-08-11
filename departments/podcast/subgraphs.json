@@ -50,6 +50,10 @@
      "impl": "runtime/funnel_floor_sensor.py"
     },
     {
+     "id": "N15",
+     "impl": "runtime/outreach_absence_sensor.py"
+    },
+    {
      "id": "N6",
      "impl": "runtime/comms_reconcile_sensor.py",
      "execution": "daily_shared_chain_before_compare_and_escalation"
@@ -270,7 +274,5 @@
   "runtime/rotate_observations.py": "daily post-consumer maintenance step for the observation store (dedup + rotation, receipt-emitting, dry-run honest); invoked after the heal phase and before board regeneration",
   "manifests/recording-intake.yaml": "expectation-manifest data consumed by SG-WATCHDOG N10 (expectation_reconcile.py); declared expectations, not behavior",
   "manifests/prep-research.yaml": "expectation-manifest data consumed by SG-WATCHDOG N10 (expectation_reconcile.py); declared expectations, not behavior",
-  "runtime/run-roster.json": "release-bound run-obligation roster consumed by kernel.run_manifest mint/verify (P1); owner-reviewed data, not behavior \u2014 the behavior lives in the kernel",
-  "runtime/outreach_absence_sensor.py": "U12 outreach dead man's switch: BUILT AND PROVEN, DELIBERATELY NOT WIRED. All five states are watched by execution (alarm / drought / unknown / ok / corrupt-ledger), but adding it to SG-WATCHDOG changes the roster of a department already running hourly, which is a governed release re-pin the owner approves, not an edit. Until Ankit re-pins, nothing schedules it and the department behaves exactly as pinned. Wiring it is the named next step in HANDOFF.md."
- }
+  "runtime/run-roster.json": "release-bound run-obligation roster consumed by kernel.run_manifest mint/verify (P1); owner-reviewed data, not behavior \u2014 the behavior lives in the kernel" }
 }

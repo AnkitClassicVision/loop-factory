@@ -131,6 +131,11 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/funnel_floor_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/floor_compiler_run.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
+# U12 outreach dead man's switch (owner approved 2026-08-10). Reports through an
+# observation, never an exit code: a Sense node that exits non-zero mid-chain
+# would stop the nodes behind it, so an outreach drought would take the whole
+# watchdog down with it.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/outreach_absence_sensor.py" --shadow --sources "${SOURCES}" --state-dir "${STATE_DIR}" --pipeline-repo "/mnt/d_drive/repos/podcast"
 # Expectation reconcile is receipt-gated like the DAG supervisor: exit 2 is a
 # VALID findings verdict (observations recorded; compare/dedup below must
 # process them). Any other nonzero exit is a node failure and stops the chain.
