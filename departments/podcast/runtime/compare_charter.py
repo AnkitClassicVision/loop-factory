@@ -91,6 +91,18 @@ MEANINGS = {
         "what_it_means": "A required podcast step was skipped or its proof of completion cannot be trusted.",
         "what_it_needs": "Ops must repair the skipped step and confirm who approved any intentional skip; nothing needed from you unless approval is disputed.",
     },
+    "outreach_stalled": {
+        "what_it_means": "Guest outreach produced zero drafts for days while people were available to write to — the machinery is stalled, not the supply.",
+        "what_it_needs": "Ops must find and fix the stalled outreach step; nothing needed from you unless the fix changes who gets contacted.",
+    },
+    "outreach_drought": {
+        "what_it_means": "Guest outreach produced nothing because there was nobody eligible to write to — the candidate pool is empty.",
+        "what_it_needs": "Supply, not repair: sourcing or referrals need attention; you only weigh in on where new candidates should come from.",
+    },
+    "outreach_blind": {
+        "what_it_means": "The evidence that would prove outreach is working (or stalled) is missing, so the absence alarm cannot see at all.",
+        "what_it_needs": "Ops must restore the feeder's daily drop accounting first — a blind gauge is not a passing gauge, and no outreach claim counts until it can see.",
+    },
     "timer_failed": {
         "what_it_means": "A scheduled podcast job tried to run and failed.",
         "what_it_needs": "Ops must repair or retire the scheduled job; you only need to decide if the job should no longer run.",
@@ -249,6 +261,7 @@ QUESTIONS = {
     "manifest": "Which required guest-manifest fields must be completed before publish?",
     "expectation": "Which declared expectation has no matching artifact, and does its heal run or does the manifest need correcting?",
     "runmanifest": "Which declared step has no completion record for this run, and is the fix a rerun or a roster correction?",
+    "outreach_absence": "Outreach produced nothing: is the machinery stalled, the candidate pool empty, or the evidence missing — and which one does the feeder's drop accounting prove?",
 }
 
 
