@@ -43,8 +43,12 @@ failing first.
 4. HubSpot is still UNREACHED live (needs `HUBSPOT_PORTAL_ID`). Second-order, so
    it does not block clearing — it only costs corroboration.
 
-**Not done.** Candidate supply is now the whole constraint: 13 of 14 records
-carry no email address. U11 real Gmail draft still never executed. Progress-based
+**Supply, now measured properly (r22).** The old "13 no email address" was one
+bucket hiding two different problems. Live split: **7 cold** candidates queued as
+`awaiting_identity` for a LinkedIn identity (Ankit's routing decision), **6 warm**
+— referrals, the highest-value ones — dropped because warm routes to email or
+text and they have no address, which is an intake data gap, and **1** already
+CONTACTED. Nothing new reaches the producer; r22 is reporting only. U11 real Gmail draft still never executed. Progress-based
 re-entry stop still unbuilt.
 
 Earlier detail: `~/handoffs/2026-08-11-podcast-contact-truth.md`. Supersedes the
