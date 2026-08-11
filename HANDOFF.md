@@ -7,14 +7,16 @@ reference files, do not restate them._
 
 ## Podcast guest-acquisition: the gate is live (2026-08-11, later)
 
-Rounds r18-r20. podcast `dda3515` `d22db4d` `580d6e4` `04b7b39`; loop-factory
-`151442b` `55e6c12` `690b91c`. Nothing pushed.
+Rounds r18-r22, every task PASS on attempt 1. podcast `dda3515` `d22db4d`
+`580d6e4` `04b7b39` `f730534` `ef52fbf`; loop-factory `151442b` `55e6c12`
+`690b91c` `389986d` `ff65121`. Nothing pushed.
 
 **The gate is wired and measured against real APIs.** The feeder resolves every
 surviving candidate through the authority model and selects only
 `NO_CONTACT_FOUND`. Live run, real credentials, read-only:
-`considered 14, selected 0` with gmail, linkedin and bee all **reached**, 13
-dropped for no email address, and the fourteenth dropped as
+`considered 14, selected 0` with **all four channels reached**, and — the proof
+that matters — the SCHEDULED systemd run 08:23:05 to 08:43:20, exit 0, reached
+the feeder and receipted the same thing. One record dropped as
 `contact verdict CONTACTED; gmail saw the touch`. That is the 2026-08-10
 near-miss closed with evidence: real Gmail data independently confirmed what
 the intake note claimed, instead of a string match guessing it.
@@ -40,8 +42,9 @@ failing first.
 3. My U15 CLI scenario set `PYTHONPATH`, so it never saw that the feeder cannot
    import `server.pipeline` under systemd. The scheduled run refused at the
    import line. Found by running the thing, not reading it.
-4. HubSpot is still UNREACHED live (needs `HUBSPOT_PORTAL_ID`). Second-order, so
-   it does not block clearing — it only costs corroboration.
+4. HubSpot refused itself over a `HUBSPOT_PORTAL_ID` it stores and never reads,
+   so it reported "credentials unavailable" while holding a valid key. Fixed
+   r21; it is reached live now.
 
 **Supply, now measured properly (r22).** The old "13 no email address" was one
 bucket hiding two different problems. Live split: **7 cold** candidates queued as
