@@ -43,6 +43,13 @@ FAILURE_CLASSES = {
     # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
     # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
     ("hopper", "unknown"): ("hopper_blind", "high"),
+    # Recurred 2026-08-11: U12 (N15) was wired and pinned without its rows, and
+    # its first "unknown" at 03:00 stopped every run for 16+ hours — which kept
+    # the feeder reports missing, which kept the sensor "unknown". A sensor's
+    # full status vocabulary gets mapped the same day the sensor is wired.
+    ("outreach_absence", "alarm"): ("outreach_stalled", "high"),
+    ("outreach_absence", "drought"): ("outreach_drought", "med"),
+    ("outreach_absence", "unknown"): ("outreach_blind", "high"),
     ("funnel", "alarm"): ("funnel_behind", "high"),
     ("funnel", "unknown"): ("funnel_blind", "med"),
     ("floors", "alarm"): ("floors_attention", "med"),
