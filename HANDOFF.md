@@ -5,6 +5,54 @@ reference files, do not restate them._
 
 ---
 
+## Podcast guest-acquisition: the silent zero is closed (2026-08-10)
+
+### Goal
+
+Finish the podcast automation so it works in production and cannot fail
+silently. Spec: `tasks/2026-08-11-podcast-finish-line.md`.
+Full detail: `~/handoffs/2026-08-10-podcast-silent-failure-closed.md`.
+
+### Current state
+
+**Done** (podcast `20647dc`/`16b499a`/`77d4051`; loop-factory `9a25bca`/`2cda307`;
+nothing pushed)
+
+- The seam now runs with the REAL revalidator and REAL feeder in the chain, no
+  hand-written input: `drafted`, `drafts_created 1`, `tree_unchanged true`.
+- **A zero says why.** The feeder dropped records at six bare `continue`
+  statements, so an empty inbox and a full-but-ineligible inbox were the same
+  observation. It now writes drop accounting; `no_candidate` names its reason
+  and its denominator; a shape drift in the feed REFUSES instead of collapsing
+  to an empty list that reads as an honest drought.
+- **U10:** ceiling counts derived from FUNNEL-LEDGER and passed. The counter
+  fails closed and the runner refuses the loop when counts cannot be derived —
+  absent counts and being under every ceiling produce the same draft.
+- **Ankit's first-draft gate:** hold 3, counted by the producer's own ledger,
+  honoured by the bridge, and a corrupt ledger holds everything.
+- **U12 absence alarm:** built, five states proven, watched failing first.
+  **Deliberately NOT wired** — see below.
+
+**Not done, both owner decisions**
+
+1. **U11 live Gmail.** Never executed. First external effect of the job.
+2. **Wiring U12 into SG-WATCHDOG.** That changes the roster of a department
+   already minting run manifests hourly, so it is a governed release re-pin,
+   not an edit. Carried as `untraced_allowed` with that rationale: validate
+   passes, drift null, nothing scheduled.
+
+**Standing constraint:** candidate supply, not machinery. 13 of 14 live inbox
+records have no email. The automation now produces honest, explained zeros.
+
+### Verification
+
+u2a / u8_u9 / u11a / u12 checks all PASS; `validate --name podcast` ok,
+traceability clean, drift null; 782 loop-factory + 318 podcast tests pass.
+The 24 `tests/test_outbox_*` + reescalate + urgency failures are another live
+session's uncommitted work — all 58 pass at a clean HEAD worktree.
+
+---
+
 ## Sales budget telemetry + scheduler cadence (2026-08-07)
 
 ### Goal
