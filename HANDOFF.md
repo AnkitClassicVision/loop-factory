@@ -5,9 +5,49 @@ reference files, do not restate them._
 
 ---
 
-## Podcast guest-acquisition: contact truth (2026-08-11)
+## Podcast guest-acquisition: the gate is live (2026-08-11, later)
 
-Full detail: `~/handoffs/2026-08-11-podcast-contact-truth.md`. Supersedes the
+Rounds r18-r20. podcast `dda3515` `d22db4d` `580d6e4` `04b7b39`; loop-factory
+`151442b` `55e6c12` `690b91c`. Nothing pushed.
+
+**The gate is wired and measured against real APIs.** The feeder resolves every
+surviving candidate through the authority model and selects only
+`NO_CONTACT_FOUND`. Live run, real credentials, read-only:
+`considered 14, selected 0` with gmail, linkedin and bee all **reached**, 13
+dropped for no email address, and the fourteenth dropped as
+`contact verdict CONTACTED; gmail saw the touch`. That is the 2026-08-10
+near-miss closed with evidence: real Gmail data independently confirmed what
+the intake note claimed, instead of a string match guessing it.
+
+**LinkedIn moved to Unipile** (Ankit's call). Its old source was a JSONL handoff
+that has never existed — the producer fail-closes on an ungranted IAM read — so
+one unwritable file was holding the whole loop shut. **The feeder is now given
+credentials**; it was being invoked with none, which would have produced a
+permanent, fully-receipted zero indistinguishable from a quiet week.
+
+Checks U15 (contact gate, incl. alias identity), U16 (LinkedIn/Unipile), U17
+(credentials arrive in the feeder process, executed not grepped). Each watched
+failing first.
+
+**Four defects, three of them mine, all caught before they mattered:**
+1. My U15 fixtures keyed on an invented alias, so the worker abandoned the
+   name-derived alias the draft ledger counts. Fixed r19; the check now asks the
+   code for the alias and pins it against reordering.
+2. My U17 stand-in matched the feeder path anywhere in argv, firing on the outer
+   injector before injection; and its harness never defined `GMAIL_FULL_TOKEN`
+   under `set -u`. The worker worked around both by contorting production. Fixed
+   in the check; the runner invocation is the plain one.
+3. My U15 CLI scenario set `PYTHONPATH`, so it never saw that the feeder cannot
+   import `server.pipeline` under systemd. The scheduled run refused at the
+   import line. Found by running the thing, not reading it.
+4. HubSpot is still UNREACHED live (needs `HUBSPOT_PORTAL_ID`). Second-order, so
+   it does not block clearing — it only costs corroboration.
+
+**Not done.** Candidate supply is now the whole constraint: 13 of 14 records
+carry no email address. U11 real Gmail draft still never executed. Progress-based
+re-entry stop still unbuilt.
+
+Earlier detail: `~/handoffs/2026-08-11-podcast-contact-truth.md`. Supersedes the
 2026-08-10 entry below, which is kept for its defect log.
 
 **Done.** U12 absence alarm WIRED AND PINNED as SG-WATCHDOG N15 (release
