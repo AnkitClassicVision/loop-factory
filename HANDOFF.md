@@ -5,6 +5,49 @@ reference files, do not restate them._
 
 ---
 
+## Podcast guest-acquisition: audit-driven hardening r29-r30 (2026-08-11, afternoon)
+
+podcast `d641ec4` `e0db19f`; loop-factory `501d98e`. feat/one-true-master PUSHED
+to origin (through d641ec4). Fable 5 as chief from midday.
+
+**Two fusion audits ran** (packets: /mnt/d_drive/ringer-work/audit-fusion-20260811
+and drive-fusion-20260811). Verdicts: day's architecture right, NOT fully
+self-driving — the system writes and notifies but does not resolve. Worst defect
+(4/4 lanes, reproduced by probe): LinkedIn adapter read one page of 100 chats and
+certified complete coverage → false NO_CONTACT_FOUND possible. FIXED r29a
+(pagination to cursor exhaustion, fail-closed partial reads, u22). Also fixed:
+provider exception text leaking addresses into alias-only receipts (r29b, u23);
+identity queue now GATED and two-channel, generator consumes the queue only,
+runner invokes it after the feeder, advisory-not-gating (r30, u19v2/u20v2/u24).
+Live proof: 14 considered → 10 queued (6 linkedin, 4 email), gates fired on the
+identity path for the first time (2 held, 1 cadence, 1 CONTACTED excluded).
+
+**Owner rulings today:** hold FIRST 3 drafts for review then flow (autosend after
+is intended); guest-sent material is DIRECT-WRITE to canonical state (Mike
+Guelcher's bio/headshot/links/pronunciation written to his episode.json on the
+VPS, verbatim, with provenance; backup kept); warm no-address referrals are
+queued for email identity, not dropped; drafts route to Linear ANK cards (W2,
+not yet built).
+
+**PR work:** five stale podcast PRs processed in worktrees under
+/mnt/d_drive/ringer-work/pr-rebase/ — #52 and #44 rebased clean AWAITING
+force-push (blocked by git-main-guard hook; Ankit must push or choose fresh-PR
+route), #55 SUPERSEDED (recommend close), #54 and #45 BLOCKED on real conflicts
+(re-implement as checked rounds). loop-factory #22 left to its agent; #14 shown
+to owner with stale-merge-condition caveat.
+
+**W-queue remaining:** W1 approve→execute leg (worst stall: APPROVE is a dead
+end, nothing executes approved work). W2 Linear cards with buttons for all
+drafts/proposals (buttons grep still 0 in factory/). W4 guest-reply reconciler +
+pre-run source-truth refresh + bio extraction fix (three proven defects in
+guest_email_context.py: _FIRST_PERSON_RE rejects third-person bios, Outlook
+From: quoting not stripped, full-body-extract rejection; U21 exists UNCOMMITTED
+and must be fictionalized — carries real contact data). W5 review-queue triage
+(2,380 pending, oldest 61d). W6 promotion boundary (systemd runs the mutable
+tree). Next scheduled guest-acquisition fire proves the r30 seam end to end.
+
+---
+
 ## Podcast guest-acquisition: the gate is live (2026-08-11, later)
 
 Rounds r18-r22, every task PASS on attempt 1. podcast `dda3515` `d22db4d`
