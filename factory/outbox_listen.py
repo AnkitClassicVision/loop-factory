@@ -397,7 +397,7 @@ def _newest_first(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _decision(
     comments: list[dict[str, Any]],
-) -> tuple[str, str, str, dict[str, Any], datetime] | None:
+) -> tuple[str, str, str, dict[str, Any], datetime | None] | None:
     for comment in _newest_first(comments):
         body = comment.get("body")
         if not isinstance(body, str) or not body:
@@ -406,10 +406,8 @@ def _decision(
         if first_line.startswith(AGENT_MARKERS):
             continue
         match = DECISION_RE.match(first_line)
-        created = _comment_timestamp(comment)
-        # A decision is meaningful only when it can be ordered against the
-        # ledger row it may settle. Missing or naive comment times fail closed.
-        if match and created is not None:
+        if match:
+            created = _comment_timestamp(comment)
             return match.group(1).lower(), first_line[:120], body, comment, created
     return None
 
@@ -421,6 +419,14 @@ def _row_raised_at(row: dict[str, Any]) -> datetime | None:
         if stamp is not None:
             return datetime.fromtimestamp(stamp, timezone.utc)
     return None
+
+
+def _row_written_at(row: dict[str, Any]) -> datetime | None:
+    """Return only the ledger row's own write time, ignoring first_raised."""
+    stamp = _timestamp(row.get("ts"))
+    if stamp is None:
+        return None
+    return datetime.fromtimestamp(stamp, timezone.utc)
 
 
 def _normalize_receipt_boundary(receipt: dict[str, Any]) -> dict[str, Any] | None:
@@ -659,6 +665,15 @@ def _settle_decision_group(
         if found is None:
             return
         decision, first_line, notes, comment, created = found
+        if created is None:
+            # The reply itself carries no ordering timestamp. Fall back to the
+            # ledger's own last-write time as the conservative stand-in: a row
+            # instance can only be settled if it was already open by then, so
+            # this never credits a reply to a row raised after we last wrote
+            # the ledger. If even that is unavailable, fail closed.
+            created = _row_written_at(card)
+        if created is None:
+            return
         # A reused card can carry historical comments. A decision settles only
         # the row instances that already existed when the human wrote it.
         row_hashes = [
