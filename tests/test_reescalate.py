@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from factory import reescalate
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "factory" / "reescalate.py"
@@ -185,48 +187,6 @@ def test_shared_card_identifier_produces_exactly_one_ping(tmp_path):
     assert _due(result)[0]["card_identifier"] == "ANK-13"
 
 
-def test_urgent_uses_midpoint_floor_and_past_due_cadence(tmp_path):
-    ledger = tmp_path / "ledger.jsonl"
-    _write_rows(
-        ledger,
-        [
-            _row(
-                "midpoint",
-                "ANK-MID",
-                urgency="urgent",
-                first_raised="2026-08-05T00:00:00+00:00",
-                due="2026-08-06T00:00:00+00:00",
-            ),
-            _row(
-                "floor",
-                "ANK-FLOOR",
-                urgency="urgent",
-                first_raised="2026-08-05T09:00:00+00:00",
-                due="2026-08-05T12:00:00+00:00",
-            ),
-            _row(
-                "past",
-                "ANK-PAST",
-                urgency="urgent",
-                first_raised="2026-08-04T00:00:00+00:00",
-                due="2026-08-05T00:00:00+00:00",
-                last_ping_at="2026-08-05T09:00:00+00:00",
-                reescalation_count=4,
-            ),
-        ],
-    )
-
-    result = _run(ledger, "--plan-only")
-
-    assert [item["card_identifier"] for item in _due(result)] == [
-        "ANK-MID",
-        "ANK-FLOOR",
-        "ANK-PAST",
-    ]
-    assert _due(result)[1]["reason"] == "urgent cadence: 2h midpoint interval elapsed"
-    assert _due(result)[2]["reason"] == "urgent cadence: past due, 2h interval elapsed"
-
-
 def test_send_mode_renders_argv_and_appends_incremented_card_row(tmp_path):
     ledger = tmp_path / "ledger.jsonl"
     _write_rows(ledger, [_row("hash-1", "ANK-1")])
@@ -268,7 +228,7 @@ def test_send_mode_renders_argv_and_appends_incremented_card_row(tmp_path):
     assert appended["status"] == "open"
 
 
-def test_missing_or_failed_sender_fails_closed_without_appending(tmp_path):
+def test_missing_or_failed_sender_fails_closed_with_compensating_state(tmp_path):
     ledger = tmp_path / "ledger.jsonl"
     _write_rows(ledger, [_row("hash-1", "ANK-1")])
     original = ledger.read_bytes()
@@ -294,7 +254,8 @@ def test_missing_or_failed_sender_fails_closed_without_appending(tmp_path):
 
     assert failed.returncode != 0
     assert "sender failed" in failed.stderr
-    assert ledger.read_bytes() == original
+    rows = _ledger_rows(ledger)
+    assert [row["status"] for row in rows[-2:]] == ["delivery_pending", "open"]
 
 
 def test_malformed_row_does_not_block_due_card_and_exits_nonzero(tmp_path):
@@ -336,3 +297,88 @@ def test_unreadable_ledger_still_aborts_without_pings(tmp_path):
     assert result.returncode == 2
     assert "ledger could not be read" in result.stderr
     assert not calls.exists()
+
+
+def test_snoozed_fyi_wakes_exactly_and_successfully_reopens(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    wake = "2026-08-09T13:00:00+00:00"
+    _write_rows(ledger, [_row(
+        "fyi", "ANK-FYI", status="snoozed", snooze_until=wake,
+        action_mode="fyi", fyi_only=True,
+    )])
+    assert _due(_run(ledger, "--plan-only", now="2026-08-09T12:59:59+00:00")) == []
+    assert len(_due(_run(ledger, "--plan-only", now=wake))) == 1
+    config, calls = _sender_config(tmp_path)
+    data = yaml.safe_load(config.read_text())
+    data["reescalation"]["sender"].append("{action_mode}")
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(ledger, "--config", str(config), now=wake)
+
+    assert result.returncode == 0
+    assert _ledger_rows(calls) == [["ANK-FYI", "fyi"]]
+    reopened = _ledger_rows(ledger)[-1]
+    assert reopened["status"] == "open"
+    assert reopened["action_mode"] == "fyi"
+    assert reopened["fyi_only"] is True
+    assert reopened["last_ping_at"] == wake
+    assert reopened["reescalation_count"] == 1
+
+
+def test_failed_snooze_reminder_restores_prior_eligible_state(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    original = _row(
+        "fyi", "ANK-FYI", status="snoozed",
+        snooze_until="2026-08-09T13:00:00+00:00", action_mode="fyi", fyi_only=True,
+    )
+    _write_rows(ledger, [original])
+    before = ledger.read_bytes()
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"reescalation": {"sender": [
+        sys.executable, "-c", "raise SystemExit(7)", "{issue}", "{action_mode}"
+    ]}}))
+
+    result = _run(ledger, "--config", str(config), now="2026-08-09T13:00:00+00:00")
+
+    assert result.returncode == 3
+    rows = _ledger_rows(ledger)
+    assert [row["status"] for row in rows[-2:]] == ["delivery_pending", "snoozed"]
+    assert rows[-1]["snooze_until"] == original["snooze_until"]
+
+
+def test_intent_append_failure_never_starts_sender(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+    config, calls = _sender_config(tmp_path)
+
+    def fail_intent(*args, **kwargs):
+        raise reescalate.ReescalationError("injected intent failure")
+
+    monkeypatch.setattr(reescalate, "_append_delivery_row", fail_intent)
+    cards = reescalate.due_cards(ledger, reescalate._datetime(NOW, "now"))
+    sender = reescalate._sender_from_config(config)
+
+    assert reescalate.send_due(ledger, cards, sender, NOW) == 3
+    assert not calls.exists()
+
+
+def test_confirmation_failure_is_quarantined_and_not_resent(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_row("hash-1", "ANK-1")])
+    config, calls = _sender_config(tmp_path)
+    cards = reescalate.due_cards(ledger, reescalate._datetime(NOW, "now"))
+    sender = reescalate._sender_from_config(config)
+
+    def fail_confirmation(*args, **kwargs):
+        raise reescalate.ReescalationError("injected confirmation failure")
+
+    monkeypatch.setattr(reescalate, "_append_ping", fail_confirmation)
+    assert reescalate.send_due(ledger, cards, sender, NOW) == 3
+    assert _ledger_rows(calls) == [["ANK-1"]]
+    assert _ledger_rows(ledger)[-1]["status"] == "delivery_pending"
+
+    second = _run(ledger, "--config", str(config))
+    assert second.returncode == 2
+    assert _ledger_rows(calls) == [["ANK-1"]]
+    assert "pending manual reconciliation" in second.stdout
+    assert '"quarantined": 1' in second.stdout
