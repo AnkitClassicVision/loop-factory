@@ -1,0 +1,21 @@
+{
+  "run_name": "one-card-slice",
+  "workdir": "/mnt/d_drive/ringer-work/one-card-slice-s2",
+  "repo": "/tmp/claude-1000/-mnt-d-drive-repos-loop-factory/3f9636d7-80e5-4560-b0ce-90656e0f243a/scratchpad/reconcile-wt",
+  "worktrees": true,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "s2-urgency-seam",
+      "engine": "claude",
+      "task_type": "code-fix",
+      "timeout_s": 2700,
+      "expect_files": [
+        "/mnt/d_drive/ringer-work/one-card-slice-s2/s2-urgency-seam.patch"
+      ],
+      "spec": "You are re-implementing ONE small feature against a reworked module pair: urgency must cross the outbox push -> reescalation seam again. Your current working directory IS a git worktree — edit files here directly. Do NOT git commit. Do NOT git push. Do not load skills or call MCP/Apps. Fictional data only in any fixtures you add.\n\nYOU OWN EXACTLY TWO FILES (edit only these):\n  1. factory/outbox_push.py\n  2. factory/reescalate.py\nYou may NOT edit any test file. The tests ARE the contract.\n\n## The story, so you fix the right thing\n\nOn the old mailroom code, commits a935b87 + 1de77fb made an outbox card's urgency ('urgent' vs 'normal') survive into the reescalation ledger rows, defaulting absent urgency to 'normal' and REFUSING invalid urgency values. A later bulk 'backup: WIP snapshot' commit (f7f3b37) accidentally erased those lines. Meanwhile the mailroom was independently reworked (FYI lifecycle controls, merged as PR #21), so the erased lines no longer graft back textually — running `git diff f7f3b37 f7f3b37^ -- factory/outbox_push.py factory/reescalate.py` shows you the OLD 8 lines and their intent, but blindly re-applying them breaks 10 other tests (proven). Your job: express that same intent correctly inside the CURRENT shape of both files.\n\n## The contract (already committed, currently red)\n\n    PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_urgency_seam.py -q\n\nThree tests: absent urgency defaults to 'normal' in the reescalation row; 'urgent' is preserved end to end (including due/cadence semantics the test asserts); an invalid urgency value is REFUSED, not laundered to normal. Read the test file FIRST — it is the exact truth of field names and row shapes.\n\n## What must not break\n\n    PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_outbox_push.py tests/test_outbox_listen.py tests/test_outbox_push_buzz.py tests/test_reescalate.py tests/test_urgency_seam.py -q\n\nEvery mailroom suite stays green (85 currently passing must remain passing). Smallest honest change wins; no refactors, no drive-by cleanups.\n\n## fix-summary.md is NOT required for this task. Run both commands until green.",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_urgency_seam.py tests/test_outbox_push.py tests/test_outbox_listen.py tests/test_outbox_push_buzz.py tests/test_reescalate.py -q && PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/one-card-slice/checks/export_patch.py --worktree \"$PWD\" --patch /mnt/d_drive/ringer-work/one-card-slice-s2/s2-urgency-seam.patch --owned factory/outbox_push.py --owned factory/reescalate.py",
+      "verified": "Executes the committed urgency-seam contract tests (default-to-normal, urgent preserved, invalid refused) plus all four mailroom suites against the reconcile-merge tree, and exports the patch only if nothing outside the two owned factory files changed."
+    }
+  ]
+}
