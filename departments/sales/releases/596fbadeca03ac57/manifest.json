@@ -1,0 +1,76 @@
+{
+  "hash": "596fbadeca03ac57",
+  "source_ref": "b74f709",
+  "factory_version": {
+    "graph_schema_version": 2,
+    "runner_version": "2.5.0",
+    "telemetry_schema_version": 1,
+    "template_set_hash": "6e67d9ea9dc0e34c"
+  },
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "7560eb28029210aae9cde21cc4bbb07c0889ba444170d75693dea3f7f54b1230"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "65a6e1d3bb5b36f4a3421ab5d87461fe7147792bce5c105a60d8d18bf6119428"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "2e21ffa2d89f2cf0738b5f8a734866a0f59c57311736474626ccde0c6377e80f"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "9b3ae7478b4b197d27defc2176e0f3c8b7a7ed65520d0c2e7aa0dac367bcb9ce"
+    },
+    {
+      "path": "runtime/booked_sensor.py",
+      "sha256": "9bc0ce983757a21be0e59037fa8fe4f0c983cab03eed71d26b88bf1ce7b351a8"
+    },
+    {
+      "path": "runtime/conductor_tick.py",
+      "sha256": "8fc0def7056267f6ae6f2b58a7c4e28ca90755a283ba659e66654e0e8c220b15"
+    },
+    {
+      "path": "runtime/floor_compiler_run.py",
+      "sha256": "5fee9d5d8682ec1bdecb0201b45335e2a7f493cd707069ceaf496ad75ea13d6a"
+    },
+    {
+      "path": "runtime/held_confirm_card.py",
+      "sha256": "7ead45af8fd5eb30d87c5cc953b8d6967e8382f78586f4d2d6b8a11a087f479b"
+    },
+    {
+      "path": "runtime/held_sensor.py",
+      "sha256": "494fdbe36ddd763472b729a69015bbf0e55547b3c1326a49f68cb7328b8631d3"
+    },
+    {
+      "path": "runtime/intake_sensor.py",
+      "sha256": "badff588c4a4d7d59c6bea4e0a44819d01b301a79fc089ffa2713ec696e87ccf"
+    },
+    {
+      "path": "runtime/qualify_scorer.py",
+      "sha256": "3594e4ba99b97c9275a4b31be070d32b8bea57e2dd4c2f7e1db85a831048b1b4"
+    },
+    {
+      "path": "runtime/run-roster.json",
+      "sha256": "903167c8e1a7cd36ef2ad749ebf2574121cad514f8edf3a71d3253ba37b1bae8"
+    },
+    {
+      "path": "runtime/runtime_node.py",
+      "sha256": "4c84450ad2fbd24cbfda00a932ddc53e5ffef84aadcf5208d37ecdf785a43d8a"
+    },
+    {
+      "path": "runtime/sales_daily.sh",
+      "sha256": "acb2dc1350405e1e3a033a49182ad16f190010d1b7dfc4ae4764cd8916608580"
+    },
+    {
+      "path": "runtime/sense_gates.py",
+      "sha256": "88f9fa2b1736c45b57d4a25a95bbd09ec4bc107297f83bf69c210542d35343c4"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "c7c4e77af44bdf2028df96500c16fa3252031af84e15f89dc62f93a734561b05"
+    }
+  ]
+}

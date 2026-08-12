@@ -1,0 +1,483 @@
+
+[ringer.py] attempt 1 started 2026-07-29T14:43:17.119901+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context 'ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/assemble_context.py. Do not modify anything else.
+
+GOAL: Thread `thumbnail_url` from the candidate item through to the assembled context manifest.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py
+
+CHANGES:
+1. In `run()`, after building the manifest dict (~line 81-89), add: `manifest['"'"'thumbnail_url'"'"'] = item.get('"'"'thumbnail_url'"'"', '"'"''"'"')`
+2. Do NOT make thumbnail_url required. Do NOT add it to the missing list. It is purely optional passthrough.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('"'"'/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py'"'"').read()); print('"'"'syntax ok'"'"')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.145.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fae54-7328-7e51-bba6-8b05449e49b0
+--------
+user
+ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/assemble_context.py. Do not modify anything else.
+
+GOAL: Thread `thumbnail_url` from the candidate item through to the assembled context manifest.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py
+
+CHANGES:
+1. In `run()`, after building the manifest dict (~line 81-89), add: `manifest['thumbnail_url'] = item.get('thumbnail_url', '')`
+2. Do NOT make thumbnail_url required. Do NOT add it to the missing list. It is purely optional passthrough.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py').read()); print('syntax ok')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+Ankit — I’ll make the single optional passthrough edit, run the exact AST check, and record both in `./notes.md`. CANARY: blue paperclip
+codex
+I’m using the required Codex Operating Card for this repo edit; it keeps the change scoped to the owned file and requires executed verification before delivery.
+exec
+/bin/bash -lc "sed -n '1,240p' /home/ankit114/.claude/skills/codex-operating-card/SKILL.md && sed -n '1,180p' /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context
+ succeeded in 0ms:
+---
+name: codex-operating-card
+description: "Operate Codex with Nate-style project induction, read-only-first task starts, one-thread-one-outcome discipline, UI/browser evidence, self-review gates, and durable-rule extraction. Use when working in Codex on a repo, starting a new Codex thread, doing project induction, implementing or reviewing code, doing frontend/UI QA, or deciding whether to promote a prompt pattern into AGENTS.md or a skill."
+---
+
+# Codex Operating Card
+
+Purpose: make Codex behave like a repo worker with a tight work contract, not a wandering owner. These prompts are operating defaults, not safety gates. For production writes, deploys, PHI/PII, secrets, CRM/EHR/finance writes, external sends, or autonomy changes, follow the relevant deterministic gate and human approval rules.
+
+## Default behavior
+
+Use this operating card unless the user explicitly overrides it:
+
+1. Read first. Do not edit until you can explain the current project shape.
+2. One thread = one outcome. If a new goal appears, propose a new thread.
+3. Prefer read-only or sandbox mode unless write access is explicitly intended.
+4. Before changes, state likely files, risk, test plan, and rollback path.
+5. Treat AGENTS.md and project docs as local law. If missing, infer lightly and flag gaps.
+6. For UI work, use browser or visual evidence rather than guessing.
+7. Verify with actual command output, visual check, or a named source before claiming done.
+8. End with: Changed, Verified by, Risks left, Next action.
+9. If the task reveals a reusable rule, propose AGENTS.md or skill capture, but do not write it without approval.
+
+## Prompt pack
+
+For exact copy/paste prompts, read `references/prompt-pack.md` and choose the smallest prompt that matches the work:
+
+- Project induction prompt: first pass on a repo.
+- Task starter prompt: normal implementation.
+- UI/browser evidence prompt: frontend or visual QA.
+- Review gate prompt: before accepting Codex output.
+- Durable-rule extraction prompt: after a repeated pattern appears.
+
+## Output contract
+
+For routine work, keep the final terse:
+
+- Changed: files/behavior changed.
+- Verified by: real command, screenshot/visual check, or source.
+- Risks left: only what matters.
+- Next action: one step.
+
+Do not call work complete if verification did not run. Say `Partial` or `Blocked` instead.
+"""Assemble and gate the full source plus brand/offer context manifest."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+
+import yaml
+
+
+LOG = logging.getLogger(__name__)
+BRAND_FIELDS = ("name", "voice_notes", "audience")
+OFFER_FIELDS = ("name", "cta_url", "description")
+
+
+def _write(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _placeholder(value: object) -> bool:
+    if value is None or value == "" or value == [] or value == {}:
+        return True
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        return not normalized or "TODO_" in normalized or normalized == "TODO"
+    if isinstance(value, list):
+        return any(_placeholder(item) for item in value)
+    if isinstance(value, dict):
+        return any(_placeholder(item) for item in value.values())
+    return False
+
+
+def _packet(root: dict, source_type: str) -> dict:
+    if "brand" in root or "offer" in root:
+        return root
+    for container_name in ("contexts", "source_types", "brands"):
+        container = root.get(container_name)
+        if isinstance(container, dict) and isinstance(container.get(source_type), dict):
+            return container[source_type]
+    value = root.get(source_type)
+    return value if isinstance(value, dict) else {}
+
+
+def run(
+    *, candidate_path: Path, brand_path: Path, version: str,
+    state_dir: Path, out: Path,
+) -> int:
+    try:
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        item = candidate["item"]
+        raw_packet = yaml.safe_load(brand_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_packet, dict):
+            raise ValueError("brand packet must be a YAML mapping")
+        packet = _packet(raw_packet, str(item.get("source_type", "")))
+        brand = packet.get("brand") if isinstance(packet.get("brand"), dict) else {}
+        offer = packet.get("offer") if isinstance(packet.get("offer"), dict) else {}
+        missing = []
+        body_text = ""
+        body_path = Path(str(item.get("body_path") or ""))
+        if not str(item.get("body_path") or "").strip():
+            missing.append("item.body_path")
+        else:
+            try:
+                body_text = body_path.read_text(encoding="utf-8")
+            except OSError:
+                missing.append("body_text")
+        if _placeholder(body_text) and "body_text" not in missing:
+            missing.append("body_text")
+        for field in ("title", "url"):
+            if _placeholder(item.get(field)):
+                missing.append(f"item.{field}")
+        for field in BRAND_FIELDS:
+            if _placeholder(brand.get(field)):
+                missing.append(f"brand.{field}")
+        for field in OFFER_FIELDS:
+            if _placeholder(offer.get(field)):
+                missing.append(f"offer.{field}")
+        manifest = {
+            "version": version,
+            "assembled_at": datetime.now(timezone.utc).isoformat(),
+            "item": item,
+            "body_text": body_text,
+            "brand": brand,
+            "offer": offer,
+            "complete": not missing,
+            "missing": missing,
+        }
+        _write(out, manifest)
+        if missing:
+            item_id = str(item.get("item_id") or "context")
+            _write(
+                state_dir / "quarantine" / f"{item_id}.json",
+                {"item_id": item_id, "reasons": missing},
+            )
+            return 2
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        reason = f"context source unreadable or invalid: {exc}"
+        LOG.error(reason)
+        _write(out, {"status": "missing", "reason": reason})
+        return 3
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--brand", type=Path, required=True)
+    parser.add_argument("--version", default="v1")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
+    raise SystemExit(run(
+        candidate_path=args.candidate, brand_path=args.brand,
+        version=args.version, state_dir=args.state_dir, out=args.out,
+    ))
+
+
+if __name__ == "__main__":
+    main()
+
+codex
+Scope: `departments/social/runtime/assemble_context.py` plus the required scratch `notes.md`. Risk is limited to manifest shape; the field stays optional and never enters validation. Test is the exact AST command. Rollback is removal of the one assignment.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+
+exec
+/bin/bash -lc "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; tree=ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py').read()); print('syntax ok')\"" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+
+ succeeded in 127ms:
+syntax ok
+
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context/notes.md
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+diff --git a/ringer-manifests/workdir/thumbnail-in-context/notes.md b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7de0f97e364b358a4e20097698532b7fdba341e4
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+@@ -0,0 +1,7 @@
++Changed:
++- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
++- The field defaults to an empty string and was not added to required-field validation or the missing list.
++
++Verification:
++- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
++- Result: `syntax ok`
+
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+diff --git a/ringer-manifests/workdir/thumbnail-in-context/notes.md b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7de0f97e364b358a4e20097698532b7fdba341e4
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+@@ -0,0 +1,7 @@
++Changed:
++- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
++- The field defaults to an empty string and was not added to required-field validation or the missing list.
++
++Verification:
++- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
++- Result: `syntax ok`
+
+exec
+/bin/bash -lc "git diff -- departments/social/runtime/assemble_context.py && sed -n '1,120p' notes.md" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context
+ succeeded in 0ms:
+Changed:
+- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
+- The field defaults to an empty string and was not added to required-field validation or the missing list.
+
+Verification:
+- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
+- Result: `syntax ok`
+
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+diff --git a/ringer-manifests/workdir/thumbnail-in-context/notes.md b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7de0f97e364b358a4e20097698532b7fdba341e4
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+@@ -0,0 +1,7 @@
++Changed:
++- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
++- The field defaults to an empty string and was not added to required-field validation or the missing list.
++
++Verification:
++- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
++- Result: `syntax ok`
+
+exec
+/bin/bash -lc "sed -n '78,102p' /mnt/d_drive/repos/loop-factory/departments/social/runtime/assemble_context.py && git -C /mnt/d_drive/repos/loop-factory diff -- departments/social/runtime/assemble_context.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context
+ succeeded in 0ms:
+        for field in OFFER_FIELDS:
+            if _placeholder(offer.get(field)):
+                missing.append(f"offer.{field}")
+        manifest = {
+            "version": version,
+            "assembled_at": datetime.now(timezone.utc).isoformat(),
+            "item": item,
+            "body_text": body_text,
+            "brand": brand,
+            "offer": offer,
+            "complete": not missing,
+            "missing": missing,
+        }
+        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+        _write(out, manifest)
+        if missing:
+            item_id = str(item.get("item_id") or "context")
+            _write(
+                state_dir / "quarantine" / f"{item_id}.json",
+                {"item_id": item_id, "reasons": missing},
+            )
+            return 2
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        reason = f"context source unreadable or invalid: {exc}"
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c56910..882b6f8 100644
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@ def run(
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+diff --git a/ringer-manifests/workdir/thumbnail-in-context/notes.md b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7de0f97e364b358a4e20097698532b7fdba341e4
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+@@ -0,0 +1,7 @@
++Changed:
++- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
++- The field defaults to an empty string and was not added to required-field validation or the missing list.
++
++Verification:
++- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
++- Result: `syntax ok`
+
+codex
+Ankit — Completed.
+
+- Changed: Added optional `thumbnail_url` passthrough to the manifest.
+- Verified by: Exact AST command returned `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context/notes.md)
+- Risks left: None identified.
+- Next action: None.
+diff --git a/departments/social/runtime/assemble_context.py b/departments/social/runtime/assemble_context.py
+index 7c569106cb49fbd23225f1facc57d4fa43889d2d..882b6f8e05912aa159b2cce9b0fe83c229739cbf
+--- a/departments/social/runtime/assemble_context.py
++++ b/departments/social/runtime/assemble_context.py
+@@ -88,6 +88,7 @@
+             "complete": not missing,
+             "missing": missing,
+         }
++        manifest["thumbnail_url"] = item.get("thumbnail_url", "")
+         _write(out, manifest)
+         if missing:
+             item_id = str(item.get("item_id") or "context")
+diff --git a/ringer-manifests/workdir/thumbnail-in-context/notes.md b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7de0f97e364b358a4e20097698532b7fdba341e4
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-context/notes.md
+@@ -0,0 +1,7 @@
++Changed:
++- Added optional `thumbnail_url` passthrough from the candidate item to the assembled context manifest.
++- The field defaults to an empty string and was not added to required-field validation or the missing list.
++
++Verification:
++- Ran the requested `PYTHONDONTWRITEBYTECODE=1` AST parse command.
++- Result: `syntax ok`
+
+tokens used
+40,984
+Ankit — Completed.
+
+- Changed: Added optional `thumbnail_url` passthrough to the manifest.
+- Verified by: Exact AST command returned `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-context/notes.md)
+- Risks left: None identified.
+- Next action: None.
+[ringer.py] attempt 1 exited rc=0

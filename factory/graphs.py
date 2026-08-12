@@ -223,9 +223,11 @@ def check_drift(dept_dir, release_root) -> dict:
 
 def qa(dept_dir, release_root=None) -> dict:
     """The full deterministic map-QA pass for one department."""
+    import importlib.util
+
     dept_dir = Path(dept_dir)
     result: dict = {"department": dept_dir.name, "ok": True, "lint": [], "traceability": [],
-                    "drift": None}
+                    "drift": None, "surface": []}
     sub_path = dept_dir / "subgraphs.json"
     if sub_path.exists():
         try:
@@ -236,11 +238,16 @@ def qa(dept_dir, release_root=None) -> dict:
     else:
         result["lint"] = ["missing subgraphs.json"]
     result["traceability"] = check_traceability(dept_dir)
+    surface_path = Path(__file__).resolve().parent / "surface_compiler.py"
+    surface_spec = importlib.util.spec_from_file_location("surface_compiler", surface_path)
+    surface_compiler = importlib.util.module_from_spec(surface_spec)
+    surface_spec.loader.exec_module(surface_compiler)
+    result["surface"] = surface_compiler.check_surface(dept_dir)
     if release_root is not None:
         result["drift"] = check_drift(dept_dir, release_root)
         if not result["drift"]["ok"]:
             result["ok"] = False
-    if result["lint"] or result["traceability"]:
+    if result["lint"] or result["traceability"] or result["surface"]:
         result["ok"] = False
     return result
 

@@ -1,0 +1,22 @@
+{
+  "run_name": "mailroom-rebuild",
+  "workdir": "/home/ankit114/ringer-work/mailroom-rebuild-r6",
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "worktrees": true,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "urgency-seam",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a repo feature worker. Your current working directory IS a git worktree of the loop-factory repository, detached at HEAD. Edit files here directly.\n\nOWNERSHIP: you own exactly three paths, factory/outbox_push.py (existing), factory/reescalate.py (existing), and tests/test_urgency_seam.py (new). Do NOT modify, create, delete, or reformat anything else. Do NOT git commit or push, do NOT run git add -A. Leave changes uncommitted; the check exports them.\n\nCONTEXT, AND THIS IS A REAL PRODUCTION DEFECT FOUND BY RUNNING THE SYSTEM, NOT A HYPOTHETICAL. factory/outbox_push.py writes a ledger row for every card it creates. factory/reescalate.py reads those rows to decide who gets re-pinged and how often. reescalate insists urgency is exactly 'normal' or 'urgent' and fails closed otherwise. outbox_push has never written an urgency field at all. So run against the live ledger, reescalate refuses EVERY card with 'urgency must be normal or urgent'. Each component is correct alone. The seam between them was never exercised. Re-escalation is what keeps the owner's Telegram buttons alive inside their 72-hour nonce window, so this defect silently disables the whole safety net.\n\nREAD FIRST, READ-ONLY: factory/outbox_push.py (_append_ledger and its call site in tick, plus _sanitized_text for how packet fields are read), factory/reescalate.py (the urgency validation and the cadence that consumes it), and tests/test_outbox_push.py for style.\n\nFIX 1, in factory/outbox_push.py. The ledger row must carry urgency and due, taken from the outbox packet. A packet with urgency 'urgent' and a due date must put both on the row. A packet that says nothing about urgency must record urgency 'normal', because that is the safe default: 48 hours, comfortably inside the 72-hour nonce window. Do not invent a due date when the packet has none.\n\nFIX 2, in factory/reescalate.py. An ABSENT urgency field must be treated as 'normal', not refused. Every card written before this field existed lacks it. An INVALID value such as 'banana' must STILL be refused loudly, because absent means nobody said, while wrong means something is corrupt. Be lenient about silence and strict about nonsense; do not collapse the two.\n\nDO NOT CHANGE: the cadence maths, the eligibility rule, the one-ping-per-card rule, the exit-4 stall sensor, the buzz sender, the cursor and row-hash dedup, or any other fail-closed path.\n\nWRITE tests/test_urgency_seam.py proving the seam end to end: push a packet through outbox_push with a fake card sender, then run reescalate against the ledger outbox_push just produced, and assert it does not refuse. That round trip is the test that would have caught this. Also cover urgent-with-due, absent-defaults-to-normal, and invalid-still-refuses.\n\nVERIFY from the worktree root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests -q -p no:cacheprovider. The whole suite must stay green.\n\nOUTPUT CONTRACT: leave the three owned files edited and uncommitted, and write ./notes.md at the ROOT of your worktree recording what you read, what you changed, the verification command and its result, and any assumption.\n\nHARD RULES: no new dependencies, no network, no allow-on-failure paths. Do not load skills or call MCP/Apps. Do not capture anything to any memory or brain service.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/mailroom-rebuild/checks/urgency_seam_check.py' --export '/home/ankit114/ringer-work/mailroom-rebuild-r6/patches' --notes '/home/ankit114/ringer-work/mailroom-rebuild-r6/notes/urgency-seam-notes.md'",
+      "verified": "an independent oracle pushed packets through outbox_push and ran reescalate against the ledger it produced, confirming urgency and due flow across the seam, that an absent urgency is treated as normal rather than refused, and that an invalid urgency is still refused loudly; full suite green."
+    }
+  ]
+}

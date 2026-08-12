@@ -1,0 +1,142 @@
+{
+  "effort": "loop-factory-v2-autonomous-loops",
+  "destination": "Option B extended (Ankit, 2026-08-02): one department loop FULLY OPERATIONAL end-to-end — versioned factory, control-graph-driven runs, run cards, per-step telemetry (tokens/cost/latency/model+auth route/QA/eval), receipts, self-heal/watch loop — AND an Agentspace-ready export feed (validated data contract) so the visual workspace can plug in the moment it is provisioned. External live actions still gated by owner promotion per loop-factory hard rules.",
+  "tracker": "local-markdown at wayfinder/MAP.md + wayfinder/tickets/",
+  "phase": "KEY-ARCH DECIDED: OPTION C (runner-mediated appends) — two independent lenses converged (claude 90% w/ file:line grounding: A-in-process = key regression, A-as-daemon = C+overhead, B leaves cross-run token replay open + breaks stdlib kernel; codex: A illusory, B doesn't fix append path, C best on all axes). R-a COMPLETE PENDING MERGES: PR #14 PASS after 5 rounds (READY, squash-only at exact c5e84bb, 577 tests verified; follow-up ticketed: projection-export retention metrics) + PR #16 READY (prices ratified, gate green 529). After merges: Wave R-b (eval contract R3, single heal authority R5, rollup meta-table batch), then Wave 2 Revenue stand-up, Wave 3 shadow proof. PR #15 MERGED. Watchdog INSTALLED + estate cycling (epoch 2). Wave 2 HELD on R-a/R-b. Convergence context: PRs #11+#12 MERGED + owner's ringer lane landed as PR #13 ('Loop Factory v2: telemetry, self-healing, evaluators, all-loops visual factory', +14678/-403) between them. Combined master 5689cd1 gate = CHECK PASS (orchestrator-verified in fresh master-gate worktree). explore-pr13-convergence running: semantic overlap matrix (two telemetry/eval/heal systems? visual factory second-truth risk?) gates Wave 2 spec. Live checkout down to 4 dirty tracked files. prices.json still ratified:false. 4 stale polly remote branches for owner cleanup.",
+  "open_questions": [
+    "Ticket 009: factory versioning scheme (frontier, needed before F2 charter authoring)",
+    "Ticket 014 items 1-3: owner confirms no other lanes; worktree prune; merge order (rec: #9 then #10)",
+    "Owner governance edit: hard rule 9 API-fallback text in CLAUDE.md/AGENTS.md"
+  ],
+  "tasks": {
+    "audit-loop-factory-gaps": {
+      "agent": "claude_code",
+      "purpose": "explore",
+      "conversation_id": "3c28e1d59bf84366aead832c20ea33b1",
+      "status": "completed",
+      "report": ".polly/reports/loop-factory-gap-audit.md",
+      "key_findings": "138/138 tests pass. Control plane real: signed TTL single-use receipts (kernel/receipts.py:66-125), live sends refused (kernel/gateways/dispatch.py:61-62), credential-free departments (kernel/capabilities.py:24-84). LIVE FINDINGS: (1) estate watchdog unscheduled — installed estate-manager.service points at open-engine repo, loop-factory estate frozen at epoch 1 since 2026-07-28; social dept dead since Jul 31, its manager since Jul 28, nothing escalated. (2) Both departments in unremediated drift (podcast 6, social 10 artifacts diverged from pinned releases); daily loops never run drift check — hard rule 4 silently violated. Scorecard: MISSING = factory versioning, backup/restore, per-step telemetry (budget ledger never commits actuals — kernel/gateways/budget.py:89-92). Partial = run state machine (bash-sequential runs), step receipts unsigned/forgeable, auth expiry indistinguishable from crash, model route only in draft artifacts, kill switches manual-only, task truth spans 4 stores. Working = deterministic evaluators, approval boundaries, dept isolation, drift review (firing unheeded), manager watch loop. Telemetry attach points: podcast runtime/record.py:101-136 (fenced run recorder) + BudgetBroker.commit(actual). Departments that exist: podcast (live, heartbeat epoch 1492) and social (dead)."
+    },
+    "explore-knowledge-graph-repo": {
+      "agent": "codex",
+      "purpose": "explore",
+      "conversation_id": "b3699588e949401288f16dab435b5df0",
+      "status": "completed",
+      "key_findings": "Repo = /mnt/d_drive/repos/learning_github/knowledge_repo. Three layers: ATLAS evidence map, Concept River Map (SQLite), AAC process graph (workflow.aac.json, D/C/A/H node modes, conditional edges, refusal sinks). Graph is declarative, NOT executable — no live dispatcher (evaluate_node.py replays saved answers; live executors deferred to 'S6 compiler'). Run cards = per-node proof artifact (runcard.py:22-69). Transfer targets for loop-factory: (1) typed execution projection of subgraphs.json (explicit edges + predicates + refusal/escalation sinks), (2) deterministic factory-owned graph runner gated on receipts, (3) receipts as transition tokens (successor runnable only on valid predecessor receipt + schema + edge predicate + release pin). loop-factory today: subgraphs.json is a flat manifest (templates/subgraphs.json.tmpl), graphs.py is lint/traceability only, departments social/podcast hardcode order in shell scripts."
+    },
+    "search-bee-notes": {
+      "agent": "pi",
+      "model": "gpt-oss:20b",
+      "purpose": "search",
+      "conversation_id": "8ed79b30fee349a7a70dae4ecfb06afb",
+      "status": "failed-garbage-output",
+      "note": "gpt-oss:20b returned an off-topic git-blame answer; local pi models judged unreliable for this run"
+    },
+    "find-bee-notes": {
+      "agent": "codex",
+      "purpose": "search",
+      "conversation_id": "1496e5defbdd4987a61c495e29dd2b89",
+      "status": "completed",
+      "key_findings": "Sources: /mnt/d_drive/repos/OB_mybcat/docs/meetings/bee/2026-08-02-graph-engineering-workshop-raw.json, ...-jason-graph-engineering-workshop-transcript.md, ...-jason-graphs-to-mybcat-implementation-map.md. Three-graph model: knowledge graph (context/retrieval, NOT runtime truth), control graph (trigger->proven outcome per workflow), graph of loops (many loops staying alive without compounding drift). Watcher loops inspect results BUT watchers can fail -> independent deadman check (estate-deadman.timer), poisoned-registry tests, false-green detection stops promotion. Trigger modes: time-based, goal-based (clear definition of done), event-based. Planner/executor split with per-task sessions/worktrees + state management. Key directive from implementation map: 'Do not build or install another graph system. Consolidate the department control plane first.' Observability should be receipt-based; visual workspace renders canonical state, never a second writable source of truth. Telemetry/evals not literal in transcript; closest concepts = watching results, learnings, monitoring, reviewer burden, false positives, repeat defects."
+    },
+    "research-telemetry-evals": {
+      "agent": "claude_code",
+      "purpose": "explore",
+      "conversation_id": "cf508aa5a0a2400190dd4c64aae6930a",
+      "status": "running-continuation",
+      "note": "re-route of cancelled opencode task; first turn ended with its own background lanes in flight, continuation sent to force final report"
+    }
+  },
+  "explore_tasks_wave2": {
+    "explore-parallel-lanes": {
+      "agent": "codex",
+      "purpose": "explore",
+      "conversation_id": "127f092493324e808e6f1be7a60227e1",
+      "status": "completed",
+      "key_findings": "dag-supervisor = podcast-specific auditor not runner (build v2 runner beside it; new 008 acceptance: runner exports versioned signed projection the supervisor verifies independently). watchdog-spine r1 = dead residue; r1b MERGED at ab6131e (dept-tier watchdog, no collision with estate tier). one-true-master-r56 = nothing to salvage, stale index would roll back PR#8. No other open PRs/branches. WATCH ITEM: fix-estate-watchdog worktree had 10 UNTRACKED files (whole implementation not yet committed at scout time) — verify commit+push when its inbox result lands."
+    }
+  },
+  "implement_tasks_wave1": {
+    "graph-runner": {
+      "agent": "claude_code",
+      "purpose": "implement",
+      "conversation_id": "4066dba5a24d4314a30ab2180a632b80",
+      "worktree": ".worktrees/graph-runner",
+      "branch": "polly/graph-runner",
+      "base": "755741c",
+      "status": "READY-FOR-MERGE — cross-review PASS after 6 rounds; master-synced at 12309ee (combined 310 tests CHECK PASS, orchestrator-verified); squash-only condition stamped on PR body; OPEN+MERGEABLE. Prior r4 detail: C2/C5 confirmed; residual: (1) edge-decision checkpoint is UNSIGNED — local tamper can mint fresh valid tokens without predicate satisfaction; (2) row-persist vs mark-fired crash window not idempotent on resume; (3) identity-incomplete/malformed checkpoint skips re-pin fence; (4) stale signed projection survives signing failure (no freshness). Expired-on-resume ruled: historical authentication OK, transition authorization NO until decisions are signed. 5 exact conditions on record. Owner decides: round 5 vs redesign pause.",
+      "pr": "https://github.com/AnkitClassicVision/loop-factory/pull/11",
+      "gates": "CHECK PASS 216 tests orchestrator-verified (baseline 152, +64 TDD)",
+      "review_task": {
+        "title": "review-graph-runner",
+        "agent": "codex",
+        "conversation_id": "3734041f317347aa808b96e1cf087c31",
+        "status": "running",
+        "diff_snapshot": ".polly/reports/pr11.diff"
+      }
+    },
+    "telemetry-spine": {
+      "agent": "codex",
+      "purpose": "implement",
+      "conversation_id": "d02e7061bf5e4d01bb95c2262b294ec5",
+      "worktree": ".worktrees/telemetry-spine",
+      "branch": "polly/telemetry-spine",
+      "base": "755741c",
+      "status": "READY-FOR-MERGE — cross-review PASS (round 3, 2026-08-02) at 446f707. 169 tests CHECK PASS orchestrator-verified. Post-merge owner gate: ratify factory/prices.json (six lanes, flip ratified:true) to arm live cost accounting. Follow-ups carried in registry.",
+      "followups": "NB-6 unbounded _model_reservations/_LOCKS growth; NB-7 empty-root rollup completes as true; dispatch-path LockServiceDown still interpolates str(exc) (separate ticket); scores explanation = only free-text field reaching sqlite (document for judges)",
+      "pr": "https://github.com/AnkitClassicVision/loop-factory/pull/12",
+      "gates": "CHECK PASS 161 tests orchestrator-verified; diff snapshot .polly/reports/pr12.diff",
+      "owner_item": "prices.json shipped ratified:false — Ankit ratifies/corrects in PR #12; cost stays fail-closed until then",
+      "review_task": {
+        "title": "review-telemetry-spine",
+        "agent": "claude_code",
+        "conversation_id": "1fc8a256e67a4a77a751eee79eda0f2c",
+        "status": "running",
+        "diff_snapshot": ".polly/reports/pr12.diff"
+      }
+    }
+  },
+  "implement_tasks": {
+    "fix-estate-watchdog": {
+      "agent": "codex",
+      "purpose": "implement",
+      "conversation_id": "33c5703d6a7a48e7ae02380de42f8733",
+      "worktree": ".worktrees/fix-estate-watchdog",
+      "branch": "polly/fix-estate-watchdog",
+      "status": "READY-FOR-MERGE — cross-review PASS (2026-08-02). HEAD e68650d: tree clean of .polly files (verified: git ls-files .polly/ = 0), 196 tests CHECK PASS orchestrator-verified, OPEN+MERGEABLE. Squash-merge recommended (linear history).",
+      "pr": "https://github.com/AnkitClassicVision/loop-factory/pull/10",
+      "gates": "CHECK PASS orchestrator-verified in worktree; commit d9c72f4 pushed; worktree clean; PR OPEN+MERGEABLE",
+      "review_task": {
+        "title": "review-estate-watchdog",
+        "agent": "claude_code",
+        "conversation_id": "083c5ae4e2dd49e68e18be2de512395a",
+        "status": "running",
+        "diff_snapshot": ".polly/reports/pr10.diff"
+      }
+    },
+    "wire-drift-check": {
+      "agent": "claude_code",
+      "purpose": "implement",
+      "conversation_id": "5cf5d45627224fb6b243f644fde4f7be",
+      "worktree": ".worktrees/wire-drift-check",
+      "branch": "polly/wire-drift-check",
+      "status": "MERGED — squash commit 755741c on master (2026-08-02, merged by Ankit). Worktree removed, local branch deleted. REMAINING: remote branch polly/wire-drift-check still exists (gh --delete-branch partially failed; polly's push --delete blocked by blast-radius policy) — owner runs the delete to finish the blob purge.",
+      "pr": "https://github.com/AnkitClassicVision/loop-factory/pull/9",
+      "gates": "CHECK PASS verified by orchestrator in worktree (147 tests)",
+      "drift_classification": "15 intended-improvement, 1 mixed (social_daily.sh uncommitted live engine swap), 0 rot; podcast re-pin unblocked today; social re-pin blocked until maps patched (3 untraced Linear files); charter.yaml engine_allowlist widening needs owner ratification",
+      "review_task": {
+        "title": "review-wire-drift-check",
+        "agent": "codex",
+        "conversation_id": "f86f66fe1c4d442cb5e4197d638e234e",
+        "status": "round1-complete-verdict-BLOCK",
+        "diff_snapshot": ".polly/reports/pr9.diff",
+        "round2": "pending after fix"
+      },
+      "verified_by_orchestrator": "PR OPEN+MERGEABLE (gh); 147 collected tests (pytest --collect-only); social live edits confirmed (git status: M social_daily.sh 2+/2-, M releases/current, untracked ac07729f); estate-manager.service mispoint CONFIRMED from unit file: WorkingDirectory+ExecStart=/mnt/d_drive/repos/open-engine"
+    }
+  },
+  "roster": {
+    "available": ["claude_code", "codex", "pi(local ollama models only)"],
+    "unavailable": ["cursor (no cursor-agent CLI)", "opencode (no model provider)", "hermes (no model provider)"]
+  }
+}

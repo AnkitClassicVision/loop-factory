@@ -149,7 +149,17 @@ def _run_cmd_hook(command: str):
     return _hook
 
 
-def escalate(department: str, issue: str, outbox_path, context: dict | None = None) -> dict:
+def escalate(
+    department: str,
+    issue: str,
+    outbox_path,
+    context: dict | None = None,
+    *,
+    meaning: str | None = None,
+    needs: str | None = None,
+    actions: list[dict] | None = None,
+    fyi_only: bool = False,
+) -> dict:
     """Escalate an issue the department could NOT self-heal to the Hermes bot.
 
     Writes an escalation packet to the same outbox the bot watches, so any
@@ -164,6 +174,19 @@ def escalate(department: str, issue: str, outbox_path, context: dict | None = No
         "ts": datetime.now(timezone.utc).isoformat(),
         "eli5": f"[{department}] needs you: {issue}",
     }
+    if meaning is None and needs is None and actions is None and not fyi_only:
+        packet["card_gap"] = True
+        packet["eli5"] = f"[unclear card] {packet['eli5']}"
+    else:
+        card = {
+            "what_it_means": meaning,
+            "what_it_needs": needs,
+        }
+        if fyi_only:
+            card["fyi_only"] = True
+        else:
+            card["approvable_actions"] = actions or []
+        packet["card"] = card
     _append(outbox, [packet])
     return {"escalated": True, "issue": issue}
 

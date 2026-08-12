@@ -111,6 +111,7 @@ def test_daily_chain_invokes_comms_and_gates_its_receipt(tmp_path):
         "printf '%s\\n' \"$*\" >> \"$PODCAST_FIXTURE_CALL_LOG\"\n"
         "case \"$*\" in\n"
         "  *runtime/comms_reconcile_sensor.py*) exit 0 ;;\n"
+        "  *run_manifest*mint*) printf '{\"run_id\": \"fixture-run\"}\\n' ;;\n"
         "  -c*json.load*) exec /usr/bin/python3 \"$@\" ;;\n"
         "  *) printf '{}\\n' ;;\n"
         "esac\n",

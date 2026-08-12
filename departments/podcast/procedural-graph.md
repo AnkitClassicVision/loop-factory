@@ -26,9 +26,11 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
 ## SG-WATCHDOG — estate health sensing (proving slice, C3)
 
 ```
-[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper sensors
+[T daily] → N12a run-manifest MINT (kernel; refusal = no run)
+          → N1 sense_estate → pipeline/publish/manifest/hopper/funnel-floor sensors
           → DAG supervision → N2 compare_charter → N3 fingerprint_dedup
           → N4 escalate_outbox (shadow: local outbox only)
+          → N12b run-manifest VERIFY (kernel; advisory verdict → manager)
 ```
 
 N4 emits a human ask whose declared return path is N6
@@ -42,8 +44,14 @@ default until the owner reviews it.
 | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
 | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
 | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally; ask returns through N6 within the provisional 48-hour SLA | C12, C13, Q11 |
+| N11 | funnel_floor_sensor | Sense | SCRIPT | internal_read / shadow | six charter funnel floors + weekly outreach quota computed from FUNNEL-LEDGER evidence; missing ledger => every floor UNKNOWN (never assumed ok); breach classifies funnel_behind, blind gauge funnel_blind (owner amendment 2026-08-05) | C3, C4, Q3 |
+| N15 | outreach_absence_sensor | Sense | SCRIPT | internal_read / shadow | U12 dead man's switch (owner approved 2026-08-10): over a 3-day window, reports `ok` drafts created / `alarm` zero drafts WHILE eligible candidates existed (machinery died) / `drought` zero drafts and nobody emailable (supply, not machinery) / `unknown` a day's feeder report is missing. Evidence is the pair (producer draft ledger, feeder drop accounting) — liveness alone cannot see this failure, and funnel STATE cannot separate a dead loop from an empty pool. `unknown` is NEVER folded into ok (owner amendment 2026-08-05, blind gauge is not a passing gauge); a corrupt draft ledger alarms rather than reporting ok | C3, C4, Q3 |
 | N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | daily receipt-gated reconciliation runs before compare/dedup/escalation; missing or invalid receipt halts the chain | C3, Q3 |
+| N10 | expectation_reconcile | Sense | SCRIPT | internal_read / shadow | exit contract 0/2/1 (P0, 2026-08-05): 0 all expectations met; 2 findings verdict — observations recorded (expectation_blind/expectation_delta via N2), daily chain CONTINUES so compare/dedup processes them; 1 crash — node failure, chain stops. The former `\|\| true` silent bypass is removed and pinned by test_daily_failclosed | C3, C4, Q3 |
 | N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
+| N13 | floor_compiler_run | Sense | SCRIPT | internal_write / shadow, ALARM-ONLY (P3, 2026-08-05) | weekly-gated (skips inside 7 days of the newest floors-history line); derives flow/stock floors from charter `funnel:` goals + matured cohort rates in state/events.jsonl; UNCONFIGURED until the owner declares funnel goals in the charter (humans only — hard rule 3); FREEZES (no increases) on state drift, unledgered inbound, red run-manifest verdict, or malformed ledger; every floor move or freeze is an alarm observation (full-auto WITH alarm-after); writes floors.yaml (machine snapshot heals never touch) + floors-history.jsonl | C3, C4, Q3 |
+| N14 | conductor_tick | Sense | SCRIPT | internal_write / shadow, OBSERVER (P4, 2026-08-05) | last node of the chain (runs AFTER verify — therefore required:false in the roster, liveness guarded by the estate deadman's 26h conductor-heartbeat check instead); acquires the exclusive driver lease (exactly-one-driver: second claimant gets a durable lease-refusal receipt, never a silent double-drive); senses red verdicts, stale incidents (>48h), unanswered cards (>24h), unapplied heal proposals, and floor freezes into an ORDERED would-dispatch ledger (unblock > floor_gap > routine, 3-tick aging promotes) at state/conductor-shadow.jsonl; dispatches NOTHING — cutover to live driving is an owner decision on the promotion ladder | C3, C5, C12, Q3 |
+| N12 | run_manifest mint/verify | Gate | SCRIPT (kernel-owned) | internal_write / shadow, ADVISORY (P1, 2026-08-05) | mint BEFORE the first node from the release-bound `runtime/run-roster.json` (hash checked against the pinned release — drift refuses the whole run); every node record binds to the run via LOOP_FACTORY_RUN_ID; verify diffs roster vs runs-v2 after the sensor chain — exit 0 green / 2 advisory verdict (observation `runmanifest` consumed by NEXT day's compare; verdict consumed by TODAY's manager as warn findings) / 1 crash stops the chain. Blocking flip is a deliberate owner action at P1 exit | C3, C4, C18, Q3 |
 
 Sensor families inside N1 (C3): (a) systemd timer/unit state + receipt freshness
 + log error patterns for the 7 loops + support lanes, (b) escalation-channel

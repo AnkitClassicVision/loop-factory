@@ -1,0 +1,387 @@
+
+[ringer.py] attempt 1 started 2026-07-29T14:43:17.120759+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft 'ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/draft_post.py. Do not modify anything else.
+
+GOAL: Pass `thumbnail_url` through the draft contract so dispatch can attach it to posts.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py
+
+CHANGES:
+1. In `_normalize_draft()` (~line 336), after building the draft dict (~line 346-353), add: `draft['"'"'thumbnail_url'"'"'] = bundle.get('"'"'thumbnail_url'"'"', '"'"''"'"')`. This passes the URL through without the LLM needing to generate it.
+2. Do NOT add thumbnail_url to the engine prompt (`_prompt()`). The LLM does not generate it.
+3. Do NOT add thumbnail_url to any validation that would reject drafts missing it.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('"'"'/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py'"'"').read()); print('"'"'syntax ok'"'"')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.145.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fae54-7399-76b2-94af-c560d9e4c698
+--------
+user
+ROLE: EXECUTOR — do the work yourself; do not spawn subagents or launch Ringer.
+
+You are editing a real repository at /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own ONLY departments/social/runtime/draft_post.py. Do not modify anything else.
+
+GOAL: Pass `thumbnail_url` through the draft contract so dispatch can attach it to posts.
+
+READ FIRST (read-only): /mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py
+
+CHANGES:
+1. In `_normalize_draft()` (~line 336), after building the draft dict (~line 346-353), add: `draft['thumbnail_url'] = bundle.get('thumbnail_url', '')`. This passes the URL through without the LLM needing to generate it.
+2. Do NOT add thumbnail_url to the engine prompt (`_prompt()`). The LLM does not generate it.
+3. Do NOT add thumbnail_url to any validation that would reject drafts missing it.
+
+VERIFY: Run `PYTHONDONTWRITEBYTECODE=1 python3 -c "import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py').read()); print('syntax ok')"`
+
+OUTPUT: Write ./notes.md listing what you changed and the verification result.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+Ankit — I’m using the repo operating-card skill because this is a scoped implementation task. I’ll inspect the owned file and instructions, make only the requested pass-through edit, run the exact syntax check, then write `./notes.md`.
+
+CANARY: blue paperclip
+exec
+/bin/bash -lc "sed -n '1,240p' /home/ankit114/.claude/skills/codex-operating-card/SKILL.md && sed -n '320,370p' /mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py && git -C /mnt/d_drive/repos/loop-factory status --short -- departments/social/runtime/draft_post.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft
+ succeeded in 160ms:
+---
+name: codex-operating-card
+description: "Operate Codex with Nate-style project induction, read-only-first task starts, one-thread-one-outcome discipline, UI/browser evidence, self-review gates, and durable-rule extraction. Use when working in Codex on a repo, starting a new Codex thread, doing project induction, implementing or reviewing code, doing frontend/UI QA, or deciding whether to promote a prompt pattern into AGENTS.md or a skill."
+---
+
+# Codex Operating Card
+
+Purpose: make Codex behave like a repo worker with a tight work contract, not a wandering owner. These prompts are operating defaults, not safety gates. For production writes, deploys, PHI/PII, secrets, CRM/EHR/finance writes, external sends, or autonomy changes, follow the relevant deterministic gate and human approval rules.
+
+## Default behavior
+
+Use this operating card unless the user explicitly overrides it:
+
+1. Read first. Do not edit until you can explain the current project shape.
+2. One thread = one outcome. If a new goal appears, propose a new thread.
+3. Prefer read-only or sandbox mode unless write access is explicitly intended.
+4. Before changes, state likely files, risk, test plan, and rollback path.
+5. Treat AGENTS.md and project docs as local law. If missing, infer lightly and flag gaps.
+6. For UI work, use browser or visual evidence rather than guessing.
+7. Verify with actual command output, visual check, or a named source before claiming done.
+8. End with: Changed, Verified by, Risks left, Next action.
+9. If the task reveals a reusable rule, propose AGENTS.md or skill capture, but do not write it without approval.
+
+## Prompt pack
+
+For exact copy/paste prompts, read `references/prompt-pack.md` and choose the smallest prompt that matches the work:
+
+- Project induction prompt: first pass on a repo.
+- Task starter prompt: normal implementation.
+- UI/browser evidence prompt: frontend or visual QA.
+- Review gate prompt: before accepting Codex output.
+- Durable-rule extraction prompt: after a repeated pattern appears.
+
+## Output contract
+
+For routine work, keep the final terse:
+
+- Changed: files/behavior changed.
+- Verified by: real command, screenshot/visual check, or source.
+- Risks left: only what matters.
+- Next action: one step.
+
+Do not call work complete if verification did not run. Say `Partial` or `Blocked` instead.
+    candidates: list[str]
+    if isinstance(raw, str):
+        candidates = [raw]
+    elif isinstance(raw, list):
+        candidates = [value for value in raw if isinstance(value, str)]
+    else:
+        candidates = []
+    urls: set[str] = set()
+    for value in candidates:
+        urls.update(URL_RE.findall(value))
+    body = draft.get("body")
+    if isinstance(body, str):
+        urls.update(URL_RE.findall(body))
+    return urls
+
+
+def _normalize_draft(
+    response: Any,
+    *,
+    surface: str,
+    engine: str,
+    round_number: int,
+    bundle: dict,
+) -> dict:
+    if not isinstance(response, dict):
+        raise GateBlocked("engine draft response must be a JSON object")
+    draft = {
+        "surface": surface,
+        "body": response.get("body"),
+        "cta_url": response.get("cta_url"),
+        "sources": response.get("sources"),
+        "engine": engine,
+        "round": round_number,
+    }
+    reasons: list[str] = []
+    body = draft["body"]
+    if not isinstance(body, str) or not body.strip():
+        reasons.append("draft body must be a non-empty string")
+    elif len(body) > SURFACE_LIMITS[surface]:
+        reasons.append(
+            f"{surface} body length {len(body)} exceeds hard cap {SURFACE_LIMITS[surface]}"
+        )
+    if isinstance(body, str) and "\u2014" in body:
+        reasons.append("draft body contains an em dash")
+
+    cta_url = draft["cta_url"]
+    urls = _cta_urls(draft)
+    if not isinstance(cta_url, str) or not cta_url.strip() or len(urls) != 1:
+        reasons.append("draft must contain exactly one distinct HTTP(S) cta_url")
+    elif cta_url.strip() not in urls:
+        reasons.append("draft cta_url must be the single CTA URL")
+
+codex
+Ankit — Scope is one owned runtime file plus the required scratch notes. Risk is limited to contract shape; the test is the exact AST parse command. Rollback is the single added dictionary assignment.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..da8ce53f72322670ac22051bc5538361e81c7dbd
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification: pending.
+
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..da8ce53f72322670ac22051bc5538361e81c7dbd
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification: pending.
+
+exec
+/bin/bash -lc "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('/mnt/d_drive/repos/loop-factory/departments/social/runtime/draft_post.py').read()); print('syntax ok')\"" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..da8ce53f72322670ac22051bc5538361e81c7dbd
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification: pending.
+
+ succeeded in 175ms:
+syntax ok
+
+codex
+Ankit — Verification passed with `syntax ok`. I’m recording that result in `notes.md` and doing a final scoped diff check to ensure no prompt or validation changes slipped in.
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78d503c4eb564f25a15a6048bd0ff321d1cf0233
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification passed: the requested AST parse command printed `syntax ok` and exited 0.
+
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78d503c4eb564f25a15a6048bd0ff321d1cf0233
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification passed: the requested AST parse command printed `syntax ok` and exited 0.
+
+exec
+/bin/bash -lc "git -C /mnt/d_drive/repos/loop-factory diff -- departments/social/runtime/draft_post.py && sed -n '1,120p' ./notes.md && git -C /mnt/d_drive/repos/loop-factory status --short -- departments/social/runtime/draft_post.py" in /mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78d503c4eb564f25a15a6048bd0ff321d1cf0233
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification passed: the requested AST parse command printed `syntax ok` and exited 0.
+
+ succeeded in 162ms:
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe9..390daeb 100644
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@ def _normalize_draft(
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+# Thumbnail URL draft pass-through
+
+- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
+- Did not add `thumbnail_url` to the engine prompt or draft validation.
+- Verification passed: the requested AST parse command printed `syntax ok` and exited 0.
+ M departments/social/runtime/draft_post.py
+
+codex
+Ankit — Implemented and verified.
+
+- Changed: `_normalize_draft()` now passes through `thumbnail_url`.
+- Prompt and validation remain unchanged.
+- Verified: exact AST command exited `0` with `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft/notes.md)
+
+Risks left: none identified.
+diff --git a/departments/social/runtime/draft_post.py b/departments/social/runtime/draft_post.py
+index 35eefe96137129069cf9ccd409ae2a0cba0c9e70..390daeb88c60f43de59083b377250f64c26c2a92
+--- a/departments/social/runtime/draft_post.py
++++ b/departments/social/runtime/draft_post.py
+@@ -351,6 +351,7 @@
+         "engine": engine,
+         "round": round_number,
+     }
++    draft["thumbnail_url"] = bundle.get("thumbnail_url", "")
+     reasons: list[str] = []
+     body = draft["body"]
+     if not isinstance(body, str) or not body.strip():
+diff --git a/ringer-manifests/workdir/thumbnail-in-draft/notes.md b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..78d503c4eb564f25a15a6048bd0ff321d1cf0233
+--- /dev/null
++++ b/ringer-manifests/workdir/thumbnail-in-draft/notes.md
+@@ -0,0 +1,5 @@
++# Thumbnail URL draft pass-through
++
++- Changed `departments/social/runtime/draft_post.py` so `_normalize_draft()` copies `bundle["thumbnail_url"]` into the normalized draft, defaulting to an empty string.
++- Did not add `thumbnail_url` to the engine prompt or draft validation.
++- Verification passed: the requested AST parse command printed `syntax ok` and exited 0.
+
+tokens used
+40,385
+Ankit — Implemented and verified.
+
+- Changed: `_normalize_draft()` now passes through `thumbnail_url`.
+- Prompt and validation remain unchanged.
+- Verified: exact AST command exited `0` with `syntax ok`.
+- Notes: [notes.md](/mnt/d_drive/repos/loop-factory/ringer-manifests/workdir/thumbnail-in-draft/notes.md)
+
+Risks left: none identified.
+[ringer.py] attempt 1 exited rc=0

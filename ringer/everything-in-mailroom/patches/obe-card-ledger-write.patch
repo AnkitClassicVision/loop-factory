@@ -1,0 +1,170 @@
+diff --git a/scripts/obe_escalation_card.py b/scripts/obe_escalation_card.py
+index 89c751c..b0854c8 100644
+--- a/scripts/obe_escalation_card.py
++++ b/scripts/obe_escalation_card.py
+@@ -15,7 +15,9 @@ when this exits nonzero, so an alert is never lost to a Linear outage.
+ Dry-run creates no card and sends nothing.
+ """
+ import argparse
++import hashlib
+ import json
++import os
+ import subprocess
+ import sys
+ from datetime import datetime, timezone
+@@ -23,6 +25,7 @@ from pathlib import Path
+ 
+ REPO = Path(__file__).resolve().parent.parent
+ TICKET = Path("/home/ankit114/scripts/linear_control_ticket.py")
++DEFAULT_CARD_LEDGER = Path("/home/ankit114/.config/loop-factory/card_ledger.jsonl")
+ 
+ sys.path.insert(0, str(REPO / "scripts"))
+ import obe_tg_notify  # noqa: E402
+@@ -51,6 +54,33 @@ def create_card(loop: str, text: str, date_tag: str, dry_run: bool) -> dict:
+         return {"created": False, "error": (stdout or proc.stderr or "")[-300:]}
+ 
+ 
++def append_card_ledger(loop: str, text: str, identifier: str,
++                       card_url: str, title: str) -> bool:
++    now = datetime.now(timezone.utc).isoformat()
++    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
++    identifying = json.dumps([loop, content_hash, identifier], separators=(",", ":"))
++    row = {
++        "card_identifier": identifier,
++        "card_url": card_url,
++        "department": "podcast",
++        "first_raised": now,
++        "kind": "escalation",
++        "packet_text": text[:2000],
++        "row_hash": hashlib.sha256(identifying.encode("utf-8")).hexdigest(),
++        "status": "open",
++        "summary": title[:80],
++        "ts": now,
++    }
++    ledger = Path(os.environ.get("OBE_CARD_LEDGER", str(DEFAULT_CARD_LEDGER)))
++    try:
++        with open(ledger, "a", encoding="utf-8") as fh:
++            fh.write(json.dumps(row, sort_keys=True) + "\n")
++        return True
++    except OSError as exc:
++        obe_tg_notify._log_failure("card_ledger", str(exc), card=identifier)
++        return False
++
++
+ def main() -> int:
+     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+     parser.add_argument("--loop", required=True)
+@@ -75,13 +105,18 @@ def main() -> int:
+     if not identifier:
+         print(json.dumps({"ok": False, "error": created.get("error", "card creation failed")}))
+         return 1
++    title = created.get("title") or f"[loop-escalation] {args.loop} — {date_tag}"
++    ledgered = append_card_ledger(
++        args.loop, text, identifier, created.get("url") or created.get("card_url") or "", title,
++    )
+     summary = text.splitlines()[0][:80] if text else "needs you"
+     buzzed = obe_tg_notify.notify_escalation(identifier, args.loop, summary, text)
+-    print(json.dumps({"ok": True, "card": identifier, "buzzed": bool(buzzed)}))
++    print(json.dumps({"ok": ledgered and bool(buzzed), "card": identifier,
++                      "ledgered": ledgered, "buzzed": bool(buzzed)}))
+     # A created card with a failed buzz still succeeds: the record exists and
+     # the caller's fallback text alert will fire if we exit nonzero, so exit 0
+     # only when the buzz landed too — otherwise let the plain path back it up.
+-    return 0 if buzzed else 1
++    return 0 if ledgered and buzzed else 1
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/tests/test_obe_escalation_card.py b/tests/test_obe_escalation_card.py
+new file mode 100644
+index 0000000..35a2f14
+--- /dev/null
++++ b/tests/test_obe_escalation_card.py
+@@ -0,0 +1,87 @@
++import json
++import sys
++from datetime import datetime
++
++from scripts import obe_escalation_card as escalation
++
++
++def _run(monkeypatch, tmp_path, *, buzzed=True, ledger=None, card=None):
++    escalate_file = tmp_path / "ESCALATE.md"
++    escalate_file.write_text("Needs owner decision\nFull escalation detail", encoding="utf-8")
++    ledger = ledger or tmp_path / "card_ledger.jsonl"
++    monkeypatch.setenv("OBE_CARD_LEDGER", str(ledger))
++    card = card or {
++        "created": True,
++        "identifier": "ANK-412",
++        "title": "[loop-escalation] health — 20260805",
++        "url": "https://linear.app/example/ANK-412",
++    }
++    monkeypatch.setattr(escalation, "create_card", lambda *_args: card)
++    buzzes = []
++    monkeypatch.setattr(
++        escalation.obe_tg_notify, "notify_escalation",
++        lambda *args: buzzes.append(args) or buzzed,
++    )
++    monkeypatch.setattr(
++        sys, "argv",
++        ["obe_escalation_card.py", "--loop", "health",
++         "--escalate-file", str(escalate_file)],
++    )
++    return escalation.main(), ledger, buzzes
++
++
++def test_successful_card_appends_rearmable_ledger_row(monkeypatch, tmp_path):
++    rc, ledger, _buzzes = _run(monkeypatch, tmp_path)
++
++    assert rc == 0
++    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
++    assert len(rows) == 1
++    row = rows[0]
++    assert row["row_hash"]
++    assert row["card_identifier"] == "ANK-412"
++    assert row["department"] == "podcast"
++    assert row["kind"] == "escalation"
++    assert row["status"] == "open"
++    assert datetime.fromisoformat(row["first_raised"])
++
++
++def test_buzz_failure_still_leaves_ledger_row(monkeypatch, tmp_path):
++    rc, ledger, buzzes = _run(monkeypatch, tmp_path, buzzed=False)
++
++    assert rc == 1
++    assert buzzes
++    assert json.loads(ledger.read_text(encoding="utf-8"))["card_identifier"] == "ANK-412"
++
++
++def test_ledger_failure_still_buzzes_and_exits_nonzero(monkeypatch, tmp_path):
++    failures = []
++    monkeypatch.setattr(
++        escalation.obe_tg_notify, "_log_failure",
++        lambda *args, **kwargs: failures.append((args, kwargs)),
++    )
++    bad_ledger = tmp_path / "missing" / "card_ledger.jsonl"
++
++    rc, _ledger, buzzes = _run(monkeypatch, tmp_path, ledger=bad_ledger)
++
++    assert rc == 1
++    assert buzzes
++    assert failures and failures[0][0][0] == "card_ledger"
++
++
++def test_ledger_row_is_valid_json_on_one_line(monkeypatch, tmp_path):
++    _rc, ledger, _buzzes = _run(monkeypatch, tmp_path)
++
++    raw = ledger.read_text(encoding="utf-8")
++    assert raw.endswith("\n")
++    assert raw.count("\n") == 1
++    assert isinstance(json.loads(raw), dict)
++
++
++def test_card_response_without_identifier_blocks_ledger_and_buzz(monkeypatch, tmp_path):
++    poisoned_card = {"created": True, "title": "missing identifier"}
++
++    rc, ledger, buzzes = _run(monkeypatch, tmp_path, card=poisoned_card)
++
++    assert rc == 1
++    assert not ledger.exists()
++    assert buzzes == []

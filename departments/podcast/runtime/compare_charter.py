@@ -40,6 +40,20 @@ FAILURE_CLASSES = {
     # surfaced 2026-07-31 when the first full daily run hit an unmapped
     # ("ledger", "unknown") observation and correctly refused to continue.
     ("ledger", "unknown"): ("ledger_blind", "high"),
+    # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
+    # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
+    ("hopper", "unknown"): ("hopper_blind", "high"),
+    # Recurred 2026-08-11: U12 (N15) was wired and pinned without its rows, and
+    # its first "unknown" at 03:00 stopped every run for 16+ hours — which kept
+    # the feeder reports missing, which kept the sensor "unknown". A sensor's
+    # full status vocabulary gets mapped the same day the sensor is wired.
+    ("outreach_absence", "alarm"): ("outreach_stalled", "high"),
+    ("outreach_absence", "drought"): ("outreach_drought", "med"),
+    ("outreach_absence", "unknown"): ("outreach_blind", "high"),
+    ("funnel", "alarm"): ("funnel_behind", "high"),
+    ("funnel", "unknown"): ("funnel_blind", "med"),
+    ("floors", "alarm"): ("floors_attention", "med"),
+    ("floors", "unknown"): ("floors_unconfigured", "med"),
     ("ledger", "fail"): ("ledger_failed", "high"),
     ("receipt", "unknown"): ("receipt_unknown", "med"),
     ("log", "unknown"): ("log_unknown", "med"),
@@ -58,15 +72,185 @@ FAILURE_CLASSES = {
     ("manifest", "fail"): ("manifest_incomplete", "high"),
     ("manifest", "warn"): ("manifest_gap", "med"),
     ("manifest", "unknown"): ("manifest_unknown", "med"),
+    # expectation_reconcile fails closed: no manifests, unreadable snapshot,
+    # or reconcile error is blindness; recorded deltas are contract gaps.
+    # Added in P0 when the || true bypass was removed — before this entry the
+    # generic comparison raised on any expectation observation.
+    ("expectation", "unknown"): ("expectation_blind", "high"),
+    ("expectation", "alarm"): ("expectation_delta", "high"),
+    ("runmanifest", "alarm"): ("runmanifest_missing_steps", "high"),
+    ("runmanifest", "unknown"): ("runmanifest_unverified", "med"),
 }
 
 FAILURE_HINT_CLASSES = {
     ("receipt", "fail", "receipt_hollow"): ("receipt_hollow", "high"),
 }
 
+MEANINGS = {
+    "dag_receipt_violation": {
+        "what_it_means": "A required podcast step was skipped or its proof of completion cannot be trusted.",
+        "what_it_needs": "Ops must repair the skipped step and confirm who approved any intentional skip; nothing needed from you unless approval is disputed.",
+    },
+    "outreach_stalled": {
+        "what_it_means": "Guest outreach produced zero drafts for days while people were available to write to — the machinery is stalled, not the supply.",
+        "what_it_needs": "Ops must find and fix the stalled outreach step; nothing needed from you unless the fix changes who gets contacted.",
+    },
+    "outreach_drought": {
+        "what_it_means": "Guest outreach produced nothing because there was nobody eligible to write to — the candidate pool is empty.",
+        "what_it_needs": "Supply, not repair: sourcing or referrals need attention; you only weigh in on where new candidates should come from.",
+    },
+    "outreach_blind": {
+        "what_it_means": "The evidence that would prove outreach is working (or stalled) is missing, so the absence alarm cannot see at all.",
+        "what_it_needs": "Ops must restore the feeder's daily drop accounting first — a blind gauge is not a passing gauge, and no outreach claim counts until it can see.",
+    },
+    "timer_failed": {
+        "what_it_means": "A scheduled podcast job tried to run and failed.",
+        "what_it_needs": "Ops must repair or retire the scheduled job; you only need to decide if the job should no longer run.",
+    },
+    "receipt_stale": {
+        "what_it_means": "A podcast job has not recently proven that it finished successfully.",
+        "what_it_needs": "Ops must check the job and restore a fresh completion record; nothing needed from you unless the job should be retired.",
+    },
+    "log_error": {
+        "what_it_means": "A podcast job recorded an error while running.",
+        "what_it_needs": "Ops must use the approved repair steps or bring you a specific decision if none apply.",
+    },
+    "channel_failed": {
+        "what_it_means": "The podcast alert route is not working, so important problems may not reach you.",
+        "what_it_needs": "Ops must restore the approved alert route; nothing needed from you unless a different route is required.",
+    },
+    "vps_service_failed": {
+        "what_it_means": "A podcast service on the hosted server is down.",
+        "what_it_needs": "Ops must repair the service through an approved playbook or ask you to approve a different recovery path.",
+    },
+    "timer_unknown": {
+        "what_it_means": "The system cannot tell whether a scheduled podcast job is working.",
+        "what_it_needs": "Ops must restore the job status check; you only need to decide if the job should be retired.",
+    },
+    "ledger_blind": {
+        "what_it_means": "The system cannot read the record that shows whether podcast messages were sent.",
+        "what_it_needs": "Ops must restore that send record; nothing needed from you unless the sending process should change.",
+    },
+    "hopper_blind": {
+        "what_it_means": "The watchdog gauge that checks episodes are publishing on time has no data to read; the podcast itself may be fine, but this gauge is blind.",
+        "what_it_needs": "An ops repair of the publish-schedule data file; nothing needed from you unless you want it handled differently.",
+    },
+    "funnel_behind": {
+        "what_it_means": "The guest pipeline fell behind its daily numbers, so future episodes are at risk of running dry.",
+        "what_it_needs": "Approve the catch-up actions the loops propose, or tell them to pause the pace; the daily work order has the exact items.",
+    },
+    "funnel_blind": {
+        "what_it_means": "The daily guest pipeline count has no trustworthy information to read, so it cannot tell whether future episodes are on track.",
+        "what_it_needs": "Ops must restore the guest and booking records; nothing needed from you unless the tracking process should change.",
+    },
+    "floors_attention": {
+        "what_it_means": "The funnel floor compiler either moved a floor (working as designed, shown for your awareness) or froze because its input data cannot be trusted — the detail says which.",
+        "what_it_needs": "Ops reviews the compiler detail; you act only if a floor move looks wrong or a freeze persists.",
+    },
+    "floors_unconfigured": {
+        "what_it_means": "No funnel goals are declared in the charter, so no floors are being derived; the hand-set charter floors still stand.",
+        "what_it_needs": "Nothing, until you choose to declare funnel end goals in the charter.",
+    },
+    "ledger_failed": {
+        "what_it_means": "The record of podcast message sends shows a failure.",
+        "what_it_needs": "Ops must repair the failed send path and confirm the affected message status; nothing needed from you unless a resend needs approval.",
+    },
+    "receipt_unknown": {
+        "what_it_means": "The system cannot tell whether a podcast job finished successfully.",
+        "what_it_needs": "Ops must restore the job's completion record; nothing needed from you unless the job should be retired.",
+    },
+    "log_unknown": {
+        "what_it_means": "The system cannot read the podcast job's error record.",
+        "what_it_needs": "Ops must restore access to the job record; nothing needed from you unless the record location should change.",
+    },
+    "channel_unknown": {
+        "what_it_means": "The system cannot confirm that podcast alerts can reach you.",
+        "what_it_needs": "Ops must test and restore the approved alert route; nothing needed from you unless a new route is required.",
+    },
+    "vps_unknown": {
+        "what_it_means": "The system cannot tell whether a podcast service on the hosted server is running.",
+        "what_it_needs": "Ops must restore the service status check; nothing needed from you unless server access is required.",
+    },
+    "timer_warning": {
+        "what_it_means": "A scheduled podcast job is showing an early warning but has not fully failed.",
+        "what_it_needs": "Ops should inspect the job before its next run; nothing needed from you unless it should be retired.",
+    },
+    "receipt_warning": {
+        "what_it_means": "A podcast job's proof of completion is getting old and may soon be overdue.",
+        "what_it_needs": "Ops should confirm the next successful run updates the completion record; nothing needed from you.",
+    },
+    "log_warning": {
+        "what_it_means": "A podcast job recorded a warning that may become a failure.",
+        "what_it_needs": "Ops should inspect the warning and apply the approved repair if needed; nothing needed from you.",
+    },
+    "channel_warning": {
+        "what_it_means": "The podcast alert route is showing signs it may stop working.",
+        "what_it_needs": "Ops should test and repair the alert route; nothing needed from you unless a different route is required.",
+    },
+    "vps_warning": {
+        "what_it_means": "A podcast service on the hosted server is showing signs it may fail.",
+        "what_it_needs": "Ops should inspect and repair the service; nothing needed from you unless a different recovery path needs approval.",
+    },
+    "pipeline_below_target": {
+        "what_it_means": "There are too few confirmed podcast guests ready for recording.",
+        "what_it_needs": "The podcast team must identify and clear the missing guest work; you only need to help if an owner decision is blocking them.",
+    },
+    "pipeline_warn": {
+        "what_it_means": "The number of confirmed podcast guests is close to falling below target.",
+        "what_it_needs": "The podcast team should fill the guest gaps before they affect recording; nothing needed from you unless they flag a decision.",
+    },
+    "pipeline_unknown": {
+        "what_it_means": "The system cannot count how many podcast guests are ready for recording.",
+        "what_it_needs": "Ops must restore the guest-status data; nothing needed from you unless the tracking process should change.",
+    },
+    "publish_missing": {
+        "what_it_means": "Something required for today's podcast release is missing.",
+        "what_it_needs": "The publishing owner must restore the missing item or tell you exactly what decision is blocking release.",
+    },
+    "publish_unknown": {
+        "what_it_means": "The system cannot confirm whether today's podcast release is complete.",
+        "what_it_needs": "Ops must restore the release check; nothing needed from you unless the publishing owner reports a real release problem.",
+    },
+    "manifest_incomplete": {
+        "what_it_means": "Required guest details are missing before the episode can be published safely.",
+        "what_it_needs": "The podcast team must complete the missing guest details before publishing; nothing needed from you unless they cannot obtain them.",
+    },
+    "manifest_gap": {
+        "what_it_means": "Some guest details may be incomplete ahead of publishing.",
+        "what_it_needs": "The podcast team should complete the guest details before publish day; nothing needed from you unless they flag a blocker.",
+    },
+    "manifest_unknown": {
+        "what_it_means": "The system cannot confirm whether all required guest details are complete.",
+        "what_it_needs": "Ops must restore the guest-details check; nothing needed from you unless the podcast team reports missing information.",
+    },
+    "expectation_blind": {
+        "what_it_means": "The checker that compares declared step expectations against reality has nothing to check — its manifests or its ground-truth snapshot are missing or unreadable.",
+        "what_it_needs": "Ops must restore the expectation manifests or the snapshot feed; nothing needed from you unless the expectation contract itself should change.",
+    },
+    "expectation_delta": {
+        "what_it_means": "A step that declared an expected artifact has not produced it in time — work the process promised is missing.",
+        "what_it_needs": "Ops must run the declared heal for each delta or repair the producing step; you only decide if a delta was intentional.",
+    },
+    "runmanifest_missing_steps": {
+        "what_it_means": "A daily run declared steps in advance and at least one declared step has no matching completion record — work the run promised did not provably happen.",
+        "what_it_needs": "Ops must rerun or repair the missing step and confirm the roster is current; you decide nothing unless a step should leave the roster.",
+    },
+    "runmanifest_unverified": {
+        "what_it_means": "A daily run declared its steps but the checker could not produce a trustworthy verdict — the run may be fine, but nothing proves it.",
+        "what_it_needs": "Ops must repair the verifier's inputs (the run manifest or the run records) so a verdict can be computed; nothing needed from you.",
+    },
+    "receipt_hollow": {
+        "what_it_means": "A podcast job created an empty completion record that does not prove the work finished.",
+        "what_it_needs": "Ops must rerun or repair the job so it produces a complete record; nothing needed from you unless the job itself should change.",
+    },
+}
+
 QUESTIONS = {
     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
+    "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
+    "funnel": "Which guest pipeline number missed its line, and what catch-up action will restore it?",
+    "floors": "Did a floor move for a data-backed reason, or is the compiler frozen or unconfigured, and why?",
     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
     "receipt": "What blocked this unit from producing a fresh execution receipt?",
     "log": "Which versioned repair playbook should handle this logged failure?",
@@ -75,6 +259,9 @@ QUESTIONS = {
     "pipeline": "Which unresolved or missing guest evidence is keeping the pipeline below target?",
     "publishday": "Which expected publish artifact is missing, and who owns its recovery?",
     "manifest": "Which required guest-manifest fields must be completed before publish?",
+    "expectation": "Which declared expectation has no matching artifact, and does its heal run or does the manifest need correcting?",
+    "runmanifest": "Which declared step has no completion record for this run, and is the fix a rerun or a roster correction?",
+    "outreach_absence": "Outreach produced nothing: is the machinery stalled, the candidate pool empty, or the evidence missing — and which one does the feeder's drop accounting prove?",
 }
 
 
@@ -241,6 +428,7 @@ def compare_observations(
                 "observed": _observed_for(row),
                 "evidence": [str(row.get("evidence", ""))],
                 "one_question": QUESTIONS[sensor],
+                **MEANINGS[failure_class],
             }
         )
     return candidates

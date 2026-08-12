@@ -1,0 +1,47 @@
+{
+ "run_name": "ultimate-process",
+ "workdir": "/home/ankit114/ringer-work/ultimate-process-r2lf",
+ "worktrees": true,
+ "repo": "/mnt/d_drive/repos/loop-factory",
+ "max_parallel": 3,
+ "tasks": [
+  {
+   "key": "pr16-land",
+   "engine": "codex",
+   "task_type": "code-fix",
+   "timeout_s": 2400,
+   "spec": "Your current working directory IS a git worktree of /mnt/d_drive/repos/loop-factory (detached at master HEAD). Do NOT git commit/branch/push/stash beyond the staging the check requires. No MCP, no network, no skills.\n\nTASK: land the crashed session's PR #16 \u2014 model-price ratification, a 2-file change whose owner decision is already recorded. Its squash commit is local ref ab7d1e2 (also on branch refs; git log ab7d1e2 -1 --stat to see it). Cherry-pick or manually re-apply its delta onto the current tree (it predates newer master commits \u2014 resolve trivially, the change is ~10 insertions: factory/prices.json flips ratified true with owner/date fields, plus its test). Confirm factory/prices.json ends ratified:true with the ratification metadata the branch recorded, and 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' passes. Leave changes uncommitted for patch export. Write ./evidence.md: the exact diff, where it came from (ab7d1e2), check output tail.\n\nOWNED FILES: factory/prices.json and whichever single test file the branch change touches (verify from ab7d1e2 --stat; if it touches more than 2 files, STOP and report instead).",
+   "check": "python3 /mnt/d_drive/repos/loop-factory/ringer/one-true-master/checks/fix_with_tests.py --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' --patch /home/ankit114/ringer-work/ultimate-process-r2lf/pr16.patch --owned-files 'factory/prices.json,tests/test_telemetry_rollup.py' --min-new-tests 0",
+   "expect_files": [],
+   "verified": "the recorded price-ratification decision finally exists on a current-master tree with the full suite green"
+  },
+  {
+   "key": "pr14-rebase-review",
+   "engine": "codex",
+   "task_type": "code-review",
+   "timeout_s": 5400,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "Your current working directory IS a git worktree of /mnt/d_drive/repos/loop-factory (detached at master HEAD). Do NOT git commit/branch/push/stash beyond staging for patch export. No MCP, no network, no skills.\n\nMISSION: recover the crashed session's PR #14 (branch origin/polly/reconcile-run-identity, tip c5e84bb \u2014 run-identity unification: one shared run_id across runner records, telemetry, scores, rollup, manager escalation bridge, exactly-once spool, projection export fencing; ~10 files, +2645/-122 relative to ITS base). Master has moved substantially since (v2 landed runrecord/boardfeed/board/triage + PR #15 board-rollup rendering). Your job: REBASE it onto the current tree as a recovery patch, adversarially review your own result, and prove it.\n\nSTEPS: (1) Study the branch: git log origin/polly/reconcile-run-identity --oneline -8; git diff $(git merge-base HEAD origin/polly/reconcile-run-identity)..origin/polly/reconcile-run-identity --stat, then read the full diff file-by-file. (2) Study what master now has in the same territory: factory/runrecord.py (run_id minting, emit_record), factory/rollup.py, factory/boardfeed.py, kernel/gateways/model.py telemetry, factory/manager.py escalation dedup. (3) MERGE origin/polly/reconcile-run-identity into the worktree HEAD, resolving every conflict by COMPOSITION: keep master's landed v2 behavior as the base truth; bring PR #14's run-identity threading, spool/exactly-once hardening, escalation bridge, and export fencing ON TOP; where the two invented different mechanisms for the SAME job (e.g. two run-id allocators), keep ONE (prefer master's factory/runrecord.py identity as canonical \u2014 PR #14's callers adapt to it) and record every such call in the report. (4) PROVE: 'PYTHONDONTWRITEBYTECODE=1 python3 loopfactory.py check' must be fully green \u2014 if PR #14's tests encode the abandoned mechanism, adapt the TEST to the canonical mechanism and flag each adaptation prominently; never delete a behavior test silently. (5) Adversarial pass on your own merge: grep for conflict markers; verify one fixture flows a single run_id end-to-end (runner record -> telemetry row -> rollup join) if the pieces exist to test it; list anything from the branch you DROPPED and why. Leave the tree uncommitted for patch export.\n\nDELIVER ./review.md \u2014 FIRST LINE 'VERDICT: LANDABLE' or 'VERDICT: NOT-LANDABLE', then: composition decisions table (branch mechanism vs master mechanism vs what survived), test adaptations list, dropped-content list with reasons, check output tail, and residual risks. An honest NOT-LANDABLE with reasons is a fully acceptable outcome.",
+   "check": "python3 -c \"import sys,re,subprocess;from pathlib import Path;p=Path('review.md');t=p.read_text(errors='replace') if p.exists() else sys.exit(print('FAIL: review.md missing') or 1);f=t.strip().splitlines()[0].upper();ok=bool(re.match(r'^VERDICT: (LANDABLE|NOT-LANDABLE)',f));low=t.lower();need=[('composition table','composition|mechanism'),('test adaptations','test'),('dropped list','drop'),('check evidence','check pass|passed'),('risks','risk')];fails=([] if ok else ['bad verdict line'])+[n for n,pat in need if not re.search(pat,low)];d=subprocess.run(['git','diff','HEAD'],capture_output=True,text=True).stdout;Path('/home/ankit114/ringer-work/ultimate-process-r2lf/pr14.patch').write_text(d);fails+=([] if ('LANDABLE'==f.split()[1].rstrip() and len(d)>1000) or 'NOT-LANDABLE' in f else ['LANDABLE verdict but patch under 1000 bytes']);print('PR14 CHECK:','PASS \u2014 '+f if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\" && cp review.md /home/ankit114/ringer-work/ultimate-process-r2lf/pr14-review.md",
+   "expect_files": [],
+   "verified": "PR #14's run-identity work is rebased onto current master by composition with a hard verdict, full-suite proof, and every dropped piece named"
+  },
+  {
+   "key": "revenue-adapt-plan",
+   "engine": "codex",
+   "task_type": "research",
+   "timeout_s": 3600,
+   "engine_args": [
+    "-c",
+    "model_reasoning_effort=high"
+   ],
+   "spec": "READ-ONLY planning scout. Deliverable ./report.md only; never execute target scripts; no credential-pattern reads; no MCP; redact any contact PII to [contact].\n\nOWNER DECISION (2026-08-03): the Revenue/Lead-Follow-Up ambition from the crashed session lands by ADAPTING the existing Open Engine sales department \u2014 refreshed to current standards \u2014 NOT by building a new department. Produce the adaptation plan.\n\nREAD: (1) the locked owner interview /mnt/d_drive/repos/loop-factory/wayfinder/interviews/revenue-f1-interview-2026-08-02.md (the 14-element charter of what Revenue must be); (2) the crashed session's ticket 012 W3-W5 (wayfinder/tickets/012-proof-loop-retrofit-plan.md) for the intended proof shape; (3) the ACTUAL Open Engine sales department: /mnt/d_drive/repos/open-engine departments/sales/ (charter?, runtime/, releases/, state receipts \u2014 shapes only, no contact rows), its sales_daily driver, suppression/eligibility gates, shadow posture, and src/factory/ (their release tooling); (4) what current loop-factory v2 offers that open-engine lacks: factory/runrecord.py, boardfeed/board (the estate board could render open-engine sales if it emitted the feed contract), triage_agent, voice-gate-in-progress at hubspot-daily-2 scripts/voice_gate.py (may not exist yet \u2014 plan for its API: check_draft(body, channel, metadata) with PII-free receipts).\n\nDELIVER ./report.md \u2014 FIRST LINE 'ADAPT-PLAN: <n> gaps, <m> work items', then: (1) INTERVIEW-VS-REALITY table: each of the 14 charter elements | already satisfied by open-engine sales (evidence) | partially | missing; (2) STANDARDS GAPS: which v2 standards are absent from the sales lane (run records? board presence? objectives measurement? voice gate? triage/OnFailure hook? Linear send-approval surface?) \u2014 for each, the SMALLEST adaptation (adapter/emitter, not rewrite; e.g. a runs-v2 emitter script + estate boardfeed reading open-engine's state dir cross-repo, or a periodic sync); (3) WORK ITEMS ranked S/M/L with per-item executed-proof definition, honoring: shadow-only, no live sends beyond existing approved lanes, suppression gates untouched, cross-repo reads not writes where possible; (4) the W3-W5 proof plan adapted: synthetic-data run, failure injection, shadow verification \u2014 concretely for THIS department.",
+   "check": "python3 -c \"import sys,re;from pathlib import Path;p=Path('report.md');t=p.read_text(errors='replace') if p.exists() else sys.exit(print('FAIL: report.md missing') or 1);f=t.strip().splitlines()[0];ok=bool(re.match(r'^ADAPT-PLAN: ',f));low=t.lower();need=[('interview-vs-reality','charter|interview|element'),('standards gaps','runrecord|board|gate|triage'),('ranked items','s/m/l|effort'),('proof plan','synthetic|shadow|injection')];fails=([] if ok else ['bad first line'])+[n for n,pat in need if not re.search(pat,low)];print('ADAPT CHECK:','PASS' if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\" && cp report.md /home/ankit114/ringer-work/ultimate-process-r2lf/revenue-adapt-report.md",
+   "expect_files": [],
+   "verified": "a concrete adapt-not-duplicate plan maps the locked Revenue interview onto the real Open Engine sales department with ranked, proof-defined work items"
+  }
+ ]
+}

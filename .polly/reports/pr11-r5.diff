@@ -1,0 +1,4075 @@
+diff --git a/factory/projection.py b/factory/projection.py
+new file mode 100644
+index 0000000..e3cf21c
+--- /dev/null
++++ b/factory/projection.py
+@@ -0,0 +1,102 @@
++"""Signed execution projection: the runner's exported, auditor-verifiable view.
++
++The runner (factory/runner.py) EXPORTS this; it never verifies its own export
++— that separation is the point. An independent auditor (the department's
++supervisory plane, like podcast's dag_supervisor) holds the kernel signer and
++calls verify_projection without ever sharing execution authority.
++
++Shape follows the receipt discipline dag_supervisor already verifies:
++a declared canonical hash the auditor recomputes (dag_hash over nodes+edges),
++plus an HMAC signature over the WHOLE canonical body (structure AND per-run
++transition history), plus generated_at for staleness checks on the auditor
++side. Versioned via `schema`; runner-agnostic by design — any future runner
++that emits this shape stays auditable by the same plane.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++
++SCHEMA = "execution-projection-v1"
++TELEMETRY_SCHEMA_VERSION = 1
++
++
++def _canonical(value) -> bytes:
++    """Canonical JSON: sorted keys, tight separators, and NO non-finite
++    numbers — NaN/Inf have no canonical form, so hashing/signing raises."""
++    return json.dumps(value, sort_keys=True, separators=(",", ":"),
++                      allow_nan=False).encode("utf-8")
++
++
++def canonical_hash(value) -> str:
++    return hashlib.sha256(_canonical(value)).hexdigest()
++
++
++def build_projection(*, department, graph_id, graph_hash, release_hash,
++                     factory_version, nodes, edges, runs, generated_at) -> dict:
++    """Assemble the unsigned projection body. `runs` rows carry the per-run
++    transition history: from/to/kind/attempt/step_receipt_sha256/ts."""
++    return {
++        "schema": SCHEMA,
++        "telemetry_schema_version": TELEMETRY_SCHEMA_VERSION,
++        "department": department,
++        "graph_id": graph_id,
++        "graph_hash": graph_hash,
++        "release_hash": release_hash,
++        "factory_version": factory_version,
++        "generated_at": generated_at,
++        "nodes": nodes,
++        "edges": edges,
++        "dag_hash": canonical_hash({"nodes": nodes, "edges": edges}),
++        "runs": runs,
++    }
++
++
++def sign_projection(body: dict, signer) -> dict:
++    """Return the body with an HMAC signature over its canonical form."""
++    unsigned = {k: v for k, v in body.items() if k != "signature"}
++    signed = dict(unsigned)
++    signed["signature"] = signer.sign(_canonical(unsigned))
++    return signed
++
++
++def _finding(kind: str, detail: str, severity: str = "critical") -> dict:
++    return {"kind": kind, "detail": detail, "severity": severity}
++
++
++def verify_projection(projection, signer) -> list[dict]:
++    """Auditor-plane verification. Deterministic findings, deny-by-default:
++    an unverifiable projection is findings, never a pass."""
++    if not isinstance(projection, dict):
++        return [_finding("schema_mismatch", "projection root must be an object")]
++    if projection.get("schema") != SCHEMA:
++        return [_finding(
++            "schema_mismatch",
++            f"expected schema {SCHEMA!r}, got {projection.get('schema')!r}")]
++
++    findings: list[dict] = []
++    signature = projection.get("signature")
++    unsigned = {k: v for k, v in projection.items() if k != "signature"}
++    signature_ok = False
++    if isinstance(signature, str) and signature:
++        try:
++            signature_ok = signer.verify(_canonical(unsigned), signature)
++        except Exception:
++            signature_ok = False
++    if not signature_ok:
++        findings.append(_finding(
++            "bad_signature",
++            "projection signature is absent, malformed, or does not verify"))
++
++    try:
++        recomputed = canonical_hash({"nodes": projection.get("nodes"),
++                                     "edges": projection.get("edges")})
++    except (TypeError, ValueError):
++        recomputed = "unrecomputable"
++    declared = projection.get("dag_hash")
++    if recomputed != declared:
++        findings.append(_finding(
++            "dag_hash_mismatch",
++            f"declared dag_hash {declared!r} does not match recomputed "
++            f"{recomputed!r}"))
++    return findings
+diff --git a/factory/release.py b/factory/release.py
+index 19ae996..3dc07a7 100644
+--- a/factory/release.py
++++ b/factory/release.py
+@@ -63,6 +63,44 @@ def _tree_hash(artifacts: list[tuple[str, str]]) -> str:
+     return h.hexdigest()[:16]
+ 
+ 
++def template_set_hash(templates_dir=None) -> str:
++    """Deterministic hash over the factory's template set (relative path +
++    bytes of every file under templates/)."""
++    if templates_dir is None:
++        templates_dir = Path(__file__).resolve().parents[1] / "templates"
++    templates_dir = Path(templates_dir)
++    found: list[tuple[str, str]] = []
++    if templates_dir.is_dir():
++        for path in sorted(templates_dir.rglob("*")):
++            if path.is_file():
++                found.append((str(path.relative_to(templates_dir)),
++                              _sha256_file(path)))
++    return _tree_hash(sorted(found))
++
++
++def factory_version(templates_dir=None) -> dict:
++    """Ticket 009 hook: the factory's own version stamp for a release manifest
++    — recorded at pin time so comparison tooling can come later. Constants are
++    read from their owning modules (rungraph/runner/projection) at call time."""
++    import importlib.util
++
++    def _const(rel: str, name: str):
++        path = Path(__file__).resolve().parent.parent / rel
++        spec = importlib.util.spec_from_file_location(f"fv_{path.stem}", path)
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++        return getattr(module, name)
++
++    return {
++        "graph_schema_version": _const("factory/rungraph.py",
++                                       "GRAPH_SCHEMA_VERSION"),
++        "runner_version": _const("factory/runner.py", "RUNNER_VERSION"),
++        "telemetry_schema_version": _const("factory/projection.py",
++                                           "TELEMETRY_SCHEMA_VERSION"),
++        "template_set_hash": template_set_hash(templates_dir),
++    }
++
++
+ def pin_release(dept_dir, release_root, source_ref: str) -> str:
+     """Pin the current artifact set as a content-addressed release; return its
+     hash. Idempotent: the same bytes always produce the same release dir."""
+@@ -75,6 +113,7 @@ def pin_release(dept_dir, release_root, source_ref: str) -> str:
+     manifest = {
+         "hash": release_hash,
+         "source_ref": source_ref,
++        "factory_version": factory_version(),
+         "artifacts": [{"path": rel, "sha256": digest} for rel, digest in artifacts],
+     }
+     _atomic_write(release_dir / "manifest.json", json.dumps(manifest, indent=2) + "\n")
+diff --git a/factory/rungraph.py b/factory/rungraph.py
+new file mode 100644
+index 0000000..371ac95
+--- /dev/null
++++ b/factory/rungraph.py
+@@ -0,0 +1,572 @@
++"""Graph schema v2: the typed, executable form of a department's control graph.
++
++v1 `subgraphs.json` is a flat lint-only manifest (factory/graphs.py). v2 keeps
++that file and that lint UNTOUCHED and adds, per subgraph, what a deterministic
++runner needs to execute it:
++
++  schema_version   2 at the top level (absent/1 = v1: lint-only, not runnable)
++  nodes[]          impl, runtime_mode (script|llm), input/output contracts
++                   (JSON-schema-lite), receipt_schema, action_class,
++                   failure_policy (max_retries, backoff_s, on_fail),
++                   concept_ref + interview_ref (traceability kept)
++  edges[]          from/to, kind (normal|refusal|escalation|terminal), and a
++                   deterministic predicate `when` evaluated over the
++                   PREDECESSOR'S RECEIPT JSON
++
++The predicate language is a closed, safe expression subset — comparisons and
++boolean combinators over `receipt.*` paths and literals. No eval(), no names,
++no calls, no arithmetic, no subscripts. A predicate that cannot be evaluated
++(missing field, ordering across types) raises PredicateError: deny-by-default,
++the transition BLOCKS — it never silently evaluates to a boolean.
++"""
++from __future__ import annotations
++
++import math
++import re
++
++GRAPH_SCHEMA_VERSION = 2
++
++# Exhaustion caps (documented contract): a predicate is at most
++# MAX_PREDICATE_LENGTH characters and MAX_PREDICATE_DEPTH nested
++# parentheses/negations. Past either limit it is malformed — PredicateError,
++# blocked transition — never a RecursionError that could wedge a run.
++MAX_PREDICATE_LENGTH = 4096
++MAX_PREDICATE_DEPTH = 32
++
++
++# --------------------------------------------------------------------------- #
++# Predicate subset (deterministic, no eval)
++# --------------------------------------------------------------------------- #
++
++class PredicateError(ValueError):
++    """The predicate is malformed or cannot be evaluated over this receipt."""
++
++
++_TOKEN_RE = re.compile(
++    r"\s*(?:"
++    r"(?P<op>==|!=|<=|>=|<|>)"
++    r"|(?P<lparen>\()"
++    r"|(?P<rparen>\))"
++    r"|(?P<number>-?\d+(?:\.\d+)?)"
++    r"|(?P<string>'[^']*'|\"[^\"]*\")"
++    r"|(?P<word>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
++    r")")
++
++_KEYWORDS = {"and", "or", "not", "true", "false", "null"}
++
++
++def _tokenize(text: str) -> list[tuple[str, str]]:
++    tokens: list[tuple[str, str]] = []
++    pos = 0
++    while pos < len(text):
++        match = _TOKEN_RE.match(text, pos)
++        if match is None or match.end() == pos:
++            remainder = text[pos:].strip()
++            if not remainder:
++                break
++            raise PredicateError(f"unexpected input at: {remainder[:20]!r}")
++        pos = match.end()
++        kind = match.lastgroup
++        tokens.append((kind, match.group(kind)))
++    return tokens
++
++
++class _Missing:
++    pass
++
++
++_MISSING = _Missing()
++
++
++def _family(value) -> str:
++    """The type family a JSON value belongs to for comparison purposes.
++    bool is deliberately NOT a number: 1 == true must block, not allow."""
++    if isinstance(value, bool):
++        return "boolean"
++    if isinstance(value, (int, float)):
++        return "number"
++    if isinstance(value, str):
++        return "string"
++    if value is None:
++        return "null"
++    if isinstance(value, dict):
++        return "object"
++    if isinstance(value, list):
++        return "array"
++    return type(value).__name__
++
++
++def _resolve_path(path: str, receipt) -> object:
++    segments = path.split(".")
++    if segments[0] != "receipt" or len(segments) < 2:
++        raise PredicateError(f"paths must be rooted at receipt.*: {path!r}")
++    value = receipt
++    for segment in segments[1:]:
++        if segment.startswith("__"):
++            raise PredicateError(f"illegal path segment: {segment!r}")
++        if not isinstance(value, dict) or segment not in value:
++            raise PredicateError(f"receipt field missing: {path!r}")
++        value = value[segment]
++    return value
++
++
++class _Parser:
++    """Recursive-descent parser evaluating as it parses. Grammar:
++
++    expr := and_expr ('or' and_expr)*
++    and_expr := not_expr ('and' not_expr)*
++    not_expr := 'not' not_expr | comparison
++    comparison := operand (op operand)?
++    operand := literal | receipt-path | '(' expr ')'
++
++    With validate_only=True, receipt paths resolve to a sentinel and any
++    expression touching one is treated as boolean — a syntax/shape check that
++    never claims runtime semantics.
++    """
++
++    def __init__(self, tokens, receipt, validate_only=False):
++        self._tokens = tokens
++        self._receipt = receipt
++        self._validate_only = validate_only
++        self._idx = 0
++        self._depth = 0
++
++    def _descend(self):
++        self._depth += 1
++        if self._depth > MAX_PREDICATE_DEPTH:
++            raise PredicateError(
++                f"predicate nesting depth exceeds {MAX_PREDICATE_DEPTH}")
++
++    def _peek(self):
++        if self._idx < len(self._tokens):
++            return self._tokens[self._idx]
++        return (None, None)
++
++    def _next(self):
++        token = self._peek()
++        self._idx += 1
++        return token
++
++    def parse(self) -> bool:
++        result = self._expr()
++        if self._idx != len(self._tokens):
++            raise PredicateError(f"trailing input after expression: "
++                                 f"{self._tokens[self._idx][1]!r}")
++        if result is _MISSING and self._validate_only:
++            return True
++        if not isinstance(result, bool):
++            raise PredicateError("predicate must evaluate to a boolean")
++        return result
++
++    def _expr(self):
++        value = self._and_expr()
++        while self._peek() == ("word", "or"):
++            self._next()
++            right = self._and_expr()
++            value = self._as_bool(value) or self._as_bool(right)
++        return value
++
++    def _and_expr(self):
++        value = self._not_expr()
++        while self._peek() == ("word", "and"):
++            self._next()
++            right = self._not_expr()
++            value = self._as_bool(value) and self._as_bool(right)
++        return value
++
++    def _not_expr(self):
++        if self._peek() == ("word", "not"):
++            self._next()
++            self._descend()
++            try:
++                return not self._as_bool(self._not_expr())
++            finally:
++                self._depth -= 1
++        return self._comparison()
++
++    def _comparison(self):
++        left = self._operand()
++        kind, text = self._peek()
++        if kind != "op":
++            return left
++        self._next()
++        right = self._operand()
++        return self._compare(text, left, right)
++
++    def _operand(self):
++        kind, text = self._next()
++        if kind == "lparen":
++            self._descend()
++            try:
++                value = self._expr()
++            finally:
++                self._depth -= 1
++            if self._next()[0] != "rparen":
++                raise PredicateError("unbalanced parenthesis")
++            return value
++        if kind == "number":
++            return float(text) if "." in text else int(text)
++        if kind == "string":
++            return text[1:-1]
++        if kind == "word":
++            if text == "true":
++                return True
++            if text == "false":
++                return False
++            if text == "null":
++                return None
++            if text in _KEYWORDS:
++                raise PredicateError(f"misplaced keyword: {text!r}")
++            if self._validate_only:
++                if text.split(".")[0] != "receipt" or "." not in text:
++                    raise PredicateError(f"paths must be rooted at receipt.*: {text!r}")
++                if any(seg.startswith("__") for seg in text.split(".")):
++                    raise PredicateError(f"illegal path segment in {text!r}")
++                return _MISSING
++            return _resolve_path(text, self._receipt)
++        raise PredicateError("expected a literal, receipt path, or '('")
++
++    def _as_bool(self, value):
++        if value is _MISSING and self._validate_only:
++            return True
++        if not isinstance(value, bool):
++            raise PredicateError("boolean operator applied to non-boolean value")
++        return value
++
++    def _compare(self, op, left, right):
++        if self._validate_only and (left is _MISSING or right is _MISSING):
++            return True
++        # Every comparison is defined only WITHIN one type family — Python's
++        # == would coerce (1 == True) into a default-allow, so a cross-family
++        # comparison of any kind raises and BLOCKS. bool is not a number here.
++        left_family, right_family = _family(left), _family(right)
++        if left_family != right_family:
++            raise PredicateError(
++                f"comparison across type families: {left_family} {op} "
++                f"{right_family}")
++        if op == "==":
++            return left == right
++        if op == "!=":
++            return left != right
++        if left_family not in ("number", "string"):
++            raise PredicateError(
++                f"ordering comparison not defined for {left_family} values")
++        if op == "<":
++            return left < right
++        if op == "<=":
++            return left <= right
++        if op == ">":
++            return left > right
++        return left >= right
++
++
++def eval_predicate(expression: str, receipt: dict) -> bool:
++    """Evaluate one edge predicate over the predecessor's receipt JSON.
++
++    Raises PredicateError on any malformed expression or unevaluable reference
++    — callers must treat that as a BLOCKED transition, never as False/True.
++    """
++    if not isinstance(expression, str) or not expression.strip():
++        raise PredicateError("empty predicate")
++    if len(expression) > MAX_PREDICATE_LENGTH:
++        raise PredicateError(
++            f"predicate length {len(expression)} exceeds "
++            f"{MAX_PREDICATE_LENGTH} (documented length cap)")
++    tokens = _tokenize(expression)
++    if not tokens:
++        raise PredicateError("empty predicate")
++    try:
++        return _Parser(tokens, receipt).parse()
++    except RecursionError as exc:  # defense-in-depth behind the depth cap
++        raise PredicateError("predicate exhausted the parser") from exc
++
++
++def check_predicate(expression: str) -> str | None:
++    """Static syntax/shape check for authoring time. Returns the failure text
++    or None. Never a substitute for runtime evaluation."""
++    try:
++        if not isinstance(expression, str) or not expression.strip():
++            raise PredicateError("empty predicate")
++        if len(expression) > MAX_PREDICATE_LENGTH:
++            raise PredicateError(
++                f"predicate length {len(expression)} exceeds "
++                f"{MAX_PREDICATE_LENGTH} (documented length cap)")
++        tokens = _tokenize(expression)
++        if not tokens:
++            raise PredicateError("empty predicate")
++        try:
++            _Parser(tokens, receipt=None, validate_only=True).parse()
++        except RecursionError as exc:
++            raise PredicateError("predicate exhausted the parser") from exc
++        return None
++    except PredicateError as exc:
++        return str(exc)
++
++
++# --------------------------------------------------------------------------- #
++# JSON-schema-lite: the closed contract vocabulary
++# --------------------------------------------------------------------------- #
++
++_SCHEMA_KEYWORDS = {"type", "required", "properties", "items", "enum"}
++_SCHEMA_TYPES = {"object", "array", "string", "number", "integer", "boolean", "null"}
++
++
++def check_contract_schema(schema, where="contract") -> list[str]:
++    """Validate a contract DECLARATION. Unknown keywords fail closed — a
++    constraint the validator would silently ignore is a forged guarantee."""
++    fails: list[str] = []
++    if not isinstance(schema, dict):
++        return [f"{where}: schema must be an object"]
++    for key in schema:
++        if key not in _SCHEMA_KEYWORDS:
++            fails.append(f"{where}: unknown schema keyword '{key}' "
++                         f"(allowed: {sorted(_SCHEMA_KEYWORDS)})")
++    stype = schema.get("type")
++    if stype not in _SCHEMA_TYPES:
++        fails.append(f"{where}: type must be one of {sorted(_SCHEMA_TYPES)}")
++    required = schema.get("required", [])
++    if not (isinstance(required, list) and all(isinstance(r, str) for r in required)):
++        fails.append(f"{where}: required must be a list of strings")
++    props = schema.get("properties", {})
++    if not isinstance(props, dict):
++        fails.append(f"{where}: properties must be an object")
++    else:
++        for name, sub in props.items():
++            fails.extend(check_contract_schema(sub, f"{where}.{name}"))
++    if "items" in schema:
++        fails.extend(check_contract_schema(schema["items"], f"{where}[]"))
++    enum = schema.get("enum")
++    if enum is not None and not (
++            isinstance(enum, list) and enum
++            and all(isinstance(v, (str, int, float, bool)) or v is None for v in enum)):
++        fails.append(f"{where}: enum must be a non-empty list of JSON scalars")
++    return fails
++
++
++def _type_ok(expected: str, value) -> bool:
++    if expected == "object":
++        return isinstance(value, dict)
++    if expected == "array":
++        return isinstance(value, list)
++    if expected == "string":
++        return isinstance(value, str)
++    if expected == "boolean":
++        return isinstance(value, bool)
++    if expected == "integer":
++        return isinstance(value, int) and not isinstance(value, bool)
++    if expected == "number":
++        return isinstance(value, (int, float)) and not isinstance(value, bool)
++    if expected == "null":
++        return value is None
++    return False
++
++
++def validate_instance(schema: dict, value, where="$") -> list[str]:
++    """Validate a VALUE against a contract. Returns failure strings.
++    Canonical-JSON policy: non-finite numbers (NaN/Inf) are rejected at every
++    contract boundary — they have no canonical JSON form to hash or sign."""
++    fails: list[str] = []
++    if isinstance(value, float) and not math.isfinite(value):
++        fails.append(f"{where}: non-finite number rejected "
++                     f"(canonical JSON has no NaN/Inf)")
++        return fails
++    stype = schema.get("type")
++    if stype is not None and not _type_ok(stype, value):
++        fails.append(f"{where}: expected {stype}, got {type(value).__name__}")
++        return fails
++    enum = schema.get("enum")
++    if enum is not None and value not in enum:
++        fails.append(f"{where}: value {value!r} not in enum {enum}")
++    if isinstance(value, dict):
++        for name in schema.get("required", []):
++            if name not in value:
++                fails.append(f"{where}: missing required field '{name}'")
++        for name, sub in schema.get("properties", {}).items():
++            if name in value:
++                fails.extend(validate_instance(sub, value[name], f"{where}.{name}"))
++    if isinstance(value, list) and "items" in schema:
++        for i, item in enumerate(value):
++            fails.extend(validate_instance(schema["items"], item, f"{where}[{i}]"))
++    return fails
++
++
++# --------------------------------------------------------------------------- #
++# v2 manifest validation + reachability
++# --------------------------------------------------------------------------- #
++
++EDGE_KINDS = ("normal", "refusal", "escalation", "terminal")
++RUNTIME_MODES = ("script", "llm")
++_NODE_CONTRACT_FIELDS = ("inputs", "outputs", "receipt_schema")
++
++
++def manifest_version(data: dict) -> int:
++    version = data.get("schema_version", 1)
++    if not isinstance(version, int):
++        raise ValueError(f"schema_version must be an integer, got {version!r}")
++    return version
++
++
++def executable_nodes(subgraph: dict) -> dict[str, dict]:
++    """The nodes the runner executes: everything declaring an impl. Guard
++    marker nodes (v1 lint vocabulary) carry no impl and stay metadata —
++    their enforcement lives in the kernel gateways, not the runner."""
++    return {n["id"]: n for n in subgraph.get("nodes", [])
++            if isinstance(n, dict) and n.get("impl") and n.get("id")}
++
++
++def _validate_node(sid: str, node: dict, edges: list[dict]) -> list[str]:
++    fails: list[str] = []
++    nid = node.get("id", "?")
++    where = f"{sid}/{nid}"
++    if node.get("runtime_mode") not in RUNTIME_MODES:
++        fails.append(f"{where}: runtime_mode must be one of {list(RUNTIME_MODES)}")
++    action_class = node.get("action_class")
++    if not (isinstance(action_class, str) and action_class.strip()):
++        fails.append(f"{where}: action_class must be a non-empty string")
++    for field in _NODE_CONTRACT_FIELDS:
++        contract = node.get(field)
++        if contract is None:
++            fails.append(f"{where}: missing {field} contract")
++        else:
++            fails.extend(check_contract_schema(contract, f"{where}.{field}"))
++    for ref in ("concept_ref", "interview_ref"):
++        if not (isinstance(node.get(ref), str) and node[ref].strip()):
++            fails.append(f"{where}: missing {ref} (traceability is mandatory)")
++    policy = node.get("failure_policy")
++    if not isinstance(policy, dict):
++        fails.append(f"{where}: missing failure_policy")
++        return fails
++    retries = policy.get("max_retries")
++    if not (isinstance(retries, int) and not isinstance(retries, bool) and retries >= 0):
++        fails.append(f"{where}: failure_policy.max_retries must be an integer >= 0")
++    backoff = policy.get("backoff_s")
++    if not (isinstance(backoff, (int, float)) and not isinstance(backoff, bool)
++            and backoff >= 0):
++        fails.append(f"{where}: failure_policy.backoff_s must be a number >= 0")
++    on_fail = policy.get("on_fail")
++    if not (isinstance(on_fail, str) and on_fail.strip()):
++        fails.append(f"{where}: failure_policy.on_fail must be 'fail', 'escalate', "
++                     f"or a node id")
++    elif on_fail not in ("fail", "escalate"):
++        matching = [e for e in edges
++                    if e.get("from") == nid and e.get("to") == on_fail
++                    and e.get("kind") in ("refusal", "escalation")]
++        if not matching:
++            fails.append(
++                f"{where}: on_fail target '{on_fail}' has no refusal/escalation "
++                f"edge from {nid} — the failure route must be a declared edge")
++    return fails
++
++
++def _validate_edges(sid: str, edges: list[dict], node_ids: set[str]) -> list[str]:
++    fails: list[str] = []
++    for i, edge in enumerate(edges):
++        where = f"{sid}/edge#{i}"
++        if not isinstance(edge, dict):
++            fails.append(f"{where}: edge must be an object")
++            continue
++        kind = edge.get("kind")
++        if kind not in EDGE_KINDS:
++            fails.append(f"{where}: kind must be one of {list(EDGE_KINDS)}")
++        src = edge.get("from")
++        if src not in node_ids:
++            fails.append(f"{where}: from references unknown node '{src}'")
++        if kind == "terminal":
++            if "to" in edge:
++                fails.append(f"{where}: terminal edges end the run and take no 'to'")
++        elif kind == "escalation" and "to" not in edge:
++            pass  # target-less escalation routes to the manager/outbox plane
++        else:
++            if edge.get("to") not in node_ids:
++                fails.append(f"{where}: to references unknown node '{edge.get('to')}'")
++        problem = check_predicate(edge.get("when"))
++        if problem is not None:
++            fails.append(f"{where}: bad predicate: {problem}")
++    return fails
++
++
++def _validate_reachability(sid: str, entry: str, node_ids: set[str],
++                           edges: list[dict]) -> list[str]:
++    fails: list[str] = []
++    forward: dict[str, set[str]] = {n: set() for n in node_ids}
++    backward: dict[str, set[str]] = {n: set() for n in node_ids}
++    terminal_sources: set[str] = set()
++    for edge in edges:
++        src, dst, kind = edge.get("from"), edge.get("to"), edge.get("kind")
++        if kind == "terminal" and src in node_ids:
++            terminal_sources.add(src)
++        elif src in node_ids and dst in node_ids:
++            forward[src].add(dst)
++            backward[dst].add(src)
++
++    def _closure(seeds: set[str], adjacency: dict[str, set[str]]) -> set[str]:
++        seen: set[str] = set()
++        frontier = [s for s in seeds if s in node_ids]
++        while frontier:
++            current = frontier.pop()
++            if current in seen:
++                continue
++            seen.add(current)
++            frontier.extend(adjacency[current] - seen)
++        return seen
++
++    reachable = _closure({entry}, forward)
++    for nid in sorted(node_ids - reachable):
++        fails.append(f"{sid}: node {nid} is unreachable from entry '{entry}'")
++    if not terminal_sources:
++        fails.append(f"{sid}: no terminal edge — every run would be unfinishable")
++    can_finish = _closure(terminal_sources, backward)
++    for nid in sorted(node_ids - can_finish):
++        fails.append(f"{sid}: node {nid} has no path to a terminal edge")
++    return fails
++
++
++def validate_subgraph_v2(subgraph: dict) -> list[str]:
++    """Full v2 validation for one subgraph. A subgraph with neither 'entry'
++    nor 'edges' is a v1 lint-only subgraph and is skipped (incremental
++    adoption: the runner is optional per department and per subgraph)."""
++    sid = subgraph.get("id", "?")
++    has_v2 = "entry" in subgraph or "edges" in subgraph
++    if not has_v2:
++        return []
++    fails: list[str] = []
++    nodes = executable_nodes(subgraph)
++    ids = [n.get("id") for n in subgraph.get("nodes", []) if isinstance(n, dict)]
++    for dup in sorted({i for i in ids if ids.count(i) > 1}):
++        fails.append(f"{sid}: duplicate node id '{dup}'")
++    if not nodes:
++        fails.append(f"{sid}: v2 subgraph has no executable (impl-bearing) nodes")
++        return fails
++    edges = subgraph.get("edges")
++    if not isinstance(edges, list) or not edges:
++        fails.append(f"{sid}: v2 subgraph must declare edges[]")
++        edges = []
++    entry = subgraph.get("entry")
++    if entry not in nodes:
++        fails.append(f"{sid}: entry must name an executable node, got {entry!r}")
++    node_ids = set(nodes)
++    for node in nodes.values():
++        fails.extend(_validate_node(sid, node, edges))
++    fails.extend(_validate_edges(sid, edges, node_ids))
++    if entry in nodes and edges:
++        fails.extend(_validate_reachability(sid, entry, node_ids, edges))
++    return fails
++
++
++def validate_manifest(data: dict) -> list[str]:
++    """v2 additions only. The v1 guard-matrix lint (factory/graphs.py) stays
++    the authority on guard ordering and runs unchanged next to this."""
++    try:
++        version = manifest_version(data)
++    except ValueError as exc:
++        return [str(exc)]
++    if version == 1:
++        return []
++    if version != GRAPH_SCHEMA_VERSION:
++        return [f"unsupported schema_version {version} "
++                f"(this factory speaks 1 and {GRAPH_SCHEMA_VERSION})"]
++    fails: list[str] = []
++    for subgraph in data.get("subgraphs", []):
++        if isinstance(subgraph, dict):
++            fails.extend(validate_subgraph_v2(subgraph))
++    return fails
+diff --git a/factory/runner.py b/factory/runner.py
+new file mode 100644
+index 0000000..02cd9e1
+--- /dev/null
++++ b/factory/runner.py
+@@ -0,0 +1,1128 @@
++"""Deterministic graph runner: executes ONE release-pinned v2 control graph,
++one node at a time, with signed step receipts as the only transition tokens.
++
++Trust model
++-----------
++The runner is the TRUSTED context: it holds the kernel signer (the department
++processes it launches are scrubbed of it by factory/launch.py, so a department
++cannot mint its own transitions). The runner still never grants effect
++authority — nodes reach sends/reads/models only through kernel/ gateways,
++which fail closed on their own. The runner's shadow enforcement is
++observational and fail-closed: a node receipt reporting external effects
++KILLS the run; it never promotes anything.
++
++Release provenance
++------------------
++The runner loads ONLY the pinned graph AND verifies every executable impl's
++live bytes against the pinned release manifest before any execution. A live
++file that differs from its pin is a release_integrity refusal — nothing may
++execute under a release_hash it doesn't belong to.
++
++Transition rule (deny-by-default, all four or nothing)
++------------------------------------------------------
++Every transition — normal, refusal, escalation, terminal, AND the run-level
++failure/escalation exits — consumes a freshly minted, verified step receipt
++(kernel/step_receipts). A successor becomes runnable only on:
++  1. a VALID signed step receipt for the predecessor,
++  2. output-contract + receipt-schema conformance of the predecessor output,
++  3. a satisfied edge predicate over that receipt JSON (factory/rungraph),
++  4. graph/release version agreement (bound into every receipt).
++Tokens are single-use PERIOD; fan-out mints one token per transition; and
++consumption is DURABLE (per-run fsync'd ledger), so a restart cannot replay.
++Full signed tokens are persisted in the run records — reverifiable after a
++runner swap. A failed node still earns a transition token: the runner issues
++a receipt over its own failure record, so refusal/escalation routing and the
++failure/escalation exits are receipt-gated exactly like the success path.
++Even the escalated/failed EXITS carry their own validated transition row —
++a failed token verification escalates through a runner-signed escalation
++receipt recording why. The ONLY unreceipted exit is `killed` (kill switch,
++shadow violation, or a signing plane so broken that even the escalation
++gate cannot validate): a safety abort grants nothing, so it needs no token.
++Each run records a termination_reason, carried into the SIGNED projection.
++
++Run state machine:  pending -> running <-> awaiting_receipt
++                    -> done | failed | escalated | killed   (terminal)
++awaiting_receipt exits only after token validation completes.
++
++Records (fenced: flock on state/.records.lock, atomic JSON writes, append-only
++jsonl): every attempt, transition, refusal, and state change appends to
++state/runs.jsonl; per-run state lives in state/graph_runs/<run_id>/
++run_state.json (schema graph-run-v1). Canonical-JSON policy: non-finite
++numbers (NaN/Inf) are rejected at the graph, node-output, receipt, and
++projection boundaries — they have no canonical form to hash or sign.
++
++Idempotency + recovery: the run directory is the durable lock, keyed
++(loop_id, FULL sha256(trigger_fingerprint)); only the hash is recorded. A
++live run also holds an OS advisory lock (.run.lock, released by the kernel on
++process death). Duplicate trigger against a TERMINAL run = recorded no-op.
++Duplicate trigger against a non-terminal run: if the advisory lock is held
++the run is in flight (no-op); if it is free the prior process died mid-run —
++the run is RESUMED (re-executed under the same run_id; runs.jsonl keeps the
++full history, the durable nonce ledger keeps pre-crash consumptions), never
++entombed behind the lock.
++
++Runner-agnostic by design (the owner reserves the right to rebuild this
++module): graphs, step receipts, records, and the signed projection
++(factory/projection.py) are all public, versioned formats — no runner-private
++state.
++"""
++from __future__ import annotations
++
++import argparse
++import fcntl
++import hashlib
++import importlib.util
++import json
++import os
++import subprocess
++import sys
++import tempfile
++import time
++from collections import deque
++from contextlib import contextmanager
++from datetime import datetime, timezone
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++RUNNER_VERSION = "2.3.0"
++RUN_STATE_SCHEMA = "graph-run-v1"
++DEFAULT_LOCK_TIMEOUT_S = 10.0
++TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
++
++
++def _load(name: str, rel: str):
++    key = f"runner_dep_{name}"
++    if key in sys.modules:
++        return sys.modules[key]
++    spec = importlib.util.spec_from_file_location(key, ROOT / rel)
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[key] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++class RunnerRefused(RuntimeError):
++    """The run is refused before any execution. Deny-by-default."""
++
++
++class StateError(RuntimeError):
++    """An illegal run-state transition was attempted."""
++
++
++class RecordsLockTimeout(RuntimeError):
++    """The department records fence could not be acquired."""
++
++
++class SigningPlaneBroken(RuntimeError):
++    """Receipt issuance/signing itself raised — the trusted plane is broken.
++    The run terminates as killed with a durable gate_failure finding; the
++    exception never escapes the runner."""
++
++
++# --------------------------------------------------------------------------- #
++# Run state machine (finite + enumerable = a state machine, never an LLM)
++# --------------------------------------------------------------------------- #
++
++RUN_STATES = ("pending", "running", "awaiting_receipt") + TERMINAL_RUN_STATES
++_ALLOWED_TRANSITIONS = {
++    "pending": {"running", "killed"},
++    "running": {"awaiting_receipt", "done", "failed", "escalated", "killed"},
++    "awaiting_receipt": {"running", "done", "failed", "escalated", "killed"},
++    "done": set(),
++    "failed": set(),
++    "escalated": set(),
++    "killed": set(),
++}
++
++
++class RunStateMachine:
++    def __init__(self, state: str = "pending"):
++        if state not in RUN_STATES:
++            raise StateError(f"unknown run state {state!r}")
++        self.state = state
++
++    def advance(self, new_state: str) -> str:
++        if new_state not in RUN_STATES:
++            raise StateError(f"unknown run state {new_state!r}")
++        if new_state not in _ALLOWED_TRANSITIONS[self.state]:
++            raise StateError(f"illegal run transition {self.state} -> {new_state}")
++        self.state = new_state
++        return self.state
++
++
++# --------------------------------------------------------------------------- #
++# Fenced records (same discipline the departments already use)
++# --------------------------------------------------------------------------- #
++
++@contextmanager
++def records_lock(state_dir: Path, timeout: float = DEFAULT_LOCK_TIMEOUT_S):
++    state_dir = Path(state_dir)
++    state_dir.mkdir(parents=True, exist_ok=True)
++    lock_path = state_dir / ".records.lock"
++    deadline = time.monotonic() + max(0.0, float(timeout))
++    with lock_path.open("a+", encoding="utf-8") as handle:
++        while True:
++            try:
++                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
++                break
++            except BlockingIOError as exc:
++                if time.monotonic() >= deadline:
++                    raise RecordsLockTimeout(
++                        f"timed out acquiring records lock: {lock_path}") from exc
++                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
++        try:
++            yield
++        finally:
++            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
++
++
++def _atomic_write_json(path: Path, value) -> None:
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    descriptor, temporary = tempfile.mkstemp(
++        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
++    try:
++        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
++            json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
++            handle.write("\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    except Exception:
++        try:
++            os.unlink(temporary)
++        except FileNotFoundError:
++            pass
++        raise
++
++
++def _append_jsonl(path: Path, row: dict) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    with path.open("a", encoding="utf-8") as handle:
++        handle.write(json.dumps(row, sort_keys=True, allow_nan=False) + "\n")
++        handle.flush()
++        os.fsync(handle.fileno())
++
++
++def _reject_constant(name: str):
++    raise ValueError(f"non-finite JSON constant {name!r} rejected "
++                     f"(canonical-JSON policy)")
++
++
++def _strict_loads(text: str):
++    return json.loads(text, parse_constant=_reject_constant)
++
++
++# --------------------------------------------------------------------------- #
++# Release-pinned graph loading + release provenance of every impl
++# --------------------------------------------------------------------------- #
++
++def load_pinned_graph(dept_dir: Path) -> dict:
++    """Load the department's control graph ONLY through its pinned release.
++    The live subgraphs.json AND every executable impl must hash to their
++    release-pinned artifacts — anything else refuses before any execution."""
++    release = _load("release", "factory/release.py")
++    rungraph = _load("rungraph", "factory/rungraph.py")
++    dept_dir = Path(dept_dir)
++    releases_root = dept_dir / "releases"
++    current = release.read_current(releases_root)
++    if current is None:
++        raise RunnerRefused("no release pinned — the runner executes pinned "
++                            "graphs only (run the release pin first)")
++    manifest = release.load_manifest(releases_root / current)
++    pinned = {a["path"]: a["sha256"] for a in manifest["artifacts"]}
++    pinned_hash = pinned.get("subgraphs.json")
++    if pinned_hash is None:
++        raise RunnerRefused("release does not pin subgraphs.json — nothing to run")
++    graph_path = dept_dir / "subgraphs.json"
++    if not graph_path.exists():
++        raise RunnerRefused("subgraphs.json missing from the live tree")
++    live_bytes = graph_path.read_bytes()
++    live_hash = hashlib.sha256(live_bytes).hexdigest()
++    if live_hash != pinned_hash:
++        raise RunnerRefused(
++            f"graph drift: live subgraphs.json ({live_hash[:12]}) does not match "
++            f"release {manifest['hash']} ({pinned_hash[:12]}) — re-pin through "
++            f"the process-change runbook")
++    try:
++        data = _strict_loads(live_bytes.decode("utf-8"))
++    except (ValueError, UnicodeDecodeError) as exc:
++        raise RunnerRefused(f"subgraphs.json is not valid JSON: {exc}") from exc
++    version = rungraph.manifest_version(data)
++    if version != rungraph.GRAPH_SCHEMA_VERSION:
++        raise RunnerRefused(
++            f"schema_version {version} is not executable — the runner needs "
++            f"schema_version {rungraph.GRAPH_SCHEMA_VERSION} (v1 manifests stay "
++            f"lint-only; adoption is optional per department)")
++    failures = rungraph.validate_manifest(data)
++    if failures:
++        raise RunnerRefused("graph validation failed: " + "; ".join(failures))
++    # Release provenance (review B1): a live impl whose bytes differ from the
++    # pin would execute under a release_hash it doesn't belong to and earn
++    # signed receipts for foreign code. Verify EVERY executable impl.
++    for subgraph in data.get("subgraphs", []):
++        if not isinstance(subgraph, dict):
++            continue
++        for node in rungraph.executable_nodes(subgraph).values():
++            impl = node["impl"]
++            impl_pinned = pinned.get(impl)
++            if impl_pinned is None:
++                raise RunnerRefused(
++                    f"release_integrity: impl '{impl}' is not pinned in "
++                    f"release {manifest['hash']}")
++            impl_path = dept_dir / impl
++            if not impl_path.exists():
++                raise RunnerRefused(
++                    f"release_integrity: impl '{impl}' is pinned but missing "
++                    f"from the live tree")
++            impl_live = hashlib.sha256(impl_path.read_bytes()).hexdigest()
++            if impl_live != impl_pinned:
++                raise RunnerRefused(
++                    f"release_integrity: impl '{impl}' ({impl_live[:12]}) does "
++                    f"not match release {manifest['hash']} ({impl_pinned[:12]}) "
++                    f"— re-pin through the process-change runbook")
++    return {
++        "data": data,
++        "graph_hash": live_hash,
++        "release_hash": manifest["hash"],
++        "manifest": manifest,
++    }
++
++
++def _select_subgraph(data: dict, subgraph_id: str | None) -> dict:
++    executable = [sg for sg in data.get("subgraphs", [])
++                  if isinstance(sg, dict) and ("entry" in sg or "edges" in sg)]
++    if subgraph_id is not None:
++        for sg in executable:
++            if sg.get("id") == subgraph_id:
++                return sg
++        raise RunnerRefused(f"no executable subgraph with id {subgraph_id!r}")
++    if len(executable) != 1:
++        raise RunnerRefused(
++            f"{len(executable)} executable subgraphs — pass subgraph_id to "
++            f"disambiguate")
++    return executable[0]
++
++
++# --------------------------------------------------------------------------- #
++# The runner
++# --------------------------------------------------------------------------- #
++
++def _now_iso(now_fn) -> str:
++    return datetime.fromtimestamp(now_fn(), tz=timezone.utc).isoformat()
++
++
++def _sha256_text(text: str) -> str:
++    return hashlib.sha256(text.encode("utf-8")).hexdigest()
++
++
++def _try_flock(path: Path):
++    """Acquire a non-blocking advisory lock. Returns the open handle (keep it
++    open for the lock's lifetime) or None if another live process holds it."""
++    path.parent.mkdir(parents=True, exist_ok=True)
++    handle = path.open("a+", encoding="utf-8")
++    try:
++        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
++        return handle
++    except BlockingIOError:
++        handle.close()
++        return None
++
++
++class _Run:
++    """One graph run: bookkeeping + fenced persistence."""
++
++    def __init__(self, *, dept_dir: Path, state_dir: Path, run_id: str,
++                 loop_id: str, fingerprint_hash: str, graph_hash: str,
++                 release_hash: str, now_fn, resumed_from: str | None = None,
++                 prior_record: dict | None = None):
++        self.dept_dir = dept_dir
++        self.state_dir = state_dir
++        self.run_dir = state_dir / "graph_runs" / run_id
++        self.run_id = run_id
++        self.loop_id = loop_id
++        self.machine = RunStateMachine()
++        self.now_fn = now_fn
++        self.record = {
++            "schema": RUN_STATE_SCHEMA,
++            "run_id": run_id,
++            "loop_id": loop_id,
++            "department": dept_dir.name,
++            "trigger_fingerprint_sha256": fingerprint_hash,
++            "graph_hash": graph_hash,
++            "release_hash": release_hash,
++            "runner_version": RUNNER_VERSION,
++            "state": self.machine.state,
++            "created_at": _now_iso(now_fn),
++            "updated_at": _now_iso(now_fn),
++            "nodes": {},
++            "transitions": [],
++        }
++        if prior_record:
++            # Append-preserving resume: prior node records and transition rows
++            # (including their full signed tokens) are NEVER discarded.
++            self.record["created_at"] = prior_record.get(
++                "created_at", self.record["created_at"])
++            self.record["nodes"] = dict(prior_record.get("nodes", {}))
++            self.record["transitions"] = list(
++                prior_record.get("transitions", []))
++            self.record["resumes"] = int(prior_record.get("resumes", 0)) + 1
++        if resumed_from is not None:
++            self.record["resumed_from"] = resumed_from
++
++    def log(self, event: str, **fields) -> None:
++        row = {"ts": _now_iso(self.now_fn), "event": event,
++               "run_id": self.run_id, "loop_id": self.loop_id, **fields}
++        with records_lock(self.state_dir):
++            _append_jsonl(self.state_dir / "runs.jsonl", row)
++
++    def persist(self) -> None:
++        self.record["state"] = self.machine.state
++        self.record["updated_at"] = _now_iso(self.now_fn)
++        with records_lock(self.state_dir):
++            _atomic_write_json(self.run_dir / "run_state.json", self.record)
++
++    def advance(self, new_state: str, event: str | None = None, **fields) -> None:
++        self.machine.advance(new_state)
++        self.persist()
++        if event:
++            self.log(event, state=new_state, **fields)
++
++
++def _launch_node(dept_name: str, script: Path, *, root: Path, env_base) -> tuple:
++    launch = _load("launch", "factory/launch.py")
++    captured: dict = {}
++
++    def _capture(command, env):
++        proc = subprocess.run(command, env=env, capture_output=True, text=True)
++        captured["proc"] = proc
++        return proc
++
++    returncode = launch.launch_command(
++        dept_name, [sys.executable, str(script)],
++        base=env_base, root=root, runner=_capture)
++    proc = captured.get("proc")
++    stdout = proc.stdout if proc is not None else ""
++    stderr = proc.stderr if proc is not None else ""
++    return returncode, stdout, stderr
++
++
++def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
++                         env_base, sleep_fn) -> tuple:
++    """Run one node under its failure policy.
++    Returns (output|None, failure|None, attempts_used)."""
++    rungraph = _load("rungraph", "factory/rungraph.py")
++    policy = node["failure_policy"]
++    attempts = int(policy["max_retries"]) + 1
++    script = (run.dept_dir / node["impl"]).resolve()
++    if not script.is_relative_to(run.dept_dir.resolve()):
++        return None, {"reason": "impl_escapes_department", "exit_code": None,
++                      "attempt": 0}, 0
++    failure = None
++    attempt = 0
++    for attempt in range(1, attempts + 1):
++        if attempt > 1:
++            sleep_fn(float(policy["backoff_s"]))
++        returncode, stdout, stderr = _launch_node(
++            dept_name, script, root=root, env_base=env_base)
++        run.log("node_attempt", node_id=node["id"], attempt=attempt,
++                exit_code=returncode)
++        if returncode != 0:
++            failure = {"reason": "nonzero_exit", "exit_code": returncode,
++                       "attempt": attempt, "stderr_tail": stderr[-500:]}
++            continue
++        try:
++            output = _strict_loads(stdout)
++            if not isinstance(output, dict):
++                raise ValueError("node output must be a JSON object")
++        except ValueError as exc:
++            failure = {"reason": f"unparseable_output: {exc}", "exit_code": 0,
++                       "attempt": attempt}
++            continue
++        contract_fails = (rungraph.validate_instance(node["outputs"], output)
++                          + rungraph.validate_instance(node["receipt_schema"],
++                                                       output))
++        if contract_fails:
++            failure = {"reason": "output_contract: " + "; ".join(contract_fails),
++                       "exit_code": 0, "attempt": attempt}
++            continue
++        return output, None, attempt
++    return None, failure, attempt
++
++
++def _log_refusal(state_dir: Path, reason: str, now_fn) -> None:
++    row = {"ts": _now_iso(now_fn), "event": "run_refused", "reason": reason}
++    with records_lock(state_dir):
++        _append_jsonl(Path(state_dir) / "runs.jsonl", row)
++
++
++def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
++              subgraph_id: str | None = None, root=None, env_base=None,
++              now_fn=time.time, sleep_fn=time.sleep,
++              receipt_ttl_s=None, crash_hook=None) -> dict:
++    """Execute one pinned graph run.
++    Returns {"run_id", "state", "duplicate", "resumed"}."""
++    receipts = _load("kreceipts", "kernel/receipts.py")
++    step_receipts = _load("step_receipts", "kernel/step_receipts.py")
++    rungraph = _load("rungraph", "factory/rungraph.py")
++
++    dept_dir = Path(dept_dir)
++    root = Path(root) if root is not None else ROOT
++    if signer is None:
++        signer = receipts.LocalSigner()  # raises on a missing key: fail closed
++    if receipt_ttl_s is None:
++        receipt_ttl_s = step_receipts.DEFAULT_TTL_S
++    state_dir = dept_dir / "state"
++
++    try:
++        loaded = load_pinned_graph(dept_dir)
++        subgraph = _select_subgraph(loaded["data"], subgraph_id)
++    except RunnerRefused as exc:
++        _log_refusal(state_dir, str(exc), now_fn)
++        raise
++    loop_id = subgraph["id"]
++    nodes = rungraph.executable_nodes(subgraph)
++    edges = subgraph["edges"]
++
++    # Idempotency + recovery: run dir keyed on the FULL fingerprint hash; a
++    # live run holds the advisory lock. Terminal duplicate = no-op; wedged
++    # non-terminal (lock free = prior process dead) = resume, never entombed.
++    fingerprint_hash = _sha256_text(str(trigger_fingerprint))
++    run_id = f"{loop_id}-{fingerprint_hash}"
++    run_dir = state_dir / "graph_runs" / run_id
++    run_dir.parent.mkdir(parents=True, exist_ok=True)
++    resumed_from: str | None = None
++    fresh = True
++    try:
++        run_dir.mkdir(exist_ok=False)
++    except FileExistsError:
++        fresh = False
++    run_lock = _try_flock(run_dir / ".run.lock")
++    if run_lock is None:
++        row = {"ts": _now_iso(now_fn), "event": "duplicate_trigger_noop",
++               "run_id": run_id, "loop_id": loop_id, "existing_state": "in_flight"}
++        with records_lock(state_dir):
++            _append_jsonl(state_dir / "runs.jsonl", row)
++        return {"run_id": run_id, "state": "in_flight", "duplicate": True,
++                "resumed": False}
++    try:
++        if not fresh:
++            existing: dict = {}
++            state_path = run_dir / "run_state.json"
++            if state_path.exists():
++                # R5-C3: an EXISTING checkpoint must parse and carry full
++                # identity — anything less would silently skip the re-pin
++                # fence. Only a genuinely absent state file (crash before
++                # the first persist) initializes fresh.
++                try:
++                    parsed = _strict_loads(
++                        state_path.read_text(encoding="utf-8"))
++                    if not isinstance(parsed, dict):
++                        raise ValueError("run_state.json root must be an object")
++                    existing = parsed
++                except ValueError as exc:
++                    message = (f"resume_integrity: run {run_id} state file is "
++                               f"malformed ({exc}) — resume refused")
++                    _log_refusal(state_dir, message, now_fn)
++                    raise RunnerRefused(message) from exc
++                required = ("department", "loop_id", "run_id",
++                            "graph_hash", "release_hash")
++                missing = sorted(k for k in required if not existing.get(k))
++                if missing:
++                    message = (f"resume_integrity: run {run_id} checkpoint "
++                               f"lacks identity fields {missing} — resume "
++                               f"refused")
++                    _log_refusal(state_dir, message, now_fn)
++                    raise RunnerRefused(message)
++            prior_state = existing.get("state", "unknown")
++            if prior_state in TERMINAL_RUN_STATES:
++                row = {"ts": _now_iso(now_fn), "event": "duplicate_trigger_noop",
++                       "run_id": run_id, "loop_id": loop_id,
++                       "existing_state": prior_state}
++                with records_lock(state_dir):
++                    _append_jsonl(state_dir / "runs.jsonl", row)
++                return {"run_id": run_id, "state": prior_state,
++                        "duplicate": True, "resumed": False}
++            # Non-terminal with a free lock: the prior process died mid-run.
++            # Before the checkpoint is trusted, two fences (deny-by-default):
++            # C4 — the run must still belong to the CURRENTLY pinned graph and
++            # release; a re-pin between crash and resume refuses, leaving the
++            # run resumable under the old release or by owner decision.
++            prior_rows = existing.get("transitions", [])
++            if existing and (
++                    existing.get("graph_hash") != loaded["graph_hash"]
++                    or existing.get("release_hash") != loaded["release_hash"]):
++                message = (
++                    f"release_integrity: run {run_id} was recorded under "
++                    f"graph {str(existing.get('graph_hash'))[:12]}/release "
++                    f"{existing.get('release_hash')} but the current pin is "
++                    f"{loaded['graph_hash'][:12]}/{loaded['release_hash']} — "
++                    f"resume refused; prior receipts stay untouched")
++                _log_refusal(state_dir, message, now_fn)
++                raise RunnerRefused(message)
++            # C3d — every persisted receipt is REVERIFIED before the frontier
++            # is trusted; 'expired' means authentic-but-stale and is accepted,
++            # anything else is tampering and refuses resume.
++            for prior_row in prior_rows:
++                try:
++                    verdict = step_receipts.reverify_transition(
++                        prior_row, record=existing, signer=signer,
++                        now=now_fn())
++                    ok = verdict.ok or verdict.reason == "expired"
++                    detail = verdict.reason
++                except Exception as exc:
++                    ok, detail = False, f"unverifiable: {exc}"
++                if not ok:
++                    message = (
++                        f"resume_integrity: transition "
++                        f"{prior_row.get('from')}->{prior_row.get('to')} in "
++                        f"run {run_id} failed reverification ({detail}) — "
++                        f"resume refused")
++                    _log_refusal(state_dir, message, now_fn)
++                    raise RunnerRefused(message)
++            # R5-C1: receipts authorize transitions, but resume also trusts
++            # ROUTING state — every persisted decision checkpoint must carry
++            # a valid kernel signature before the frontier is rebuilt from
++            # it. Tampered satisfied flags, redirected destinations, or
++            # resurrected pending states die here, before any token mints.
++            for check_nid, check_rec in (existing.get("nodes") or {}).items():
++                if (not isinstance(check_rec, dict)
++                        or check_rec.get("decisions") is None):
++                    continue
++                checkpoint_ok = step_receipts.verify_node_checkpoint(
++                    signer, department=existing["department"],
++                    graph_id=existing["loop_id"],
++                    graph_hash=existing["graph_hash"],
++                    release_hash=existing["release_hash"],
++                    run_id=existing["run_id"], node_id=check_nid,
++                    record=check_rec,
++                    signature=check_rec.get("checkpoint_sig"))
++                if not checkpoint_ok:
++                    message = (
++                        f"resume_integrity: node {check_nid} decision "
++                        f"checkpoint in run {run_id} fails signature "
++                        f"verification — resume refused")
++                    _log_refusal(state_dir, message, now_fn)
++                    raise RunnerRefused(message)
++            resumed_from = prior_state
++
++        run = _Run(dept_dir=dept_dir, state_dir=state_dir, run_id=run_id,
++                   loop_id=loop_id, fingerprint_hash=fingerprint_hash,
++                   graph_hash=loaded["graph_hash"],
++                   release_hash=loaded["release_hash"], now_fn=now_fn,
++                   resumed_from=resumed_from,
++                   prior_record=existing if resumed_from is not None else None)
++        run.persist()
++        if resumed_from is None:
++            run.log("run_created", graph_hash=loaded["graph_hash"],
++                    release_hash=loaded["release_hash"])
++        else:
++            run.log("run_resumed", prior_state=resumed_from,
++                    graph_hash=loaded["graph_hash"],
++                    release_hash=loaded["release_hash"])
++
++        final_state = _execute_run(
++            run, subgraph, nodes, edges, loaded=loaded, signer=signer,
++            step_receipts=step_receipts, rungraph=rungraph, root=root,
++            env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
++            receipt_ttl_s=receipt_ttl_s, crash_hook=crash_hook)
++
++        try:
++            _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
++                               now_fn=now_fn)
++        except Exception as exc:
++            # R5-C4: a signing failure must not leave the PRIOR signed
++            # projection in place as if it were current. Quarantine it
++            # (.stale keeps the evidence) and put an unmistakably-invalid
++            # failure artifact at the canonical path — verify_projection
++            # reports schema_mismatch on it — plus a durable finding.
++            proj_path = state_dir / "receipts" / "execution-projection.json"
++            with records_lock(state_dir):
++                if proj_path.exists():
++                    os.replace(proj_path,
++                               proj_path.with_suffix(".json.stale"))
++                _atomic_write_json(proj_path, {
++                    "schema": "execution-projection-export-failed",
++                    "run_id": run_id,
++                    "reason": f"{type(exc).__name__}: {exc}",
++                    "ts": _now_iso(now_fn)})
++                _append_jsonl(state_dir / "runs.jsonl",
++                              {"ts": _now_iso(now_fn),
++                               "event": "projection_export_failed",
++                               "run_id": run_id,
++                               "reason": f"{type(exc).__name__}: {exc}"})
++        return {"run_id": run_id, "state": final_state, "duplicate": False,
++                "resumed": resumed_from is not None}
++    finally:
++        run_lock.close()
++
++
++def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
++                 loaded: dict, signer, step_receipts, rungraph, root,
++                 env_base, now_fn, sleep_fn, receipt_ttl_s,
++                 crash_hook=None) -> str:
++    dept_dir = run.dept_dir
++    state_dir = run.state_dir
++    identity = dict(
++        department=dept_dir.name, graph_id=run.loop_id,
++        graph_hash=loaded["graph_hash"], release_hash=loaded["release_hash"],
++        run_id=run.run_id)
++    # Durable per-run consumption ledger: a restart keeps every consumption.
++    consumed = step_receipts.DurableNonceStore(
++        run.run_dir / "consumed_nonces.jsonl")
++
++    final_reason: str | None = None
++    terminal_reached = False
++
++    def _boundary(name: str) -> None:
++        """Test seam (R5-C5): a hook that raises here models process death at
++        the exact persistence boundary. Production passes no hook."""
++        if crash_hook is not None:
++            crash_hook(name)
++
++    def _seal(node_id: str, rec: dict) -> None:
++        """Sign the node's routing checkpoint (R5-C1). Every mutation of a
++        decisions-bearing record re-seals before it persists; a signing
++        failure here is a broken signing plane, exactly like token issuance."""
++        nonlocal final_reason
++        try:
++            rec["checkpoint_sig"] = step_receipts.sign_node_checkpoint(
++                signer, node_id=node_id, record=rec, **identity)
++        except Exception as exc:
++            run.log("gate_failure", node_id=node_id,
++                    why="signing_plane:checkpoint",
++                    reason=f"{type(exc).__name__}: {exc}")
++            final_reason = "gate_failure:signing_plane"
++            raise SigningPlaneBroken(str(exc)) from exc
++
++    def _gated_transition(*, src: str, dst, kind: str, attempt: int,
++                          output_hash: str, note: str | None = None,
++                          failed_check: str | None = None,
++                          edge_id: str | None = None) -> str | None:
++        """Mint one fresh token for THIS transition, verify it (single-use,
++        durable consumption), and record it with the full signed token AND
++        the canonical output hash it binds (auditor reverification needs only
++        the row + the run record). Returns None on success, else the failed
++        check's reason — no state moves on a reason. An exception from
++        issuance/signing or the durable ledger is a broken signing plane:
++        durable gate_failure finding, then SigningPlaneBroken (run -> killed,
++        never an escaping exception)."""
++        nonlocal final_reason
++        try:
++            token = step_receipts.issue_step_receipt(
++                signer=signer, now=now_fn(), output_hash=output_hash,
++                node_id=src, attempt=attempt, ttl_s=receipt_ttl_s, **identity)
++            check = step_receipts.verify_step_receipt(
++                token, signer=signer, now=now_fn(), output_hash=output_hash,
++                consumed=consumed, node_id=src, attempt=attempt, **identity)
++        except Exception as exc:
++            run.log("gate_failure", node_id=src, why=f"signing_plane:{kind}",
++                    reason=f"{type(exc).__name__}: {exc}")
++            final_reason = "gate_failure:signing_plane"
++            raise SigningPlaneBroken(str(exc)) from exc
++        if not check.ok:
++            run.log("transition_blocked", node_id=src, to=dst, kind=kind,
++                    reason=check.reason)
++            return check.reason
++        _boundary("pre_row_persist")
++        row = {"from": src, "to": dst, "kind": kind, "attempt": attempt,
++               "step_receipt": token,
++               "step_receipt_sha256": _sha256_text(token),
++               "output_sha256": output_hash,
++               "ts": _now_iso(now_fn)}
++        if edge_id is not None:
++            row["edge"] = edge_id
++        if note is not None:
++            row["note"] = note
++        if failed_check is not None:
++            row["failed_check"] = failed_check
++        run.record["transitions"].append(row)
++        run.persist()
++        run.log("transition", **{k: v for k, v in row.items()
++                                 if k != "step_receipt"})
++        _boundary("post_row_persist")
++        return None
++
++    def _fire_exit(src: str, attempt: int, out_hash: str, why: str,
++                   exit_state: str = "escalated", kind: str = "escalation",
++                   failed_check: str | None = None) -> str:
++        """Receipt-gate a run exit as an explicit checkpoint decision. The
++        concrete failed check (C2) rides in the receipt-bearing row. If even
++        this gate cannot validate, the signing plane is broken and the run
++        takes the accepted unreceipted safety abort: killed."""
++        nonlocal final_reason
++        rec = run.record["nodes"].setdefault(
++            src, {"state": "exit", "attempts": attempt, "output_hash": out_hash})
++        decision = {"edge": f"exit:{why}", "kind": kind, "to": None,
++                    "satisfied": True, "state": "pending",
++                    "exit": exit_state, "why": why}
++        rec.setdefault("decisions", []).append(decision)
++        _seal(src, rec)
++        run.persist()
++        reason = _gated_transition(src=src, dst=None, kind=kind,
++                                   attempt=attempt, output_hash=out_hash,
++                                   note=why, failed_check=failed_check,
++                                   edge_id=decision["edge"])
++        if reason is None:
++            decision["state"] = "fired"
++            final_reason = why
++            _seal(src, rec)
++            run.persist()
++            return exit_state
++        run.log("gate_failure", node_id=src, why=why, reason=reason)
++        final_reason = f"gate_failure:{why}"
++        return "killed"
++
++    def _complete(nid: str) -> bool:
++        rec = run.record["nodes"].get(nid)
++        if not rec or rec.get("state") not in ("done", "failed", "exit"):
++            return False
++        decisions = rec.get("decisions")
++        if decisions is None:
++            return False
++        return all(d.get("state") == "fired" for d in decisions
++                   if d.get("satisfied") is True)
++
++    def _decide_success(node_id: str, output: dict) -> list:
++        """Evaluate every out-edge ONCE and persist the decisions as the
++        durable checkpoint BEFORE any transition fires (C3). A blocked
++        predicate is recorded as satisfied=None — never true, never false."""
++        decisions = []
++        satisfied_any = False
++        for idx, edge in enumerate(edges):
++            if edge.get("from") != node_id:
++                continue
++            try:
++                sat = rungraph.eval_predicate(edge["when"], output)
++            except rungraph.PredicateError as exc:
++                run.log("predicate_blocked", node_id=node_id,
++                        to=edge.get("to"), reason=str(exc))
++                sat = None
++            decision = {"edge": str(idx), "kind": edge["kind"],
++                        "to": edge.get("to"), "satisfied": sat,
++                        "state": "pending"}
++            if edge["kind"] == "escalation" and edge.get("to") is None:
++                decision["exit"] = "escalated"
++                decision["why"] = "escalation_edge"
++            if sat is True:
++                satisfied_any = True
++            decisions.append(decision)
++        if not satisfied_any:
++            run.log("no_edge_satisfied", node_id=node_id)
++            decisions.append({"edge": "exit:no_edge_satisfied",
++                              "kind": "escalation", "to": None,
++                              "satisfied": True, "state": "pending",
++                              "exit": "escalated", "why": "no_edge_satisfied"})
++        return decisions
++
++    def _decide_failure(node_id: str, node: dict, failure_output: dict) -> list:
++        on_fail = node["failure_policy"]["on_fail"]
++        if on_fail == "fail":
++            return [{"edge": "on_fail", "kind": "failure", "to": None,
++                     "satisfied": True, "state": "pending",
++                     "exit": "failed", "why": "on_fail_fail"}]
++        if on_fail == "escalate":
++            return [{"edge": "on_fail", "kind": "escalation", "to": None,
++                     "satisfied": True, "state": "pending",
++                     "exit": "escalated", "why": "on_fail_escalate"}]
++        for idx, edge in enumerate(edges):
++            if (edge.get("from") != node_id or edge.get("to") != on_fail
++                    or edge.get("kind") not in ("refusal", "escalation")):
++                continue
++            try:
++                satisfied = rungraph.eval_predicate(edge["when"], failure_output)
++            except rungraph.PredicateError as exc:
++                run.log("predicate_blocked", node_id=node_id, to=on_fail,
++                        reason=str(exc))
++                satisfied = False
++            if satisfied:
++                return [{"edge": str(idx), "kind": edge["kind"],
++                         "to": on_fail, "satisfied": True, "state": "pending"}]
++            break
++        run.log("failure_route_blocked", node_id=node_id, to=on_fail)
++        return [{"edge": "exit:failure_route_blocked", "kind": "escalation",
++                 "to": None, "satisfied": True, "state": "pending",
++                 "exit": "escalated", "why": "failure_route_blocked"}]
++
++    def _fire_decisions(node_id: str, rec: dict, attempt: int,
++                        out_hash: str) -> str | None:
++        """Fire every satisfied pending decision. Each firing flips its
++        explicit checkpoint state to 'fired' AFTER its receipt-bearing row is
++        recorded, so resume knows exactly which edges remain."""
++        nonlocal terminal_reached, final_reason
++        result = None
++        for decision in list(rec.get("decisions", [])):
++            if (decision.get("satisfied") is not True
++                    or decision.get("state") != "pending"):
++                continue
++            kind = decision["kind"]
++            dst = decision.get("to")
++            reason = _gated_transition(src=node_id, dst=dst, kind=kind,
++                                       attempt=attempt, output_hash=out_hash,
++                                       note=decision.get("why"),
++                                       edge_id=decision.get("edge"))
++            if reason is not None:
++                result = _fire_exit(node_id, attempt, out_hash,
++                                    f"verification_failed:{kind}",
++                                    failed_check=reason)
++                continue
++            decision["state"] = "fired"
++            _seal(node_id, rec)
++            run.persist()
++            if decision.get("exit"):
++                final_reason = decision.get("why")
++                result = "failed" if decision["exit"] == "failed" else "escalated"
++                if decision.get("why") == "escalation_edge":
++                    run.log("escalation_edge", node_id=node_id)
++                continue
++            if kind == "terminal":
++                terminal_reached = True
++                continue
++            if dst is not None and dst not in queued and not _complete(dst):
++                _boundary("post_mark_fired")
++                queued.add(dst)
++                frontier.append(dst)
++        return result
++
++    # Row/fired reconciliation (R5-C2): a crash between the transition row
++    # landing and the decision flipping to fired must not mint a SECOND token
++    # on resume. Rows were already reverified before the checkpoint was
++    # trusted, so an existing row for a pending decision means the decision
++    # IS fired — adopt it, re-seal, mint nothing. Exactly-once per edge.
++    try:
++        for adopt_nid, adopt_rec in run.record["nodes"].items():
++            adopted = False
++            for decision in adopt_rec.get("decisions") or []:
++                if (decision.get("satisfied") is not True
++                        or decision.get("state") != "pending"):
++                    continue
++                match = next(
++                    (row for row in run.record["transitions"]
++                     if row.get("from") == adopt_nid
++                     and row.get("edge") == decision.get("edge")), None)
++                if match is not None:
++                    decision["state"] = "fired"
++                    adopted = True
++                    run.log("row_adopted", node_id=adopt_nid,
++                            edge=decision.get("edge"), to=decision.get("to"),
++                            kind=decision.get("kind"))
++            if adopted:
++                _seal(adopt_nid, adopt_rec)
++                run.persist()
++    except SigningPlaneBroken:
++        run.record["termination_reason"] = final_reason
++        run.advance("killed", "run_killed")
++        return "killed"
++
++    # Reconstruction from the explicit checkpoint (identical for fresh and
++    # resumed runs — a fresh record just yields entry-only). A fired exit
++    # decision concludes the run in ITS state: resume never appends a second
++    # terminal row nor mutates failed into escalated (C3c).
++    concluded: tuple | None = None
++    for rec in run.record["nodes"].values():
++        for decision in rec.get("decisions", []):
++            if decision.get("state") != "fired":
++                continue
++            if decision.get("kind") == "terminal":
++                terminal_reached = True
++            if decision.get("exit"):
++                concluded = (decision["exit"], decision.get("why"))
++    frontier: deque = deque()
++    queued: set = set()
++
++    def _want(nid: str) -> None:
++        if nid not in queued and not _complete(nid):
++            queued.add(nid)
++            frontier.append(nid)
++
++    _want(subgraph["entry"])
++    for nid, rec in run.record["nodes"].items():
++        for decision in rec.get("decisions", []):
++            if decision.get("satisfied") is not True:
++                continue
++            if decision.get("state") == "fired" and decision.get("to"):
++                _want(decision["to"])
++            elif decision.get("state") == "pending":
++                _want(nid)
++    queued |= {nid for nid in run.record["nodes"] if _complete(nid)}
++    final_state: str | None = None
++
++    run.advance("running", "run_started")
++    if concluded is not None:
++        final_state, final_reason = concluded
++
++    try:
++        while frontier and final_state is None:
++            node_id = frontier.popleft()
++            if (state_dir / "KILL").exists():
++                run.log("kill_switch", node_id=node_id, phase="pre_node")
++                final_state, final_reason = "killed", "kill_switch"
++                break
++            rec = run.record["nodes"].get(node_id)
++            if (rec is not None and rec.get("decisions") is not None
++                    and rec.get("state") in ("done", "failed", "exit")):
++                # Resume refire: the node already completed and checkpointed
++                # its decisions — fire the remaining pending edges from the
++                # persisted output hash, never re-execute (C3b).
++                attempt = int(rec.get("attempts", 0))
++                out_hash = rec["output_hash"]
++                run.advance("awaiting_receipt")
++                run.log("resume_refire", node_id=node_id)
++            else:
++                node = nodes[node_id]
++                node_record = run.record["nodes"].setdefault(
++                    node_id, {"state": "pending", "attempts": 0})
++                node_record["state"] = "running"
++                run.persist()
++                output, failure, attempts_used = _execute_with_policy(
++                    run, node, dept_name=dept_dir.name, root=root,
++                    env_base=env_base, sleep_fn=sleep_fn)
++                # All token work happens INSIDE awaiting_receipt; the state
++                # exits only after every transition holds a validated token.
++                run.advance("awaiting_receipt")
++                # Kill poll AFTER node completion, BEFORE any transition: a
++                # kill raised while the node ran stops the graph walk cold.
++                if (state_dir / "KILL").exists():
++                    run.log("kill_switch", node_id=node_id, phase="post_node")
++                    final_state, final_reason = "killed", "kill_switch"
++                    break
++                rec = node_record
++                attempt = rec["attempts"] = attempts_used
++                if output is not None:
++                    # Shadow enforcement (observational, fail-closed): the
++                    # kernel dispatcher is the authority on effects; a receipt
++                    # CLAIMING an external action in an unpromoted run is a
++                    # violation, not a debate.
++                    external = output.get("external_actions_taken", 0)
++                    if external not in (0, None):
++                        rec["state"] = "failed"
++                        rec["reason"] = "external_actions_taken != 0 in shadow"
++                        run.log("shadow_violation", node_id=node_id,
++                                external_actions_taken=external)
++                        final_state, final_reason = "killed", "shadow_violation"
++                        break
++                    rec["state"] = "done"
++                    out_hash = rec["output_hash"] = \
++                        step_receipts.output_hash(output)
++                    rec["decisions"] = _decide_success(node_id, output)
++                    _seal(node_id, rec)
++                    run.persist()  # durable SIGNED checkpoint before firing
++                    run.log("node_done", node_id=node_id, attempt=attempt)
++                else:
++                    # Failure path: the runner's own failure record becomes
++                    # the receipt-bound step output, and the on_fail route is
++                    # checkpointed as an explicit decision before it fires.
++                    rec["state"] = "failed"
++                    rec["reason"] = failure["reason"]
++                    failure_output = {"status": "node_failed",
++                                      "node_id": node_id,
++                                      "reason": failure["reason"],
++                                      "exit_code": failure["exit_code"],
++                                      "attempts": attempt}
++                    out_hash = rec["output_hash"] = \
++                        step_receipts.output_hash(failure_output)
++                    rec["decisions"] = _decide_failure(node_id, node,
++                                                       failure_output)
++                    _seal(node_id, rec)
++                    run.persist()
++                    run.log("node_failed", node_id=node_id, **failure)
++
++            result = _fire_decisions(node_id, rec, attempt, out_hash)
++            if result is not None:
++                final_state = result
++            if final_state is None:
++                run.advance("running")
++
++        if final_state is None:
++            if terminal_reached:
++                final_state, final_reason = "done", "terminal_edge"
++            else:
++                # The walk ended without a terminal edge firing: a stall.
++                # Even this exit is receipt-gated, bound to the run itself.
++                run.log("no_terminal_reached")
++                stall_hash = step_receipts.output_hash(
++                    {"status": "run_stalled", "run_id": run.run_id})
++                final_state = _fire_exit("__run__", 0, stall_hash,
++                                         "no_terminal_reached")
++    except SigningPlaneBroken:
++        final_state = "killed"
++        if not (final_reason or "").startswith("gate_failure"):
++            final_reason = "gate_failure:signing_plane"
++    run.record["termination_reason"] = final_reason
++    run.advance(final_state, f"run_{final_state}")
++    return final_state
++
++
++# --------------------------------------------------------------------------- #
++# Projection export (the runner EXPORTS; the auditor plane verifies)
++# --------------------------------------------------------------------------- #
++
++def _export_projection(dept_dir: Path, state_dir: Path, subgraph: dict,
++                       loaded: dict, signer, *, now_fn) -> None:
++    projection = _load("projection", "factory/projection.py")
++    rungraph = _load("rungraph", "factory/rungraph.py")
++    runs = []
++    runs_root = state_dir / "graph_runs"
++    if runs_root.is_dir():
++        for state_path in sorted(runs_root.glob("*/run_state.json")):
++            try:
++                record = _strict_loads(state_path.read_text(encoding="utf-8"))
++            except ValueError:
++                continue
++            if record.get("loop_id") != subgraph["id"]:
++                continue
++            runs.append({"run_id": record.get("run_id"),
++                         "state": record.get("state"),
++                         "termination_reason": record.get("termination_reason"),
++                         "transitions": record.get("transitions", [])})
++    factory_version = loaded["manifest"].get("factory_version") or {
++        "graph_schema_version": rungraph.GRAPH_SCHEMA_VERSION,
++        "runner_version": RUNNER_VERSION,
++        "telemetry_schema_version": projection.TELEMETRY_SCHEMA_VERSION,
++        "template_set_hash": "unrecorded",
++    }
++    body = projection.build_projection(
++        department=dept_dir.name, graph_id=subgraph["id"],
++        graph_hash=loaded["graph_hash"], release_hash=loaded["release_hash"],
++        factory_version=factory_version,
++        nodes=subgraph.get("nodes", []), edges=subgraph.get("edges", []),
++        runs=runs, generated_at=_now_iso(now_fn))
++    signed = projection.sign_projection(body, signer)
++    with records_lock(state_dir):
++        _atomic_write_json(state_dir / "receipts" / "execution-projection.json",
++                           signed)
++
++
++# --------------------------------------------------------------------------- #
++# CLI
++# --------------------------------------------------------------------------- #
++
++_EXIT_BY_STATE = {"done": 0, "failed": 3, "escalated": 4, "killed": 5}
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(
++        description="Deterministic runner for a release-pinned v2 control graph")
++    parser.add_argument("--department", required=True)
++    parser.add_argument("--root", default=None)
++    parser.add_argument("--trigger-fingerprint", required=True,
++                        help="idempotency key for this trigger (e.g. the date "
++                             "stamp); only its sha256 is recorded")
++    parser.add_argument("--subgraph", default=None)
++    args = parser.parse_args()
++    root = Path(args.root) if args.root else ROOT
++    dept_dir = root / "departments" / args.department
++    try:
++        result = run_graph(dept_dir, trigger_fingerprint=args.trigger_fingerprint,
++                           subgraph_id=args.subgraph, root=root)
++    except (RunnerRefused, ValueError) as exc:
++        print(json.dumps({"ok": False, "refused": str(exc)}))
++        return 2
++    print(json.dumps(result))
++    if result.get("duplicate"):
++        return 0
++    return _EXIT_BY_STATE.get(result["state"], 4)
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/kernel/step_receipts.py b/kernel/step_receipts.py
+new file mode 100644
+index 0000000..e1248b3
+--- /dev/null
++++ b/kernel/step_receipts.py
+@@ -0,0 +1,226 @@
++"""Step receipts: HMAC-signed transition tokens for the deterministic runner.
++
++Before this class existed, a runner step was 'proven' by plain JSON on disk —
++forgeable by anything that can write a file (the audit's step-receipt gap).
++A step receipt binds one completed node execution:
++
++    (department, graph_id, graph_hash, release_hash, run_id, node_id,
++     attempt, output_hash)
++
++and is signed/verified through the SAME hardened primitives as effect
++receipts (kernel/receipts.py issue_receipt/verify_receipt) — this module
++extends that pattern and must never weaken the effect classes. The kernel
++signing key never reaches department processes (factory/launch.py scrubs it),
++so a department cannot mint its own transitions.
++
++Consumption discipline: a step receipt is single-use PERIOD — one
++consumption, any successor. A fan-out node mints one token per transition.
++Consumption is DURABLE (DurableNonceStore: fsync'd append-only jsonl, the
++same pattern the lock service uses for its consumed/revoked ledgers), so a
++runner restart cannot reopen replay. Cross-run reuse dies on the binding
++(run_id); cross-release reuse dies on the binding (release_hash, graph_hash).
++
++Canonical-JSON policy: output hashes are canonical (sorted keys, tight
++separators) and REJECT non-finite numbers — NaN/Inf have no canonical JSON
++form, so they can neither be hashed nor signed.
++"""
++from __future__ import annotations
++
++import hashlib
++import importlib.util
++import json
++import os
++import pathlib
++import secrets
++import sys
++
++_KERNEL_DIR = pathlib.Path(__file__).resolve().parent
++
++
++def _receipts():
++    name = "step_receipts_base"
++    if name in sys.modules:
++        return sys.modules[name]
++    spec = importlib.util.spec_from_file_location(name, _KERNEL_DIR / "receipts.py")
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[name] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++ACTION_CLASS = "graph_step"
++DEFAULT_TTL_S = 3600  # a transition token lives for one run window, not forever
++
++
++def output_hash(output) -> str:
++    """Canonical sha256 over the node's receipt JSON. Raises ValueError on
++    non-finite numbers — no canonical form, nothing to sign."""
++    canonical = json.dumps(output, sort_keys=True, separators=(",", ":"),
++                           allow_nan=False)
++    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
++
++
++class DurableNonceStore:
++    """Append-only fsync'd consumption ledger, drop-in for verify_receipt's
++    seen_nonces. Same discipline as the lock service's durable ledgers: the
++    consumption persists BEFORE the caller proceeds, a reload keeps it, and a
++    torn trailing line from a crashed write is skipped (that consumption never
++    durably committed, so its transition never happened)."""
++
++    def __init__(self, path):
++        self._path = pathlib.Path(path)
++        self._mem: set = set()
++        if self._path.exists():
++            for line in self._path.read_text(encoding="utf-8").splitlines():
++                line = line.strip()
++                if not line:
++                    continue
++                try:
++                    self._mem.add(json.loads(line)["nonce"])
++                except (ValueError, KeyError, TypeError):
++                    continue
++
++    def __contains__(self, nonce) -> bool:
++        return nonce in self._mem
++
++    def add(self, nonce) -> None:
++        if nonce in self._mem:
++            return
++        self._mem.add(nonce)
++        self._path.parent.mkdir(parents=True, exist_ok=True)
++        with self._path.open("a", encoding="utf-8") as fh:
++            fh.write(json.dumps({"nonce": nonce}) + "\n")
++            fh.flush()
++            os.fsync(fh.fileno())
++
++
++def _resolve_output_hash(output, output_hash_value):
++    """Exactly one of (output, output_hash) — the binding carries only the
++    hash either way, so hash-only callers (auditors reverifying from persisted
++    rows) get the same attestation as body-holding callers (the runner)."""
++    if (output is None) == (output_hash_value is None):
++        raise ValueError("pass exactly one of output= or output_hash=")
++    if output_hash_value is not None:
++        return output_hash_value
++    return output_hash(output)
++
++
++def step_binding(*, department, graph_id, graph_hash, release_hash, run_id,
++                 node_id, attempt, output=None, output_hash=None) -> dict:
++    return {
++        "department": department,
++        "graph_id": graph_id,
++        "graph_hash": graph_hash,
++        "release_hash": release_hash,
++        "run_id": run_id,
++        "node_id": node_id,
++        "attempt": int(attempt),
++        "output_hash": _resolve_output_hash(output, output_hash),
++    }
++
++
++def issue_step_receipt(*, signer, now, department, graph_id, graph_hash,
++                       release_hash, run_id, node_id, attempt, output=None,
++                       output_hash=None, ttl_s=DEFAULT_TTL_S) -> str:
++    receipts = _receipts()
++    binding = step_binding(
++        department=department, graph_id=graph_id, graph_hash=graph_hash,
++        release_hash=release_hash, run_id=run_id, node_id=node_id,
++        attempt=attempt, output=output, output_hash=output_hash)
++    return receipts.issue_receipt(
++        ACTION_CLASS, binding, ttl_s, signer, now, secrets.token_hex(16))
++
++
++def verify_step_receipt(token, *, signer, now, consumed, department, graph_id,
++                        graph_hash, release_hash, run_id, node_id, attempt,
++                        output=None, output_hash=None):
++    """Verify a transition token against the exact step identity + output
++    (by body, or by its persisted canonical hash — same attestation).
++
++    `consumed` is the durable consumption store (DurableNonceStore, or any
++    object with __contains__/add). A successful verify CONSUMES the token:
++    single-use, period. Returns kernel/receipts.py ReceiptCheck; any failure
++    BLOCKS the transition.
++    """
++    receipts = _receipts()
++    binding = step_binding(
++        department=department, graph_id=graph_id, graph_hash=graph_hash,
++        release_hash=release_hash, run_id=run_id, node_id=node_id,
++        attempt=attempt, output=output, output_hash=output_hash)
++    return receipts.verify_receipt(
++        token, ACTION_CLASS, binding, signer=signer, now=now,
++        seen_nonces=consumed)
++
++
++def _checkpoint_material(*, department, graph_id, graph_hash, release_hash,
++                         run_id, node_id, record) -> bytes:
++    """Canonical bytes of one node's ROUTING checkpoint under the run
++    identity: state, attempts, output hash, and the full edge-decision list
++    (source, edge identity, destination, kind, predicate result, fired
++    state). The signature field itself is never part of the material."""
++    material = {
++        "department": department,
++        "graph_id": graph_id,
++        "graph_hash": graph_hash,
++        "release_hash": release_hash,
++        "run_id": run_id,
++        "node_id": node_id,
++        "state": record.get("state"),
++        "attempts": record.get("attempts"),
++        "output_hash": record.get("output_hash"),
++        "decisions": record.get("decisions"),
++    }
++    return json.dumps(material, sort_keys=True, separators=(",", ":"),
++                      allow_nan=False).encode("utf-8")
++
++
++def sign_node_checkpoint(signer, *, department, graph_id, graph_hash,
++                         release_hash, run_id, node_id, record) -> str:
++    """Sign a node's decision checkpoint. Receipts authorize TRANSITIONS;
++    this authenticates the ROUTING STATE a resume would otherwise trust
++    unsigned — the same kernel signer covers both planes."""
++    return signer.sign(_checkpoint_material(
++        department=department, graph_id=graph_id, graph_hash=graph_hash,
++        release_hash=release_hash, run_id=run_id, node_id=node_id,
++        record=record))
++
++
++def verify_node_checkpoint(signer, *, department, graph_id, graph_hash,
++                           release_hash, run_id, node_id, record,
++                           signature) -> bool:
++    """Verify a persisted decision checkpoint. Absent, malformed, or
++    non-matching signatures are False — the caller must refuse resume."""
++    if not isinstance(signature, str) or not signature:
++        return False
++    try:
++        return signer.verify(_checkpoint_material(
++            department=department, graph_id=graph_id, graph_hash=graph_hash,
++            release_hash=release_hash, run_id=run_id, node_id=node_id,
++            record=record), signature)
++    except Exception:
++        return False
++
++
++def reverify_transition(row, *, record, signer, now):
++    """Auditor-plane reverification from PERSISTED materials only: a run
++    record (run_state.json — carries department/loop_id/graph_hash/
++    release_hash/run_id) plus one transition row (carries the full signed
++    token, the source node, the attempt, and the canonical output hash).
++
++    Limitation of hash rebinding (accepted, round-4 C5 — verbatim): attests
++    receipt authenticity and binding integrity under the recorded identity;
++    does NOT prove output content, schema conformance, or predicate
++    correctness — no body exists to recompute.
++
++    Consumption is deliberately NOT touched: auditors verify, they never
++    transition, so a throwaway nonce set is used. Verdict semantics: verify
++    checks the signature and binding BEFORE expiry, so reason 'expired' on a
++    historical token means authentic-but-stale (expected on late audits),
++    while 'signature'/'binding' mean forgery or tampering.
++    """
++    return verify_step_receipt(
++        row["step_receipt"], signer=signer, now=now,
++        output_hash=row["output_sha256"], consumed=set(),
++        department=record["department"], graph_id=record["loop_id"],
++        graph_hash=record["graph_hash"], release_hash=record["release_hash"],
++        run_id=record["run_id"], node_id=row["from"], attempt=row["attempt"])
+diff --git a/templates/subgraphs-v2.json.tmpl b/templates/subgraphs-v2.json.tmpl
+new file mode 100644
+index 0000000..cf8f4ed
+--- /dev/null
++++ b/templates/subgraphs-v2.json.tmpl
+@@ -0,0 +1,93 @@
++{
++  "_doc": "Graph schema v2: the typed, executable control graph. v1 lint (factory/graphs.py) still applies unchanged; factory/rungraph.py validates the v2 additions (contracts, edges, predicates, reachability); factory/runner.py executes ONLY the release-pinned copy, one node at a time, with signed step receipts as transition tokens. Predicates are the safe subset over the predecessor's receipt JSON only (see factory/rungraph.py). A subgraph without entry/edges stays v1 lint-only: adoption is incremental.",
++  "schema_version": 2,
++  "subgraphs": [
++    {
++      "id": "SG-EXAMPLE",
++      "concept_refs": ["C3"],
++      "not_applicable": {},
++      "entry": "N3",
++      "nodes": [
++        {"id": "S1", "guard": "S1"},
++        {"id": "S2", "guard": "S2"},
++        {"id": "N3", "impl": "runtime/assemble_context.py", "runtime_mode": "script",
++         "action_class": "observe",
++         "inputs": {"type": "object"},
++         "outputs": {"type": "object", "required": ["status"],
++                     "properties": {"status": {"type": "string"}}},
++         "receipt_schema": {"type": "object", "required": ["status"],
++                            "properties": {"status": {"type": "string"}}},
++         "failure_policy": {"max_retries": 0, "backoff_s": 0, "on_fail": "escalate"},
++         "concept_ref": "C3", "interview_ref": "Q4"},
++        {"id": "S3", "guard": "S3"},
++        {"id": "S8", "guard": "S8"},
++        {"id": "N4", "model_capable": true, "cost_incurring": true,
++         "impl": "runtime/draft.py", "runtime_mode": "llm",
++         "action_class": "model_call",
++         "inputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++         "outputs": {"type": "object", "required": ["status"],
++                     "properties": {"status": {"type": "string"}}},
++         "receipt_schema": {"type": "object", "required": ["status"],
++                            "properties": {"status": {"type": "string"}}},
++         "failure_policy": {"max_retries": 1, "backoff_s": 60, "on_fail": "escalate"},
++         "concept_ref": "C3", "interview_ref": "Q5"},
++        {"id": "N5", "model_capable": true, "impl": "runtime/qa_draft.py",
++         "runtime_mode": "llm", "action_class": "model_call",
++         "inputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++         "outputs": {"type": "object", "required": ["status", "qa_pass"],
++                     "properties": {"status": {"type": "string"},
++                                    "qa_pass": {"type": "boolean"}}},
++         "receipt_schema": {"type": "object", "required": ["status", "qa_pass"],
++                            "properties": {"status": {"type": "string"},
++                                           "qa_pass": {"type": "boolean"}}},
++         "failure_policy": {"max_retries": 1, "backoff_s": 60, "on_fail": "escalate"},
++         "concept_ref": "C3", "interview_ref": "Q6"},
++        {"id": "S5", "guard": "S5"},
++        {"id": "S4", "guard": "S4"},
++        {"id": "S6", "guard": "S6"},
++        {"id": "S7", "guard": "S7"},
++        {"id": "N6", "external_dispatch": true, "impl": "runtime/dispatch.py",
++         "runtime_mode": "script", "action_class": "external_send",
++         "inputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++         "outputs": {"type": "object", "required": ["status", "external_actions_taken"],
++                     "properties": {"status": {"type": "string"},
++                                    "external_actions_taken": {"type": "integer"}}},
++         "receipt_schema": {"type": "object",
++                            "required": ["status", "external_actions_taken"],
++                            "properties": {"status": {"type": "string"},
++                                           "external_actions_taken": {"type": "integer"}}},
++         "failure_policy": {"max_retries": 0, "backoff_s": 0, "on_fail": "escalate"},
++         "concept_ref": "C3", "interview_ref": "Q7"},
++        {"id": "N9", "impl": "runtime/record.py", "runtime_mode": "script",
++         "action_class": "observe",
++         "inputs": {"type": "object"},
++         "outputs": {"type": "object", "required": ["status"],
++                     "properties": {"status": {"type": "string"}}},
++         "receipt_schema": {"type": "object", "required": ["status"],
++                            "properties": {"status": {"type": "string"}}},
++         "failure_policy": {"max_retries": 0, "backoff_s": 0, "on_fail": "escalate"},
++         "concept_ref": "C3", "interview_ref": "Q8"}
++      ],
++      "edges": [
++        {"from": "N3", "to": "N4", "kind": "normal", "when": "receipt.status == 'ok'"},
++        {"from": "N3", "kind": "escalation", "when": "receipt.status != 'ok'"},
++        {"from": "N4", "to": "N5", "kind": "normal", "when": "receipt.status == 'ok'"},
++        {"from": "N4", "kind": "escalation", "when": "receipt.status != 'ok'"},
++        {"from": "N5", "to": "N6", "kind": "normal",
++         "when": "receipt.status == 'ok' and receipt.qa_pass == true"},
++        {"from": "N5", "kind": "escalation",
++         "when": "receipt.status != 'ok' or receipt.qa_pass == false"},
++        {"from": "N6", "to": "N9", "kind": "normal",
++         "when": "receipt.status == 'ok'"},
++        {"from": "N6", "kind": "escalation", "when": "receipt.status != 'ok'"},
++        {"from": "N9", "kind": "terminal", "when": "true"}
++      ]
++    }
++  ],
++  "untraced_allowed": {
++    "runtime/kernel_bridge.py": "factory-standard kernel wiring, not a graph node"
++  }
++}
+diff --git a/tests/test_factory_version.py b/tests/test_factory_version.py
+new file mode 100644
+index 0000000..4b52de0
+--- /dev/null
++++ b/tests/test_factory_version.py
+@@ -0,0 +1,53 @@
++"""Ticket 009 hook: the release manifest records the factory's own version —
++graph schema, runner, telemetry schema, and a hash over the template set —
++so later tooling can compare what factory built each release. Record now,
++compare later."""
++import importlib.util
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++REL = _load("fv_release", "factory/release.py")
++RG = _load("fv_rungraph", "factory/rungraph.py")
++RUN = _load("fv_runner", "factory/runner.py")
++PJ = _load("fv_projection", "factory/projection.py")
++
++
++def _dept(tmp_path):
++    d = tmp_path / "demo"
++    (d / "runtime").mkdir(parents=True)
++    (d / "charter.yaml").write_text("department: demo\n", encoding="utf-8")
++    return d
++
++
++def test_manifest_records_factory_version(tmp_path):
++    dept = _dept(tmp_path)
++    h = REL.pin_release(dept, tmp_path / "releases", source_ref="sha1")
++    manifest = REL.load_manifest(tmp_path / "releases" / h)
++    fv = manifest["factory_version"]
++    assert fv["graph_schema_version"] == RG.GRAPH_SCHEMA_VERSION
++    assert fv["runner_version"] == RUN.RUNNER_VERSION
++    assert fv["telemetry_schema_version"] == PJ.TELEMETRY_SCHEMA_VERSION
++    assert len(fv["template_set_hash"]) == 16
++
++
++def test_template_set_hash_tracks_template_bytes(tmp_path):
++    a = tmp_path / "templates-a"
++    b = tmp_path / "templates-b"
++    a.mkdir()
++    b.mkdir()
++    (a / "x.tmpl").write_text("one\n", encoding="utf-8")
++    (b / "x.tmpl").write_text("two\n", encoding="utf-8")
++    ha = REL.template_set_hash(a)
++    hb = REL.template_set_hash(b)
++    assert ha != hb
++    assert REL.template_set_hash(a) == ha  # deterministic
+diff --git a/tests/test_projection.py b/tests/test_projection.py
+new file mode 100644
+index 0000000..f2fabda
+--- /dev/null
++++ b/tests/test_projection.py
+@@ -0,0 +1,110 @@
++"""Signed execution projection: what an INDEPENDENT auditor verifies.
++
++The runner exports a versioned, canonically-hashed, HMAC-signed projection of
++(nodes, edges, per-run transition history). An auditor holding the kernel key
++verifies it without sharing execution authority — the shape mirrors the
++receipt the podcast dag_supervisor already verifies (declared hash +
++recomputable canonical hash + staleness), plus a signature. The runner never
++audits its own projection; verify_projection exists for the auditor plane.
++"""
++import importlib.util
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("projection_kernel_receipts", "kernel/receipts.py")
++PJ = _load("projection", "factory/projection.py")
++
++
++NODES = [{"id": "N1", "impl": "runtime/sense.py", "action_class": "observe"},
++         {"id": "N2", "impl": "runtime/record.py", "action_class": "observe"}]
++EDGES = [{"from": "N1", "to": "N2", "kind": "normal", "when": "true"},
++         {"from": "N2", "kind": "terminal", "when": "true"}]
++RUNS = [{
++    "run_id": "SG-RUN-abc",
++    "state": "done",
++    "transitions": [
++        {"from": "N1", "to": "N2", "kind": "normal", "attempt": 1,
++         "step_receipt_sha256": "c" * 64, "ts": "2026-08-02T00:00:00+00:00"},
++    ],
++}]
++
++
++def _projection(key="k"):
++    body = PJ.build_projection(
++        department="demo", graph_id="SG-RUN", graph_hash="a" * 64,
++        release_hash="feedfeedfeedfeed",
++        factory_version={"graph_schema_version": 2, "runner_version": "2.0.0",
++                         "telemetry_schema_version": 1,
++                         "template_set_hash": "b" * 16},
++        nodes=NODES, edges=EDGES, runs=RUNS,
++        generated_at="2026-08-02T00:00:01+00:00")
++    return PJ.sign_projection(body, R.LocalSigner(key=key))
++
++
++def test_signed_projection_verifies_clean():
++    assert PJ.verify_projection(_projection(), R.LocalSigner(key="k")) == []
++
++
++def test_projection_declares_versioned_schema_and_transitions():
++    proj = _projection()
++    assert proj["schema"] == PJ.SCHEMA
++    assert proj["runs"][0]["transitions"][0]["step_receipt_sha256"] == "c" * 64
++
++
++def test_tampered_structure_detected():
++    proj = _projection()
++    proj["nodes"].append({"id": "N3", "impl": "runtime/evil.py"})
++    findings = PJ.verify_projection(proj, R.LocalSigner(key="k"))
++    kinds = {f["kind"] for f in findings}
++    assert "dag_hash_mismatch" in kinds
++    assert "bad_signature" in kinds
++
++
++def test_tampered_transition_history_detected():
++    proj = _projection()
++    proj["runs"][0]["transitions"][0]["step_receipt_sha256"] = "d" * 64
++    findings = PJ.verify_projection(proj, R.LocalSigner(key="k"))
++    assert any(f["kind"] == "bad_signature" for f in findings)
++
++
++def test_wrong_key_detected():
++    findings = PJ.verify_projection(_projection(key="attacker"),
++                                    R.LocalSigner(key="k"))
++    assert any(f["kind"] == "bad_signature" for f in findings)
++
++
++def test_schema_mismatch_detected():
++    proj = _projection()
++    proj["schema"] = "something-else"
++    findings = PJ.verify_projection(proj, R.LocalSigner(key="k"))
++    assert any(f["kind"] == "schema_mismatch" for f in findings)
++
++
++def test_unsigned_projection_blocks():
++    body = dict(_projection())
++    del body["signature"]
++    findings = PJ.verify_projection(body, R.LocalSigner(key="k"))
++    assert any(f["kind"] == "bad_signature" for f in findings)
++
++
++def test_non_finite_values_cannot_be_hashed_or_signed():
++    import pytest
++    with pytest.raises(ValueError):
++        PJ.build_projection(
++            department="demo", graph_id="SG-RUN", graph_hash="a" * 64,
++            release_hash="feedfeedfeedfeed", factory_version={},
++            nodes=[{"id": "N1", "weight": float("nan")}], edges=[], runs=[],
++            generated_at="2026-08-02T00:00:01+00:00")
++    with pytest.raises(ValueError):
++        PJ.sign_projection({"schema": PJ.SCHEMA, "x": float("inf")},
++                           R.LocalSigner(key="k"))
+diff --git a/tests/test_rungraph.py b/tests/test_rungraph.py
+new file mode 100644
+index 0000000..f02f688
+--- /dev/null
++++ b/tests/test_rungraph.py
+@@ -0,0 +1,360 @@
++"""Graph schema v2: typed nodes, explicit edges, safe predicates, reachability.
++
++The predicate language is deliberately tiny and deterministic: comparisons and
++boolean combinators over the PREDECESSOR'S RECEIPT JSON only. No eval(), no
++attribute access, no calls. A predicate that cannot be evaluated (missing
++field, type-mismatched ordering) raises PredicateError — deny-by-default, the
++transition blocks; it never silently evaluates to True or False.
++"""
++import importlib.util
++from pathlib import Path
++
++import pytest
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++RG = _load("rungraph", "factory/rungraph.py")
++
++
++RECEIPT = {
++    "status": "ok",
++    "delivered_count": 0,
++    "metrics": {"findings": 2, "score": 0.75},
++    "flagged": False,
++}
++
++
++# --------------------------------------------------------------------------- #
++# Predicate subset
++# --------------------------------------------------------------------------- #
++
++def test_true_literal_predicate():
++    assert RG.eval_predicate("true", RECEIPT) is True
++
++
++def test_equality_on_string_field():
++    assert RG.eval_predicate("receipt.status == 'ok'", RECEIPT) is True
++    assert RG.eval_predicate("receipt.status == 'failed'", RECEIPT) is False
++
++
++def test_numeric_comparisons_on_nested_field():
++    assert RG.eval_predicate("receipt.metrics.findings >= 2", RECEIPT) is True
++    assert RG.eval_predicate("receipt.metrics.score < 0.5", RECEIPT) is False
++
++
++def test_boolean_combinators_and_parentheses():
++    assert RG.eval_predicate(
++        "receipt.status == 'ok' and (receipt.delivered_count == 0 or receipt.flagged)",
++        RECEIPT) is True
++    assert RG.eval_predicate("not receipt.flagged", RECEIPT) is True
++
++
++def test_cross_type_equality_blocks():
++    # Python's == would coerce (1 == True, 0 == False) — a default-allow.
++    # Contract: equality across TYPE FAMILIES blocks exactly like ordering.
++    for expr in ("receipt.status != 3",
++                 "receipt.flagged == 0",          # bool is not int here
++                 "receipt.delivered_count == false",
++                 "receipt.status == null"):
++        with pytest.raises(RG.PredicateError):
++            RG.eval_predicate(expr, RECEIPT)
++
++
++def test_same_family_equality_still_works():
++    assert RG.eval_predicate("receipt.flagged == false", RECEIPT) is True
++    assert RG.eval_predicate("receipt.delivered_count == 0", RECEIPT) is True
++    assert RG.eval_predicate("receipt.metrics.score == 0.75", RECEIPT) is True
++
++
++def test_missing_field_blocks_instead_of_defaulting():
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate("receipt.absent == 1", RECEIPT)
++
++
++def test_ordering_across_types_blocks():
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate("receipt.status > 3", RECEIPT)
++
++
++def test_path_must_be_rooted_at_receipt():
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate("__import__ == 1", RECEIPT)
++
++
++def test_calls_attributes_and_subscripts_rejected():
++    for expr in ("receipt.status.__class__ == 1",  # dunder segment
++                 "open('x')",
++                 "receipt.metrics[0] == 1",
++                 "1 + 1 == 2"):
++        with pytest.raises(RG.PredicateError):
++            RG.eval_predicate(expr, RECEIPT)
++
++
++def test_non_boolean_result_blocks():
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate("receipt.delivered_count", RECEIPT)
++
++
++def test_parse_rejects_trailing_garbage():
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate("receipt.status == 'ok' extra", RECEIPT)
++
++
++def test_nesting_depth_capped():
++    depth = RG.MAX_PREDICATE_DEPTH + 8
++    expr = "(" * depth + "true" + ")" * depth
++    with pytest.raises(RG.PredicateError, match="depth"):
++        RG.eval_predicate(expr, RECEIPT)
++    assert RG.check_predicate(expr) is not None
++
++
++def test_pathological_nesting_never_raises_recursionerror():
++    depth = 5000  # far past any recursion limit — must still be PredicateError
++    expr = "(" * depth + "true" + ")" * depth
++    with pytest.raises(RG.PredicateError):
++        RG.eval_predicate(expr, RECEIPT)
++
++
++def test_expression_length_capped():
++    expr = "receipt.status == 'ok'" + (" and true" * 600)
++    assert len(expr) > RG.MAX_PREDICATE_LENGTH
++    with pytest.raises(RG.PredicateError, match="length"):
++        RG.eval_predicate(expr, RECEIPT)
++    assert RG.check_predicate(expr) is not None
++
++
++def test_depth_within_limit_still_evaluates():
++    expr = "(" * 8 + "true" + ")" * 8
++    assert RG.eval_predicate(expr, RECEIPT) is True
++
++
++# --------------------------------------------------------------------------- #
++# v2 manifest validation
++# --------------------------------------------------------------------------- #
++
++GRAPHS = _load("graphs_for_rungraph", "factory/graphs.py")
++
++
++def _node(node_id, impl, **extra):
++    base = {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": 1, "backoff_s": 0, "on_fail": "escalate"},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++    base.update(extra)
++    return base
++
++
++def _v2_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "not_applicable": {
++                "S4": "read-only", "S5": "read-only",
++                "S6": "read-only", "S7": "read-only",
++                "S1": "no identity", "S2": "no eligibility", "S8": "no spend",
++            },
++            "entry": "N1",
++            "nodes": [
++                {"id": "S3", "guard": "S3"},
++                _node("N1", "runtime/sense.py"),
++                _node("N2", "runtime/record.py"),
++            ],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N1", "kind": "escalation",
++                 "when": "receipt.status != 'ok'"},
++                {"from": "N2", "kind": "terminal", "when": "true"},
++            ],
++        }],
++        "untraced_allowed": {},
++    }
++
++
++def test_manifest_version_defaults_to_v1():
++    assert RG.manifest_version({"subgraphs": []}) == 1
++    assert RG.manifest_version(_v2_manifest()) == 2
++
++
++def test_v1_manifest_has_no_v2_failures():
++    assert RG.validate_manifest({"subgraphs": [{"id": "SG-A", "nodes": []}]}) == []
++
++
++def test_valid_v2_manifest_passes_and_v1_lint_still_passes():
++    data = _v2_manifest()
++    assert RG.validate_manifest(data) == []
++    assert GRAPHS.validate_subgraphs(data) == []
++
++
++def test_edge_to_unknown_node_fails():
++    data = _v2_manifest()
++    data["subgraphs"][0]["edges"][0]["to"] = "N9"
++    assert any("unknown node" in f for f in RG.validate_manifest(data))
++
++
++def test_terminal_edge_must_not_have_target():
++    data = _v2_manifest()
++    data["subgraphs"][0]["edges"][2]["to"] = "N1"
++    assert any("terminal" in f for f in RG.validate_manifest(data))
++
++
++def test_bad_edge_kind_fails():
++    data = _v2_manifest()
++    data["subgraphs"][0]["edges"][0]["kind"] = "sometimes"
++    assert any("kind" in f for f in RG.validate_manifest(data))
++
++
++def test_bad_predicate_caught_at_validation_time():
++    data = _v2_manifest()
++    data["subgraphs"][0]["edges"][0]["when"] = "receipt.status ==="
++    assert any("predicate" in f for f in RG.validate_manifest(data))
++
++
++def test_unreachable_node_fails():
++    data = _v2_manifest()
++    data["subgraphs"][0]["nodes"].append(_node("N3", "runtime/orphan.py"))
++    fails = RG.validate_manifest(data)
++    assert any("unreachable" in f and "N3" in f for f in fails)
++
++
++def test_node_without_terminal_path_fails():
++    data = _v2_manifest()
++    sg = data["subgraphs"][0]
++    sg["nodes"].append(_node("N3", "runtime/dead_end.py"))
++    sg["edges"].append({"from": "N2", "to": "N3", "kind": "normal", "when": "true"})
++    sg["edges"] = [e for e in sg["edges"] if e["kind"] != "terminal"]
++    sg["edges"].append({"from": "N2", "kind": "terminal", "when": "true"})
++    fails = RG.validate_manifest(data)
++    assert any("terminal" in f and "N3" in f for f in fails)
++
++
++def test_missing_entry_fails():
++    data = _v2_manifest()
++    del data["subgraphs"][0]["entry"]
++    assert any("entry" in f for f in RG.validate_manifest(data))
++
++
++def test_executable_node_missing_v2_fields_fails():
++    data = _v2_manifest()
++    del data["subgraphs"][0]["nodes"][1]["runtime_mode"]
++    del data["subgraphs"][0]["nodes"][2]["receipt_schema"]
++    fails = RG.validate_manifest(data)
++    assert any("runtime_mode" in f for f in fails)
++    assert any("receipt_schema" in f for f in fails)
++
++
++def test_bad_runtime_mode_fails():
++    data = _v2_manifest()
++    data["subgraphs"][0]["nodes"][1]["runtime_mode"] = "bash"
++    assert any("runtime_mode" in f for f in RG.validate_manifest(data))
++
++
++def test_on_fail_node_target_must_have_matching_edge():
++    data = _v2_manifest()
++    data["subgraphs"][0]["nodes"][1]["failure_policy"]["on_fail"] = "N2"
++    fails = RG.validate_manifest(data)
++    assert any("on_fail" in f for f in fails)
++
++
++def test_traceability_refs_required_on_executable_nodes():
++    data = _v2_manifest()
++    del data["subgraphs"][0]["nodes"][1]["concept_ref"]
++    del data["subgraphs"][0]["nodes"][2]["interview_ref"]
++    fails = RG.validate_manifest(data)
++    assert any("concept_ref" in f for f in fails)
++    assert any("interview_ref" in f for f in fails)
++
++
++def test_unknown_contract_keyword_fails_closed():
++    data = _v2_manifest()
++    data["subgraphs"][0]["nodes"][1]["outputs"] = {
++        "type": "object", "pattern": ".*"}
++    assert any("pattern" in f for f in RG.validate_manifest(data))
++
++
++def test_duplicate_node_ids_fail():
++    data = _v2_manifest()
++    data["subgraphs"][0]["nodes"].append(_node("N2", "runtime/record.py"))
++    assert any("duplicate" in f for f in RG.validate_manifest(data))
++
++
++# --------------------------------------------------------------------------- #
++# JSON-schema-lite instance validation
++# --------------------------------------------------------------------------- #
++
++CONTRACT = {
++    "type": "object",
++    "required": ["status", "counts"],
++    "properties": {
++        "status": {"type": "string", "enum": ["ok", "alarm"]},
++        "counts": {"type": "object", "required": ["runs"],
++                   "properties": {"runs": {"type": "integer"}}},
++        "tags": {"type": "array", "items": {"type": "string"}},
++    },
++}
++
++
++def test_instance_conforms():
++    value = {"status": "ok", "counts": {"runs": 3}, "tags": ["a"]}
++    assert RG.validate_instance(CONTRACT, value) == []
++
++
++def test_instance_violations_reported():
++    value = {"status": "bad", "counts": {"runs": "three"}, "tags": [1]}
++    fails = RG.validate_instance(CONTRACT, value)
++    assert any("enum" in f for f in fails)
++    assert any("runs" in f for f in fails)
++    assert any("tags" in f for f in fails)
++
++
++def test_missing_required_reported():
++    fails = RG.validate_instance(CONTRACT, {"status": "ok"})
++    assert any("counts" in f for f in fails)
++
++
++def test_boolean_is_not_integer():
++    fails = RG.validate_instance(
++        {"type": "object", "properties": {"n": {"type": "integer"}}}, {"n": True})
++    assert fails
++
++
++def test_non_finite_numbers_rejected_at_contract_boundary():
++    schema = {"type": "object", "properties": {"n": {"type": "number"}}}
++    for bad in (float("nan"), float("inf"), float("-inf")):
++        fails = RG.validate_instance(schema, {"n": bad})
++        assert any("finite" in f for f in fails)
++    assert RG.validate_instance(schema, {"n": 0.5}) == []
++
++
++# --------------------------------------------------------------------------- #
++# Template drift guard
++# --------------------------------------------------------------------------- #
++
++def test_v2_template_passes_both_v1_lint_and_v2_validation():
++    import json
++    data = json.loads((ROOT / "templates" / "subgraphs-v2.json.tmpl")
++                      .read_text(encoding="utf-8"))
++    assert RG.manifest_version(data) == RG.GRAPH_SCHEMA_VERSION
++    assert RG.validate_manifest(data) == []
++    assert GRAPHS.validate_subgraphs(data) == []
+diff --git a/tests/test_runner.py b/tests/test_runner.py
+new file mode 100644
+index 0000000..52f7d2a
+--- /dev/null
++++ b/tests/test_runner.py
+@@ -0,0 +1,1110 @@
++"""Deterministic runner: release-pinned graph, receipt-gated transitions,
++run state machine, idempotent triggers, signed projection export.
++
++Every transition requires a VALID SIGNED STEP RECEIPT (kernel/step_receipts):
++valid predecessor receipt + output-schema conformance + satisfied edge
++predicate + graph/release agreement. Deny-by-default throughout: no release,
++drifted graph, invalid graph, unevaluable predicate, or shadow violation all
++BLOCK — never allow-on-failure. Effects stay behind kernel gateways; nodes run
++through factory/launch.py with no ambient credentials.
++"""
++import importlib.util
++import json
++from pathlib import Path
++
++import pytest
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("runner_kernel_receipts", "kernel/receipts.py")
++REL = _load("runner_release", "factory/release.py")
++PJ = _load("runner_projection", "factory/projection.py")
++SR = _load("runner_step_receipts", "kernel/step_receipts.py")
++RUN = _load("runner", "factory/runner.py")
++
++SIGNER = R.LocalSigner(key="test-key")
++
++
++class _FlakyVerifySigner:
++    """Signs correctly; the first `fail_first` verifies report False. Models a
++    transient verification failure so the escalation path itself must gate."""
++
++    def __init__(self, inner, fail_first=1):
++        self._inner = inner
++        self._fails_left = fail_first
++
++    def sign(self, payload):
++        return self._inner.sign(payload)
++
++    def verify(self, payload, sig):
++        if self._fails_left > 0:
++            self._fails_left -= 1
++            return False
++        return self._inner.verify(payload, sig)
++
++
++class _DeadVerifySigner:
++    """Signs correctly; every verify fails — a broken signing plane."""
++
++    def __init__(self, inner):
++        self._inner = inner
++
++    def sign(self, payload):
++        return self._inner.sign(payload)
++
++    def verify(self, payload, sig):
++        return False
++
++
++class _RaisingSignSigner:
++    """sign() raises after the first `allow` calls — an HSM/key service that
++    dies mid-run. Exceptions must terminate as killed, never escape."""
++
++    def __init__(self, inner, allow=0):
++        self._inner = inner
++        self._allow = allow
++
++    def sign(self, payload):
++        if self._allow > 0:
++            self._allow -= 1
++            return self._inner.sign(payload)
++        raise RuntimeError("signing service unavailable")
++
++    def verify(self, payload, sig):
++        return self._inner.verify(payload, sig)
++
++
++SENSE_OK = """\
++import json, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "markers.txt").open("a", encoding="utf-8") as fh:
++    fh.write("sense\\n")
++print(json.dumps({"status": "ok", "delivered_count": 0}))
++"""
++
++RECORD_OK = """\
++import json
++print(json.dumps({"status": "ok"}))
++"""
++
++FAIL_NODE = """\
++import pathlib, sys
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "markers.txt").open("a", encoding="utf-8") as fh:
++    fh.write("fail\\n")
++sys.exit(3)
++"""
++
++HANDLER = """\
++import json
++print(json.dumps({"status": "handled"}))
++"""
++
++VIOLATOR = """\
++import json
++print(json.dumps({"status": "ok", "external_actions_taken": 1}))
++"""
++
++BAD_SHAPE = """\
++import json
++print(json.dumps({"nope": True}))
++"""
++
++
++def _node(node_id, impl, on_fail="escalate", max_retries=0):
++    return {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": max_retries, "backoff_s": 0,
++                           "on_fail": on_fail},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++
++
++def _two_node_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/sense.py"),
++                      _node("N2", "runtime/record.py")],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N1", "kind": "escalation",
++                 "when": "receipt.status != 'ok'"},
++                {"from": "N2", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++
++
++def _make_dept(tmp_path, scripts, manifest, pin=True):
++    dept = tmp_path / "departments" / "demo"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "charter.yaml").write_text(
++        "department: demo\nowner: test-owner\nautonomy_state: shadow\n"
++        "immutable_safety_invariants:\n  heal_may_not_modify: [x]\n",
++        encoding="utf-8")
++    for name, src in scripts.items():
++        (dept / "runtime" / name).write_text(src, encoding="utf-8")
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    if pin:
++        h = REL.pin_release(dept, dept / "releases", source_ref="testsha")
++        REL.flip_current(dept / "releases", h)
++    return dept
++
++
++def _run(dept, tmp_path, fingerprint="trigger-1", **kwargs):
++    return RUN.run_graph(
++        dept, trigger_fingerprint=fingerprint, signer=SIGNER,
++        root=tmp_path, sleep_fn=lambda s: None, **kwargs)
++
++
++def _markers(dept):
++    path = dept / "state" / "markers.txt"
++    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
++
++
++# --------------------------------------------------------------------------- #
++# Happy path
++# --------------------------------------------------------------------------- #
++
++def test_run_completes_and_records(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "done"
++    assert _markers(dept) == ["sense"]
++    state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert state["state"] == "done"
++    assert state["nodes"]["N1"]["state"] == "done"
++    assert state["nodes"]["N2"]["state"] == "done"
++    transitions = state["transitions"]
++    assert [(t["from"], t["to"]) for t in transitions] == [("N1", "N2"), ("N2", None)]
++    assert all(len(t["step_receipt_sha256"]) == 64 for t in transitions)
++    runs_rows = [json.loads(line) for line in
++                 (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "run_done" for row in runs_rows)
++
++
++def test_full_signed_tokens_persisted_and_durably_consumed(tmp_path):
++    # B2: run records carry the FULL signed token (reverifiable after a
++    # runner swap), each transition has its own token, and consumption is a
++    # durable per-run ledger, not process memory.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    run_dir = dept / "state" / "graph_runs" / result["run_id"]
++    state = json.loads((run_dir / "run_state.json").read_text(encoding="utf-8"))
++    tokens = [t["step_receipt"] for t in state["transitions"]]
++    assert all(isinstance(tok, str) and "." in tok for tok in tokens)
++    assert len(set(tokens)) == len(tokens)  # one fresh token per transition
++    ledger = run_dir / "consumed_nonces.jsonl"
++    assert ledger.exists()
++    consumed = [json.loads(line)["nonce"] for line in
++                ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
++    assert len(consumed) == len(tokens)
++
++
++def test_run_lock_identity_uses_full_fingerprint_hash(tmp_path):
++    import hashlib
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path, fingerprint="trigger-1")
++    full = hashlib.sha256(b"trigger-1").hexdigest()
++    assert result["run_id"] == f"SG-RUN-{full}"
++
++
++def test_projection_exported_and_auditor_verifies(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    proj = json.loads((dept / "state" / "receipts" / "execution-projection.json")
++                      .read_text(encoding="utf-8"))
++    assert PJ.verify_projection(proj, SIGNER) == []
++    assert proj["runs"][0]["run_id"] == result["run_id"]
++    assert proj["runs"][0]["transitions"]
++
++
++# --------------------------------------------------------------------------- #
++# Idempotency
++# --------------------------------------------------------------------------- #
++
++def test_duplicate_trigger_is_recorded_noop(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="same-trigger")
++    second = _run(dept, tmp_path, fingerprint="same-trigger")
++    assert second["duplicate"] is True
++    assert second["run_id"] == first["run_id"]
++    assert _markers(dept) == ["sense"]  # no second execution
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "duplicate_trigger_noop" for row in rows)
++
++
++def test_distinct_triggers_run_separately(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    a = _run(dept, tmp_path, fingerprint="t1")
++    b = _run(dept, tmp_path, fingerprint="t2")
++    assert a["run_id"] != b["run_id"]
++    assert _markers(dept) == ["sense", "sense"]
++
++
++# --------------------------------------------------------------------------- #
++# Deny-by-default loading
++# --------------------------------------------------------------------------- #
++
++def test_no_release_refuses(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest(), pin=False)
++    with pytest.raises(RUN.RunnerRefused, match="release"):
++        _run(dept, tmp_path)
++
++
++def test_graph_drift_refuses(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    manifest = _two_node_manifest()
++    manifest["subgraphs"][0]["edges"][0]["when"] = "true"  # post-pin edit
++    (dept / "subgraphs.json").write_text(json.dumps(manifest), encoding="utf-8")
++    with pytest.raises(RUN.RunnerRefused, match="drift"):
++        _run(dept, tmp_path)
++    assert _markers(dept) == []
++
++
++def test_v1_manifest_refuses_runner_is_optional(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK},
++                      {"subgraphs": [{"id": "SG-A", "nodes": []}]})
++    with pytest.raises(RUN.RunnerRefused, match="schema_version"):
++        _run(dept, tmp_path)
++
++
++def test_invalid_v2_graph_refuses_before_any_execution(tmp_path):
++    manifest = _two_node_manifest()
++    manifest["subgraphs"][0]["nodes"].append(_node("N3", "runtime/orphan.py"))
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK,
++                                 "orphan.py": RECORD_OK}, manifest)
++    with pytest.raises(RUN.RunnerRefused, match="unreachable"):
++        _run(dept, tmp_path)
++    assert _markers(dept) == []
++
++
++def test_impl_edited_after_pin_refuses_release_integrity(tmp_path):
++    # B1: the pin covers runtime artifacts, so a live impl whose bytes differ
++    # from the pinned hash must never execute under that release_hash.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    (dept / "runtime" / "sense.py").write_text(
++        SENSE_OK + "\n# edited after pin\n", encoding="utf-8")
++    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
++        _run(dept, tmp_path)
++    assert _markers(dept) == []
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "run_refused"
++               and "release_integrity" in row.get("reason", "") for row in rows)
++
++
++def test_impl_missing_from_live_tree_refuses_release_integrity(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    (dept / "runtime" / "record.py").unlink()
++    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
++        _run(dept, tmp_path)
++
++
++# --------------------------------------------------------------------------- #
++# Failure policy + refusal routing
++# --------------------------------------------------------------------------- #
++
++def test_retries_then_escalates(tmp_path):
++    manifest = _two_node_manifest()
++    manifest["subgraphs"][0]["nodes"][0] = _node(
++        "N1", "runtime/sense.py", max_retries=1)
++    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
++                      manifest)
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    assert _markers(dept) == ["fail", "fail"]  # 1 try + 1 retry
++    state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert state["nodes"]["N1"]["attempts"] == 2  # recorded == launched
++
++
++def test_refusal_edge_routes_failure_to_handler(tmp_path):
++    manifest = {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/flaky.py", on_fail="H1"),
++                      _node("H1", "runtime/handler.py")],
++            "edges": [
++                {"from": "N1", "to": "H1", "kind": "refusal",
++                 "when": "receipt.status == 'node_failed'"},
++                {"from": "N1", "kind": "terminal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "H1", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++    dept = _make_dept(tmp_path, {"flaky.py": FAIL_NODE, "handler.py": HANDLER},
++                      manifest)
++    result = _run(dept, tmp_path)
++    assert result["state"] == "done"
++    state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert state["nodes"]["H1"]["state"] == "done"
++    kinds = [t["kind"] for t in state["transitions"]]
++    assert "refusal" in kinds
++
++
++def test_output_contract_violation_blocks(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": BAD_SHAPE, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++
++
++def _transitions(dept, result):
++    state = json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    return state["transitions"]
++
++
++def test_escalation_terminal_is_receipt_gated(tmp_path):
++    # B3: on_fail=escalate must not reach a terminal run state without a
++    # validated token — the runner's failure record earns a signed receipt
++    # and the escalation is recorded as a receipt-bearing transition.
++    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    rows = _transitions(dept, result)
++    gated = [t for t in rows if t["from"] == "N1" and t["to"] is None
++             and t["kind"] == "escalation"]
++    assert gated and "." in gated[0]["step_receipt"]
++    assert len(gated[0]["step_receipt_sha256"]) == 64
++
++
++def test_fail_terminal_is_receipt_gated(tmp_path):
++    manifest = _two_node_manifest()
++    manifest["subgraphs"][0]["nodes"][0]["failure_policy"]["on_fail"] = "fail"
++    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
++                      manifest)
++    result = _run(dept, tmp_path)
++    assert result["state"] == "failed"
++    rows = _transitions(dept, result)
++    gated = [t for t in rows if t["from"] == "N1" and t["to"] is None
++             and t["kind"] == "failure"]
++    assert gated and "." in gated[0]["step_receipt"]
++
++
++def test_no_edge_satisfied_escalation_is_receipt_gated(tmp_path):
++    manifest = _two_node_manifest()
++    # both N1 out-edges require a status N1 never emits
++    manifest["subgraphs"][0]["edges"][0]["when"] = "receipt.status == 'never'"
++    manifest["subgraphs"][0]["edges"][1]["when"] = "receipt.status == 'never2'"
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      manifest)
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    rows = _transitions(dept, result)
++    assert any(t["kind"] == "escalation" and t["to"] is None
++               and "." in t["step_receipt"] for t in rows)
++
++
++def test_non_finite_node_output_blocks(tmp_path):
++    nonfinite = ('import json\n'
++                 'print(\'{"status": "ok", "n": Infinity}\')\n')
++    dept = _make_dept(tmp_path, {"sense.py": nonfinite, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"  # unparseable under canonical policy
++
++
++# --------------------------------------------------------------------------- #
++# R1: a FAILED token verification must not reach a terminal state bare —
++# the escalation itself is receipt-gated; only a broken signing plane may
++# fall through, and that is a safety kill, not a bare escalation.
++# --------------------------------------------------------------------------- #
++
++def _state_json(dept, result):
++    return json.loads(
++        (dept / "state" / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++
++
++def test_failed_verification_escalation_is_itself_receipt_gated(tmp_path):
++    import time as time_mod
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    flaky = _FlakyVerifySigner(R.LocalSigner(key="test-key"), fail_first=1)
++    result = RUN.run_graph(dept, trigger_fingerprint="flaky-1", signer=flaky,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    state = _state_json(dept, result)
++    gated = [t for t in state["transitions"]
++             if t["kind"] == "escalation" and t["to"] is None
++             and str(t.get("note", "")).startswith("verification_failed")]
++    assert gated, state["transitions"]
++    # the escalation receipt itself must reverify with the real key
++    check = SR.reverify_transition(gated[0], record=state,
++                                   signer=R.LocalSigner(key="test-key"),
++                                   now=time_mod.time())
++    assert check.ok, check.reason
++    assert str(state["termination_reason"]).startswith("verification_failed")
++
++
++def test_dead_signing_plane_falls_to_safety_kill(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    dead = _DeadVerifySigner(R.LocalSigner(key="test-key"))
++    result = RUN.run_graph(dept, trigger_fingerprint="dead-1", signer=dead,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "killed"
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "gate_failure" for row in rows)
++    state = _state_json(dept, result)
++    assert str(state["termination_reason"]).startswith("gate_failure")
++
++
++def test_on_fail_escalate_gate_failure_also_safety_kills(tmp_path):
++    # Failure path variant: the node fails AND the escalation gate cannot
++    # validate — a bare escalated terminal would be an unreceipted exit.
++    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    dead = _DeadVerifySigner(R.LocalSigner(key="test-key"))
++    result = RUN.run_graph(dept, trigger_fingerprint="dead-2", signer=dead,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "killed"
++
++
++# --------------------------------------------------------------------------- #
++# R2: every persisted transition row is independently reverifiable from
++# (key service + run records) alone — no runner, no output bodies.
++# --------------------------------------------------------------------------- #
++
++def test_transitions_reverifiable_from_persisted_records_only(tmp_path):
++    import time as time_mod
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    state = _state_json(dept, result)
++    assert state["department"] == "demo"  # identity is self-contained
++    assert state["transitions"]
++    for row in state["transitions"]:
++        assert len(row["output_sha256"]) == 64
++        check = SR.reverify_transition(row, record=state, signer=SIGNER,
++                                       now=time_mod.time())
++        assert check.ok, (row["from"], check.reason)
++
++
++def test_shadow_kill_records_signed_termination_reason(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": VIOLATOR, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    assert _state_json(dept, result)["termination_reason"] == "shadow_violation"
++    proj = json.loads((dept / "state" / "receipts" / "execution-projection.json")
++                      .read_text(encoding="utf-8"))
++    assert PJ.verify_projection(proj, SIGNER) == []  # reason is under the sig
++    assert proj["runs"][0]["termination_reason"] == "shadow_violation"
++
++
++# --------------------------------------------------------------------------- #
++# R3: resume CONTINUES from the persisted frontier — completed nodes are not
++# re-executed, and their tokens survive into the auditor-visible projection.
++# --------------------------------------------------------------------------- #
++
++def _mark_node(marker):
++    return (f'import json, pathlib\n'
++            f'state = pathlib.Path(__file__).resolve().parents[1] / "state"\n'
++            f'state.mkdir(parents=True, exist_ok=True)\n'
++            f'with (state / "markers.txt").open("a", encoding="utf-8") as fh:\n'
++            f'    fh.write("{marker}\\n")\n'
++            f'print(json.dumps({{"status": "ok"}}))\n')
++
++
++FLAKY_N3 = """\
++import json, pathlib, sys
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++m = state / "markers.txt"
++with m.open("a", encoding="utf-8") as fh:
++    fh.write("n3\\n")
++if m.read_text(encoding="utf-8").splitlines().count("n3") == 1:
++    sys.exit(9)
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def _three_node_manifest():
++    n3 = _node("N3", "runtime/n3.py", max_retries=1)
++    n3["failure_policy"]["backoff_s"] = 1  # forces a sleep_fn call on retry
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/n1.py"),
++                      _node("N2", "runtime/n2.py"), n3],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N2", "to": "N3", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N3", "kind": "terminal",
++                 "when": "receipt.status == 'ok'"},
++            ],
++        }],
++    }
++
++
++def test_resume_continues_from_frontier_not_entry(tmp_path):
++    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
++                                 "n2.py": _mark_node("n2"),
++                                 "n3.py": FLAKY_N3},
++                      _three_node_manifest())
++
++    def crash_sleep(seconds):
++        raise RuntimeError("simulated crash during N3 retry backoff")
++
++    with pytest.raises(RuntimeError, match="simulated crash"):
++        RUN.run_graph(dept, trigger_fingerprint="cont-1", signer=SIGNER,
++                      root=tmp_path, sleep_fn=crash_sleep)
++    assert _markers(dept) == ["n1", "n2", "n3"]
++    run_id = _run_id_for("cont-1")
++    pre = json.loads((dept / "state" / "graph_runs" / run_id / "run_state.json")
++                     .read_text(encoding="utf-8"))
++    assert pre["state"] not in ("done", "failed", "escalated", "killed")
++    pre_tokens = [t["step_receipt"] for t in pre["transitions"]]
++    assert len(pre_tokens) == 2  # N1->N2, N2->N3 survived the crash
++
++    second = RUN.run_graph(dept, trigger_fingerprint="cont-1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True
++    assert second["state"] == "done"
++    # N1/N2 executed exactly once across both processes; only N3 re-ran
++    assert _markers(dept) == ["n1", "n2", "n3", "n3"]
++    state = _state_json(dept, second)
++    tokens = [t["step_receipt"] for t in state["transitions"]]
++    assert tokens[:2] == pre_tokens  # prior token material preserved
++    assert [(t["from"], t["to"]) for t in state["transitions"]] == [
++        ("N1", "N2"), ("N2", "N3"), ("N3", None)]
++    proj = json.loads((dept / "state" / "receipts" / "execution-projection.json")
++                      .read_text(encoding="utf-8"))
++    proj_run = [r for r in proj["runs"] if r["run_id"] == run_id][0]
++    assert [t["step_receipt"] for t in proj_run["transitions"]][:2] == pre_tokens
++
++
++# --------------------------------------------------------------------------- #
++# R4: a HELD .run.lock (live concurrent runner) no-ops cleanly.
++# --------------------------------------------------------------------------- #
++
++def _rewrite_state(dept, run_id, mutate):
++    path = dept / "state" / "graph_runs" / run_id / "run_state.json"
++    state = json.loads(path.read_text(encoding="utf-8"))
++    mutate(state)
++    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
++    return state
++
++
++# --------------------------------------------------------------------------- #
++# C1: signing-plane exceptions terminate as killed + durable finding —
++# they never escape the runner.
++# --------------------------------------------------------------------------- #
++
++def test_signing_exception_terminates_killed_with_finding(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
++    result = RUN.run_graph(dept, trigger_fingerprint="raise-1", signer=raising,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "killed"
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "gate_failure" for row in rows)
++    state = _state_json(dept, result)
++    assert str(state["termination_reason"]).startswith("gate_failure")
++
++
++# --------------------------------------------------------------------------- #
++# C2: the receipt-bearing escalation row carries the CONCRETE failed check.
++# --------------------------------------------------------------------------- #
++
++def test_escalation_row_carries_the_failed_check(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    flaky = _FlakyVerifySigner(R.LocalSigner(key="test-key"), fail_first=1)
++    result = RUN.run_graph(dept, trigger_fingerprint="flaky-2", signer=flaky,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "escalated"
++    gated = [t for t in _transitions(dept, result)
++             if str(t.get("note", "")).startswith("verification_failed")]
++    assert gated and gated[0]["failed_check"] == "signature"
++
++
++# --------------------------------------------------------------------------- #
++# C3: durable per-edge completion checkpoint — resume trusts explicit
++# decision state, reverified receipts, never row-shape inference.
++# --------------------------------------------------------------------------- #
++
++def _chain_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/n1.py"),
++                      _node("N2", "runtime/n2.py"),
++                      _node("N3", "runtime/n3.py")],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal", "when": "true"},
++                {"from": "N2", "to": "N3", "kind": "normal", "when": "true"},
++                {"from": "N3", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++
++
++def _ledger_lines(dept, run_id):
++    path = (dept / "state" / "graph_runs" / run_id / "consumed_nonces.jsonl")
++    if not path.exists():
++        return 0
++    return len([line for line in path.read_text(encoding="utf-8").splitlines()
++                if line.strip()])
++
++
++# --------------------------------------------------------------------------- #
++# R5-C1: the decision checkpoint is SIGNED — tampered routing state refuses
++# resume before any token is minted.
++# --------------------------------------------------------------------------- #
++
++def test_flipped_satisfied_decision_refuses_resume(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="flip-1")
++    assert first["state"] == "done"
++    rows_before = len(_transitions(dept, first))
++    ledger_before = _ledger_lines(dept, first["run_id"])
++
++    def flip(state):
++        state["state"] = "running"
++        escalation = [d for d in state["nodes"]["N1"]["decisions"]
++                      if d["kind"] == "escalation"][0]
++        escalation["satisfied"] = True  # was False: resurrect a dead edge
++    _rewrite_state(dept, first["run_id"], flip)
++    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
++        _run(dept, tmp_path, fingerprint="flip-1")
++    assert len(_transitions(dept, first)) == rows_before  # no token minted
++    assert _ledger_lines(dept, first["run_id"]) == ledger_before
++    assert _markers(dept) == ["sense"]
++
++
++def test_redirected_decision_target_refuses_resume(tmp_path):
++    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
++                                 "n2.py": _mark_node("n2"),
++                                 "n3.py": _mark_node("n3")},
++                      _chain_manifest())
++    first = _run(dept, tmp_path, fingerprint="redirect-1")
++    assert first["state"] == "done"
++    rows_before = len(_transitions(dept, first))
++
++    def redirect(state):
++        state["state"] = "running"
++        feed = [d for d in state["nodes"]["N1"]["decisions"]
++                if d.get("to") == "N2"][0]
++        feed["to"] = "N3"  # reroute to another REAL node
++    _rewrite_state(dept, first["run_id"], redirect)
++    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
++        _run(dept, tmp_path, fingerprint="redirect-1")
++    assert len(_transitions(dept, first)) == rows_before
++    assert _markers(dept) == ["n1", "n2", "n3"]  # nothing re-executed
++
++
++def _fanout_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/n1.py"),
++                      _node("N2", "runtime/n2.py"),
++                      _node("N3", "runtime/n3.py")],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal", "when": "true"},
++                {"from": "N1", "to": "N3", "kind": "normal", "when": "true"},
++                {"from": "N2", "kind": "terminal", "when": "true"},
++                {"from": "N3", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++
++
++# --------------------------------------------------------------------------- #
++# R5-C5: TRUE boundary interruptions — a hook raises at the exact boundary,
++# simulating process death; resume must give exactly-once effects.
++# --------------------------------------------------------------------------- #
++
++def _crash_once_at(boundary):
++    state = {"armed": True}
++
++    def hook(name):
++        if name == boundary and state["armed"]:
++            state["armed"] = False
++            raise RuntimeError(f"simulated crash at {boundary}")
++    return hook
++
++
++def test_interrupt_before_row_persist_resumes_exactly_once(tmp_path):
++    # (i) crash after token mint/verify but BEFORE the row lands: the edge
++    # has no row, so resume refires it — the source node must NOT re-execute.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    with pytest.raises(RuntimeError, match="pre_row_persist"):
++        RUN.run_graph(dept, trigger_fingerprint="b1", signer=SIGNER,
++                      root=tmp_path, sleep_fn=lambda s: None,
++                      crash_hook=_crash_once_at("pre_row_persist"))
++    assert _markers(dept) == ["sense"]
++    second = RUN.run_graph(dept, trigger_fingerprint="b1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True
++    assert second["state"] == "done"
++    assert _markers(dept) == ["sense"]  # N1 executed exactly once, ever
++    feeds = [t for t in _transitions(dept, second)
++             if t["from"] == "N1" and t["to"] == "N2"]
++    assert len(feeds) == 1  # exactly one row for the edge
++
++
++def test_interrupt_between_row_and_fired_mints_no_second_token(tmp_path):
++    # (ii) crash AFTER the row persisted, BEFORE the decision marked fired:
++    # resume must ADOPT the row — exactly-once, provable via the nonce ledger.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    with pytest.raises(RuntimeError, match="post_row_persist"):
++        RUN.run_graph(dept, trigger_fingerprint="b2", signer=SIGNER,
++                      root=tmp_path, sleep_fn=lambda s: None,
++                      crash_hook=_crash_once_at("post_row_persist"))
++    second = RUN.run_graph(dept, trigger_fingerprint="b2", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True
++    assert second["state"] == "done"
++    assert _markers(dept) == ["sense"]
++    transitions = _transitions(dept, second)
++    feeds = [t for t in transitions if t["from"] == "N1" and t["to"] == "N2"]
++    assert len(feeds) == 1  # the persisted row was adopted, not re-minted
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "row_adopted" for row in rows)
++    # one consumption per minted token, one token per row: exactly-once
++    assert _ledger_lines(dept, second["run_id"]) == len(transitions)
++
++
++def test_interrupt_after_fired_before_enqueue_feeds_successor_once(tmp_path):
++    # (iii) crash AFTER the decision marked fired, BEFORE the successor was
++    # enqueued: resume feeds the successor from the fired decision and fires
++    # the remaining fan-out edge — every node executes exactly once.
++    dept = _make_dept(tmp_path, {"n1.py": _mark_node("n1"),
++                                 "n2.py": _mark_node("n2"),
++                                 "n3.py": _mark_node("n3")},
++                      _fanout_manifest())
++    with pytest.raises(RuntimeError, match="post_mark_fired"):
++        RUN.run_graph(dept, trigger_fingerprint="b3", signer=SIGNER,
++                      root=tmp_path, sleep_fn=lambda s: None,
++                      crash_hook=_crash_once_at("post_mark_fired"))
++    second = RUN.run_graph(dept, trigger_fingerprint="b3", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert second["resumed"] is True
++    assert second["state"] == "done"
++    markers = _markers(dept)
++    assert markers.count("n1") == 1
++    assert markers.count("n2") == 1
++    assert markers.count("n3") == 1
++    transitions = _transitions(dept, second)
++    assert len([t for t in transitions
++                if t["from"] == "N1" and t["to"] == "N2"]) == 1
++    assert len([t for t in transitions
++                if t["from"] == "N1" and t["to"] == "N3"]) == 1
++
++
++def test_resume_concludes_persisted_failure_exit_without_new_rows(tmp_path):
++    # (c) a fired failure exit is TERMINAL: resume concludes failed — it never
++    # appends a second exit row nor mutates failed into escalated.
++    manifest = _two_node_manifest()
++    manifest["subgraphs"][0]["nodes"][0]["failure_policy"]["on_fail"] = "fail"
++    dept = _make_dept(tmp_path, {"sense.py": FAIL_NODE, "record.py": RECORD_OK},
++                      manifest)
++    first = _run(dept, tmp_path, fingerprint="exit-1")
++    assert first["state"] == "failed"
++    rows_before = len(_transitions(dept, first))
++    _rewrite_state(dept, first["run_id"],
++                   lambda s: s.update(state="awaiting_receipt"))
++    second = _run(dept, tmp_path, fingerprint="exit-1")
++    assert second["resumed"] is True
++    assert second["state"] == "failed"  # not escalated
++    assert len(_transitions(dept, second)) == rows_before  # no new rows
++    assert _markers(dept) == ["fail"]  # no re-execution
++    assert _state_json(dept, second)["termination_reason"] == "on_fail_fail"
++
++
++def test_tampered_record_refuses_resume(tmp_path):
++    # (d) prior receipts are REVERIFIED before the frontier is trusted.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="tamper-1")
++    assert first["state"] == "done"
++
++    def tamper(state):
++        state["state"] = "running"
++        token = state["transitions"][0]["step_receipt"]
++        state["transitions"][0]["step_receipt"] = token[:-4] + "AAAA"
++    _rewrite_state(dept, first["run_id"], tamper)
++    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
++        _run(dept, tmp_path, fingerprint="tamper-1")
++    assert _markers(dept) == ["sense"]  # nothing executed
++
++
++# --------------------------------------------------------------------------- #
++# C4: a re-pin between crash and resume refuses — preserved tokens must not
++# be re-homed under a release they were never issued for.
++# --------------------------------------------------------------------------- #
++
++def test_repin_between_crash_and_resume_refuses(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="repin-1")
++    assert first["state"] == "done"
++    before = _state_json(dept, first)
++    _rewrite_state(dept, first["run_id"],
++                   lambda s: s.update(state="running"))
++    manifest = _two_node_manifest()
++    manifest["_note"] = "process change after the crash"
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    h = REL.pin_release(dept, dept / "releases", source_ref="repin")
++    REL.flip_current(dept / "releases", h)
++    with pytest.raises(RUN.RunnerRefused, match="release_integrity"):
++        _run(dept, tmp_path, fingerprint="repin-1")
++    assert _markers(dept) == ["sense"]  # no execution
++    after = _state_json(dept, first)
++    assert after["transitions"] == before["transitions"]  # tokens untouched
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "run_refused"
++               and "release_integrity" in row.get("reason", "") for row in rows)
++
++
++def test_held_run_lock_noops_cleanly(tmp_path):
++    import subprocess as subprocess_mod
++    import sys as sys_mod
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    run_dir = dept / "state" / "graph_runs" / _run_id_for("held-1")
++    run_dir.mkdir(parents=True)
++    locker_src = ("import fcntl, sys, time\n"
++                  "handle = open(sys.argv[1], 'a+')\n"
++                  "fcntl.flock(handle.fileno(), fcntl.LOCK_EX)\n"
++                  "print('locked', flush=True)\n"
++                  "time.sleep(30)\n")
++    locker = subprocess_mod.Popen(
++        [sys_mod.executable, "-c", locker_src, str(run_dir / ".run.lock")],
++        stdout=subprocess_mod.PIPE, text=True)
++    try:
++        assert locker.stdout.readline().strip() == "locked"
++        result = _run(dept, tmp_path, fingerprint="held-1")
++        assert result["duplicate"] is True
++        assert result["state"] == "in_flight"
++        assert _markers(dept) == []
++    finally:
++        locker.terminate()
++        locker.wait()
++
++
++# --------------------------------------------------------------------------- #
++# Shadow enforcement + kill
++# --------------------------------------------------------------------------- #
++
++def test_external_action_in_shadow_kills_run(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": VIOLATOR, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "shadow_violation" for row in rows)
++
++
++def test_kill_file_kills_run(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    (dept / "state").mkdir(exist_ok=True)
++    (dept / "state" / "KILL").write_text("stop\n", encoding="utf-8")
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    assert _markers(dept) == []
++
++
++KILL_DURING_NODE = """\
++import json, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "markers.txt").open("a", encoding="utf-8") as fh:
++    fh.write("sense\\n")
++(state / "KILL").write_text("stop\\n", encoding="utf-8")
++print(json.dumps({"status": "ok", "delivered_count": 0}))
++"""
++
++
++def test_kill_raised_during_node_prevents_any_transition(tmp_path):
++    # The kill switch is polled again AFTER node completion, BEFORE any
++    # transition: a kill raised mid-node stops the graph walk cold.
++    dept = _make_dept(tmp_path, {"sense.py": KILL_DURING_NODE,
++                                 "record.py": RECORD_OK},
++                      _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    assert _markers(dept) == ["sense"]  # N1 ran, N2 never did
++    assert _transitions(dept, result) == []
++
++
++# --------------------------------------------------------------------------- #
++# Wedged-run recovery (B5) — the idempotency lock must not entomb a crash
++# --------------------------------------------------------------------------- #
++
++def _run_id_for(fingerprint):
++    import hashlib
++    return "SG-RUN-" + hashlib.sha256(fingerprint.encode()).hexdigest()
++
++
++def test_identity_incomplete_checkpoint_refuses_resume(tmp_path):
++    # R5-C3: an EXISTING state file with missing or malformed identity must
++    # refuse — it would silently skip the re-pin fence otherwise. Only a
++    # genuinely absent state file may initialize fresh.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-1")
++    run_dir.mkdir(parents=True)
++    (run_dir / "run_state.json").write_text(
++        json.dumps({"schema": "graph-run-v1", "state": "awaiting_receipt"}),
++        encoding="utf-8")  # no graph/release identity at all
++    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
++        _run(dept, tmp_path, fingerprint="wedge-1")
++    assert _markers(dept) == []
++    run_dir2 = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
++    run_dir2.mkdir(parents=True)
++    (run_dir2 / "run_state.json").write_text("{broken", encoding="utf-8")
++    with pytest.raises(RUN.RunnerRefused, match="resume_integrity"):
++        _run(dept, tmp_path, fingerprint="wedge-2")
++    assert _markers(dept) == []
++
++
++def test_stale_projection_cannot_pass_after_signing_failure(tmp_path):
++    # R5-C4: a signing failure must not leave the PRIOR signed projection in
++    # place as if it were current — quarantine it and leave an unmistakably
++    # invalid artifact at the canonical path.
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="proj-1")
++    assert first["state"] == "done"
++    proj_path = dept / "state" / "receipts" / "execution-projection.json"
++    assert PJ.verify_projection(
++        json.loads(proj_path.read_text(encoding="utf-8")), SIGNER) == []
++    raising = _RaisingSignSigner(R.LocalSigner(key="test-key"))
++    result = RUN.run_graph(dept, trigger_fingerprint="proj-2", signer=raising,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "killed"
++    current = json.loads(proj_path.read_text(encoding="utf-8"))
++    findings = PJ.verify_projection(current, SIGNER)
++    assert findings, "old projection still passes as current"
++    stale = proj_path.with_suffix(".json.stale")
++    assert stale.exists()  # the prior projection is quarantined, not erased
++    rows = [json.loads(line) for line in
++            (dept / "state" / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
++    assert any(row.get("event") == "projection_export_failed" for row in rows)
++
++
++def test_crash_before_first_state_persist_recovers(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    run_dir = dept / "state" / "graph_runs" / _run_id_for("wedge-2")
++    run_dir.mkdir(parents=True)  # crash between mkdir and first persist
++    result = _run(dept, tmp_path, fingerprint="wedge-2")
++    assert result["resumed"] is True
++    assert result["state"] == "done"
++
++
++def test_terminal_run_still_noops_on_duplicate(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      _two_node_manifest())
++    first = _run(dept, tmp_path, fingerprint="t-done")
++    assert first["state"] == "done"
++    second = _run(dept, tmp_path, fingerprint="t-done")
++    assert second["duplicate"] is True
++    assert _markers(dept) == ["sense"]
++
++
++def test_pathological_predicate_graph_refused_cleanly_no_wedge(tmp_path):
++    manifest = _two_node_manifest()
++    depth = 64
++    manifest["subgraphs"][0]["edges"][0]["when"] = (
++        "(" * depth + "true" + ")" * depth)
++    dept = _make_dept(tmp_path, {"sense.py": SENSE_OK, "record.py": RECORD_OK},
++                      manifest)
++    with pytest.raises(RUN.RunnerRefused, match="depth"):
++        _run(dept, tmp_path, fingerprint="patho")
++    assert _markers(dept) == []
++    assert not (dept / "state" / "graph_runs").exists()  # nothing wedged
++
++
++# --------------------------------------------------------------------------- #
++# Run state machine
++# --------------------------------------------------------------------------- #
++
++def test_terminal_states_cannot_advance():
++    machine = RUN.RunStateMachine()
++    machine.advance("running")
++    machine.advance("done")
++    with pytest.raises(RUN.StateError):
++        machine.advance("running")
++
++
++def test_illegal_transition_rejected():
++    machine = RUN.RunStateMachine()
++    with pytest.raises(RUN.StateError):
++        machine.advance("done")  # pending cannot jump straight to done
+diff --git a/tests/test_step_receipts.py b/tests/test_step_receipts.py
+new file mode 100644
+index 0000000..877c7e9
+--- /dev/null
++++ b/tests/test_step_receipts.py
+@@ -0,0 +1,204 @@
++"""Step receipts: signed transition tokens for the deterministic runner.
++
++Closes the audit gap 'step receipts are forgeable plain JSON': a transition
++token is HMAC-signed over a binding of (department, graph identity + hash,
++release hash, run, node, attempt, output hash) using the SAME hardened
++issue/verify path as effect receipts (kernel/receipts.py) — which this module
++extends and must never weaken. A token is single-use PERIOD: one consumption,
++any successor (fan-out mints one token per transition), and consumption is
++DURABLE — a runner restart must not reopen replay.
++"""
++import importlib.util
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("step_receipts_kernel_receipts", "kernel/receipts.py")
++SR = _load("step_receipts", "kernel/step_receipts.py")
++
++
++IDENTITY = dict(
++    department="demo",
++    graph_id="SG-RUN",
++    graph_hash="a" * 64,
++    release_hash="feedfeedfeedfeed",
++    run_id="SG-RUN-0001",
++    node_id="N1",
++    attempt=1,
++)
++OUTPUT = {"status": "ok", "delivered_count": 0}
++
++
++def _signer(key="k"):
++    return R.LocalSigner(key=key)
++
++
++def _issue(now=1000.0, key="k", **overrides):
++    identity = {**IDENTITY, **overrides}
++    return SR.issue_step_receipt(
++        signer=_signer(key), now=now, output=OUTPUT, ttl_s=600, **identity)
++
++
++def _verify(token, *, now=1010.0, key="k", consumed=None, output=OUTPUT,
++            **overrides):
++    identity = {**IDENTITY, **overrides}
++    return SR.verify_step_receipt(
++        token, signer=_signer(key), now=now, output=output,
++        consumed=consumed if consumed is not None else set(), **identity)
++
++
++def test_valid_step_receipt_verifies():
++    assert _verify(_issue()).ok is True
++
++
++def test_forged_plain_json_rejected():
++    forged = '{"node_id": "N1", "status": "done"}'
++    assert _verify(forged).ok is False
++
++
++def test_wrong_key_rejected():
++    result = _verify(_issue(key="attacker"))
++    assert result.ok is False
++    assert "signature" in result.reason
++
++
++def test_expired_rejected():
++    result = _verify(_issue(now=100.0), now=100.0 + 601)
++    assert result.ok is False
++    assert "expired" in result.reason
++
++
++def test_tampered_output_rejected():
++    result = _verify(_issue(), output={"status": "ok", "delivered_count": 7})
++    assert result.ok is False
++    assert "binding" in result.reason
++
++
++def test_cross_run_replay_rejected():
++    result = _verify(_issue(), run_id="SG-RUN-0002")
++    assert result.ok is False
++    assert "binding" in result.reason
++
++
++def test_release_disagreement_rejected():
++    result = _verify(_issue(), release_hash="0123012301230123")
++    assert result.ok is False
++    assert "binding" in result.reason
++
++
++def test_single_use_period_any_successor(tmp_path):
++    # One consumption, ANY successor: the second verify dies even though a
++    # different successor would consume it — fan-out mints one token per edge.
++    token = _issue()
++    consumed = SR.DurableNonceStore(tmp_path / "consumed.jsonl")
++    assert _verify(token, consumed=consumed).ok is True
++    replay = _verify(token, consumed=consumed)
++    assert replay.ok is False
++    assert "replay" in replay.reason
++
++
++def test_consumption_survives_restart(tmp_path):
++    # Simulated restart: a FRESH store over the same file (new process) must
++    # still refuse the consumed token — durability, not process memory.
++    token = _issue()
++    path = tmp_path / "consumed.jsonl"
++    assert _verify(token, consumed=SR.DurableNonceStore(path)).ok is True
++    after_restart = _verify(token, consumed=SR.DurableNonceStore(path))
++    assert after_restart.ok is False
++    assert "replay" in after_restart.reason
++
++
++def test_distinct_tokens_for_same_step_consume_independently(tmp_path):
++    consumed = SR.DurableNonceStore(tmp_path / "consumed.jsonl")
++    first, second = _issue(), _issue()
++    assert first != second  # fresh nonce per token
++    assert _verify(first, consumed=consumed).ok is True
++    assert _verify(second, consumed=consumed).ok is True
++
++
++def test_torn_trailing_line_is_tolerated(tmp_path):
++    path = tmp_path / "consumed.jsonl"
++    token = _issue()
++    assert _verify(token, consumed=SR.DurableNonceStore(path)).ok is True
++    with path.open("a", encoding="utf-8") as fh:
++        fh.write('{"nonce": "tor')  # crashed mid-write
++    reloaded = SR.DurableNonceStore(path)
++    assert _verify(token, consumed=reloaded).ok is False  # prior consumption kept
++
++
++def test_non_finite_output_has_no_canonical_hash():
++    import pytest
++    with pytest.raises(ValueError):
++        SR.output_hash({"n": float("inf")})
++
++
++def test_verify_by_output_hash_alone_matches_verify_by_output():
++    # R2: an auditor holding only the persisted output HASH (not the body)
++    # must be able to reverify a token — the binding already carries only the
++    # hash, so rebinding by hash is the same attestation.
++    token = _issue()
++    by_hash = SR.verify_step_receipt(
++        token, signer=_signer(), now=1010.0, output_hash=SR.output_hash(OUTPUT),
++        consumed=set(), **IDENTITY)
++    assert by_hash.ok is True
++    tampered = SR.verify_step_receipt(
++        token, signer=_signer(), now=1010.0,
++        output_hash=SR.output_hash({"status": "tampered"}),
++        consumed=set(), **IDENTITY)
++    assert tampered.ok is False
++    assert "binding" in tampered.reason
++
++
++def test_issue_by_output_hash_round_trips():
++    identity = dict(IDENTITY)
++    token = SR.issue_step_receipt(
++        signer=_signer(), now=1000.0, output_hash=SR.output_hash(OUTPUT),
++        ttl_s=600, **identity)
++    assert _verify(token).ok is True
++
++
++def test_exactly_one_of_output_and_hash_required():
++    import pytest
++    with pytest.raises(ValueError):
++        SR.issue_step_receipt(signer=_signer(), now=1000.0, ttl_s=600,
++                              **IDENTITY)
++    with pytest.raises(ValueError):
++        SR.verify_step_receipt(_issue(), signer=_signer(), now=1010.0,
++                               output=OUTPUT, output_hash="a" * 64,
++                               consumed=set(), **IDENTITY)
++
++
++def test_reverify_limitation_documented_verbatim():
++    # Reviewer-required wording (round-4 C5), enforced so it cannot drift.
++    required = ("attests receipt authenticity and binding integrity under the "
++                "recorded identity; does NOT prove output content, schema "
++                "conformance, or predicate correctness — no body exists to "
++                "recompute.")
++    assert required in " ".join(SR.reverify_transition.__doc__.split())
++
++
++def test_reverify_transition_from_persisted_row_and_record():
++    # R2: reverification needs ONLY (key service + run record + row).
++    token = _issue()
++    row = {"from": IDENTITY["node_id"], "attempt": IDENTITY["attempt"],
++           "step_receipt": token, "output_sha256": SR.output_hash(OUTPUT)}
++    record = {"department": IDENTITY["department"],
++              "loop_id": IDENTITY["graph_id"],
++              "graph_hash": IDENTITY["graph_hash"],
++              "release_hash": IDENTITY["release_hash"],
++              "run_id": IDENTITY["run_id"]}
++    result = SR.reverify_transition(row, record=record, signer=_signer(),
++                                    now=1010.0)
++    assert result.ok is True
++    forged = dict(row, step_receipt='{"forged": true}')
++    assert SR.reverify_transition(forged, record=record, signer=_signer(),
++                                  now=1010.0).ok is False

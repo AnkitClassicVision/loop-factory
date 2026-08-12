@@ -1,0 +1,20 @@
+{
+  "run_name": "loop-drive-contract",
+  "workdir": "/mnt/d_drive/ringer-work/loop-drive-contract-r7b",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "r7b-u4-verify",
+      "engine": "local-shell",
+      "task_type": "code-fix",
+      "timeout_s": 1500,
+      "spec": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-drive-contract/checks/wave1_export_check.py --unit u4 --worktree /mnt/d_drive/ringer-work/loop-drive-contract-r7/r7-u4-reentry --base /mnt/d_drive/repos/podcast --patch /mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.patch --summary /mnt/d_drive/ringer-work/loop-drive-contract-r7/r7-u4-reentry/fix-summary.md --exported-summary /mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.summary.md",
+      "check": "python3 -c \"import sys,re,pathlib; p=pathlib.Path('/mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.patch'); s=pathlib.Path('/mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.summary.md'); ok=True;\nimport io\nif not p.is_file() or p.stat().st_size==0: print('CHECK FAIL: patch missing or empty at',p); ok=False\nelse:\n    text=p.read_text(encoding='utf-8'); files=set(re.findall(r'^diff --git a/(\\\\S+)', text, re.M)); allowed={'scripts/run_podcast_loop.sh','scripts/obe_loop_verdict.py'}\n    if not files: print('CHECK FAIL: patch has no diff headers'); ok=False\n    if files-allowed: print('CHECK FAIL: patch touches files outside ownership:',files-allowed); ok=False\n    if 'REENTRY' not in text or 'worker-minutes' not in text: print('CHECK FAIL: patch lacks the REENTRY stamp or the worker-minutes ledger implementation'); ok=False\nif not s.is_file(): print('CHECK FAIL: exported summary missing at',s); ok=False\nelse:\n    st=s.read_text(encoding='utf-8').lower()\n    missing=[h for h in ('# fix summary','## summary','## files changed','## verification','## assumptions') if h not in st]\n    if missing: print('CHECK FAIL: summary missing sections:',missing); ok=False\nprint('CHECK PASS: patch confined to owned files, contract markers present, summary complete' if ok else 'CHECK FAIL: see above'); sys.exit(0 if ok else 1)\"",
+      "expect_files": [
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.patch",
+        "/mnt/d_drive/ringer-work/loop-drive-contract-r7b/r7b-u4-verify.summary.md"
+      ],
+      "verified": "the preserved r7 U4 worktree passes the full executed re-entry check (real runner through the shadow harness) and its patch, confined to the two owned files, is exported with a complete summary"
+    }
+  ]
+}

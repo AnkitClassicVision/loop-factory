@@ -1,0 +1,19 @@
+{
+  "run_name": "podcast-loop-hardening",
+  "workdir": "/home/ankit114/ringer-work/podcast-loop-hardening-r12",
+  "max_parallel": 1,
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "tasks": [
+    {
+      "key": "final-two",
+      "engine": "codex",
+      "task_type": "code-fix",
+      "timeout_s": 1800,
+      "spec": "You are a fix worker on the loop-factory repo. Your current working directory IS a git worktree of /mnt/d_drive/repos/loop-factory — edit files here directly. Do NOT git commit, branch, or push; leave changes uncommitted. Do not load skills or call MCP/Apps. No network access. Python stdlib only. Two surgical fixes, each with a proving test.\n\nOWNERSHIP: you own ONLY: factory/launch.py, departments/podcast/runtime/escalate_outbox.py, tests/test_launch_capabilities.py, departments/podcast/tests/test_records_integrity.py. Never modify anything else.\n\nFINDINGS:\n1. HIGH factory/launch.py ~:80 — the capability-launch interpreter check uses a basename PREFIX match ('python3*'), so a non-interpreter like /usr/bin/python3-html2text would receive the capability environment. Fix: the basename must match exactly 'python3' or the regex ^python3\\.\\d+$ (or the command's realpath equals the realpath of sys.executable); anything else is refused. Test: a fake executable named python3-html2text in tmp_path is refused; plain python3 and sys.executable still accepted.\n2. HIGH departments/podcast/runtime/escalate_outbox.py ~:150 — the crash-replay dedupe marker match includes MUTABLE fields (issue text/failure_class), so a legitimate failure-class change occurring after append-but-before-state-write makes the prior valid marker miss and a duplicate escalation row is emitted. Fix: the dedupe identity must be IMMUTABLE fields only — fingerprint + state-generation marker (the schema validation of the row from the recent hardening stays; only the identity-match criteria narrow). Mutable fields may be recorded but never compared for dedupe. Test: append a valid row, mutate the incident's failure_class/one_question, re-run escalation → no duplicate row, state repaired.\n\nHOW TO RUN: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest departments/podcast/tests/ tests/ -q (all must pass).\n\nOUTPUT CONTRACT: leave changes uncommitted; write ./fix-summary.md ('# Fix Summary', '## Summary', '## Files Changed', '## Verification', '## Assumptions', <400 words).",
+      "check": "python3 '/home/ankit114/repos/ringer/templates/fix-swarm/checks/fix-swarm.py' --verify-command 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest departments/podcast/tests/ tests/ -q' --patch '/home/ankit114/ringer-work/podcast-loop-hardening-r12/final-two.patch' --summary fix-summary.md --exported-summary '/home/ankit114/ringer-work/podcast-loop-hardening-r12/final-two.summary.md' --owned-files 'factory/launch.py,departments/podcast/runtime/escalate_outbox.py,tests/test_launch_capabilities.py,departments/podcast/tests/test_records_integrity.py'",
+      "expect_files": [],
+      "verified": "both suites passed including exact-interpreter and immutable-dedupe-identity tests; patch touches only the four owned files"
+    }
+  ]
+}

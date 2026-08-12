@@ -1,0 +1,3166 @@
+
+[ringer.py] attempt 1 started 2026-08-03T15:08:08.158930+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor 'You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/runtime/comms_reconcile_sensor.py (create), tests/test_comms_reconcile_sensor.py (create), tests/fixtures/comms_reconcile/ (create, fixture JSONs). Nothing else. Never touch .git, never commit, never push. Never modify charter.yaml, runbooks/, CLAUDE.md, or any existing file. Do not load skills or call MCP/Apps. The sensor and your work are strictly LOCAL and READ-ONLY toward the world: no network imports (no requests/urllib usage/smtplib/googleapiclient), no sends, no writes outside owned paths.
+
+READ FIRST (read-only, for conventions): departments/podcast/runtime/hopper_sensor.py and departments/podcast/runtime/pipeline_sensor.py (the sensor idiom in this codebase: argparse CLI, pure functions, JSON out), departments/podcast/runtime/README.md if present. You MAY read /mnt/d_drive/repos/podcast/episodes/_loop_receipts/referral-touch-20260803.json READ-ONLY to learn the real tracker-report schema (schema name obe.referral-touch-report.v1) — but you must NOT copy any name, email, or contact-identifying value out of it; your fixtures are fully synthetic with counts only.
+
+FEATURE BRIEF — the comms reconcile sensor. Context: the podcast estate asks past guests for referrals. A tracker report counts outbound referral touches and inbound replies; a referral ledger (REFERRALS.json, schema referral-ledger-v1) holds harvested referrals in its referrals[] array. Recently the truth was 57 asked, 16 replied, 0 harvested — an open loop nothing detected. Build a standalone, pure, deterministic sensor that reads BOTH files and applies the open-loop invariant: if an upstream count is > 0 and the next count downstream is 0, emit a finding.
+
+CLI CONTRACT (the check depends on this exactly): python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker PATH --ledger PATH [--sla-hours N] prints to stdout a single JSON object {"findings": [...]} and exits 0 whenever it ran (findings are data, not errors; a malformed input file IS an error finding with code "input_unreadable", still exit 0). Each open-loop finding must include at least: code="open_loop", chain (e.g. "replied->harvested"), asked (int), replied (int), harvested (int), severity ("warn" or "action"), and a human-readable detail sentence. Derive asked/replied from the tracker report'"'"'s counts and harvested from len(referrals[]) in the ledger. Handle both key spellings you find in the real tracker schema gracefully; if a count is absent, treat it as unknown and emit code="count_missing" rather than assuming zero (unmeasured is never zero in this codebase).
+
+FIXTURES (all synthetic): tests/fixtures/comms_reconcile/tracker_57_16_0.json (57 outbound touches, 16 inbound replies), referrals_empty.json (valid referral-ledger-v1 with referrals: []), tracker_healthy.json + referrals_present.json (a healthy pair where replies exist AND referrals[] is non-empty so NO open_loop fires). No real names, no real email domains.
+
+TESTS (tests/test_comms_reconcile_sensor.py): (1) the 57/16/0 pair yields exactly one open_loop finding with replied=16, harvested=0; (2) the healthy pair yields no open_loop; (3) missing count key yields count_missing, not a zero assumption; (4) unreadable ledger path yields input_unreadable, exit 0.
+
+HOW TO RUN, from repo root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q · then the CLI against your fixtures as in the contract above.
+
+OUTPUT CONTRACT: the owned files, plus ./notes.md: what you read, the real tracker-schema keys you bound to (keys only, no values), commands run and results, assumptions.
+
+HARD RULES: standard library only; no wiring into the daily chain or manager (that is a separate governed map change); boring, small, matching the sibling sensors'"'"' style.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.146.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fc82a-fe04-7e92-b2a0-9f65a47fc72e
+--------
+user
+You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/runtime/comms_reconcile_sensor.py (create), tests/test_comms_reconcile_sensor.py (create), tests/fixtures/comms_reconcile/ (create, fixture JSONs). Nothing else. Never touch .git, never commit, never push. Never modify charter.yaml, runbooks/, CLAUDE.md, or any existing file. Do not load skills or call MCP/Apps. The sensor and your work are strictly LOCAL and READ-ONLY toward the world: no network imports (no requests/urllib usage/smtplib/googleapiclient), no sends, no writes outside owned paths.
+
+READ FIRST (read-only, for conventions): departments/podcast/runtime/hopper_sensor.py and departments/podcast/runtime/pipeline_sensor.py (the sensor idiom in this codebase: argparse CLI, pure functions, JSON out), departments/podcast/runtime/README.md if present. You MAY read /mnt/d_drive/repos/podcast/episodes/_loop_receipts/referral-touch-20260803.json READ-ONLY to learn the real tracker-report schema (schema name obe.referral-touch-report.v1) — but you must NOT copy any name, email, or contact-identifying value out of it; your fixtures are fully synthetic with counts only.
+
+FEATURE BRIEF — the comms reconcile sensor. Context: the podcast estate asks past guests for referrals. A tracker report counts outbound referral touches and inbound replies; a referral ledger (REFERRALS.json, schema referral-ledger-v1) holds harvested referrals in its referrals[] array. Recently the truth was 57 asked, 16 replied, 0 harvested — an open loop nothing detected. Build a standalone, pure, deterministic sensor that reads BOTH files and applies the open-loop invariant: if an upstream count is > 0 and the next count downstream is 0, emit a finding.
+
+CLI CONTRACT (the check depends on this exactly): python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker PATH --ledger PATH [--sla-hours N] prints to stdout a single JSON object {"findings": [...]} and exits 0 whenever it ran (findings are data, not errors; a malformed input file IS an error finding with code "input_unreadable", still exit 0). Each open-loop finding must include at least: code="open_loop", chain (e.g. "replied->harvested"), asked (int), replied (int), harvested (int), severity ("warn" or "action"), and a human-readable detail sentence. Derive asked/replied from the tracker report's counts and harvested from len(referrals[]) in the ledger. Handle both key spellings you find in the real tracker schema gracefully; if a count is absent, treat it as unknown and emit code="count_missing" rather than assuming zero (unmeasured is never zero in this codebase).
+
+FIXTURES (all synthetic): tests/fixtures/comms_reconcile/tracker_57_16_0.json (57 outbound touches, 16 inbound replies), referrals_empty.json (valid referral-ledger-v1 with referrals: []), tracker_healthy.json + referrals_present.json (a healthy pair where replies exist AND referrals[] is non-empty so NO open_loop fires). No real names, no real email domains.
+
+TESTS (tests/test_comms_reconcile_sensor.py): (1) the 57/16/0 pair yields exactly one open_loop finding with replied=16, harvested=0; (2) the healthy pair yields no open_loop; (3) missing count key yields count_missing, not a zero assumption; (4) unreadable ledger path yields input_unreadable, exit 0.
+
+HOW TO RUN, from repo root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q · then the CLI against your fixtures as in the contract above.
+
+OUTPUT CONTRACT: the owned files, plus ./notes.md: what you read, the real tracker-schema keys you bound to (keys only, no values), commands run and results, assumptions.
+
+HARD RULES: standard library only; no wiring into the daily chain or manager (that is a separate governed map change); boring, small, matching the sibling sensors' style.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+codex
+Ankit — I’ll inspect only the named convention files and schema keys, then create the sensor, synthetic fixtures, tests, and scratch `notes.md`. I will not load skills, use MCP/apps, or touch anything outside the ownership boundary.
+exec
+/bin/bash -lc "sed -n '1,240p' departments/podcast/runtime/hopper_sensor.py && sed -n '1,260p' departments/podcast/runtime/pipeline_sensor.py && if [ -f departments/podcast/runtime/README.md ]; then sed -n '1,240p' departments/podcast/runtime/README.md; fi" in /mnt/d_drive/repos/loop-factory
+ succeeded in 46ms:
+"""Observe owner objectives from deterministic, read-only pipeline evidence.
+
+``hopper_depth`` is intentionally a weaker proxy than "every recording that has
+not been published."  The pipeline has old, unscheduled and overdue episode
+directories whose local stages do not prove that they remain release inventory.
+Counting those directories made the known empty hopper look full.  This sensor
+therefore counts ``future_scheduled_recordings_with_media_not_published``:
+
+* ``episodes/<id>/episode.json`` has a publish date on or after the UTC reading
+  date;
+* its stage timestamps contain ``recording-done``;
+* a non-empty audio/video asset exists under ``raw/`` or ``final/``; and
+* neither the stage history nor provider/readback data proves publication.
+
+This is deterministic and makes a real empty result distinguishable from a
+missing source.  Its limit is deliberate: an unscheduled recording, or a
+scheduled row without both the stage receipt and media, is not counted.  If the
+episodes source is absent or any episode record is unreadable/ambiguous, the
+sensor emits no ``hopper_depth`` value rather than inventing zero.
+
+``publish_reliability`` reuses same-UTC-day ``publish_verifier`` observations
+for every episode due in ``publish_schedule.json``.  It is omitted when there
+are no episodes due or complete verifier evidence is unavailable; historical
+on-time reliability cannot be reconstructed from current public-state evidence.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+import tempfile
+import time
+from collections.abc import Mapping
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from factory import runrecord
+
+
+DEFAULT_PIPELINE_REPO = Path("/mnt/d_drive/repos/podcast")
+MEDIA_SUFFIXES = frozenset(
+    {".aac", ".flac", ".m4a", ".mkv", ".mov", ".mp3", ".mp4", ".wav", ".webm"}
+)
+PUBLISHED_STAGES = frozenset(
+    {
+        "published",
+        "promo-scheduled",
+        "promo-kit-sent",
+        "promo-sent",
+        "followup-sent",
+        "complete",
+    }
+)
+OWNED_VALUES = frozenset({"hopper_depth", "publish_reliability"})
+LOGGER = logging.getLogger(__name__)
+
+
+def _append(state_dir: Path, observation: dict[str, Any]) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(observation, sort_keys=True) + "\n")
+
+
+def _normalise(value: Any) -> str:
+    return str(value or "").strip().casefold().replace("_", "-")
+
+
+def _parse_date(value: Any) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            return None
+
+
+def _mapping_proves_published(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("published") is True or value.get("verified_public") is True:
+        return True
+    if _normalise(value.get("status")) == "published":
+        return True
+    if (
+        _normalise(value.get("privacy_status")) == "public"
+        and (value.get("observed_at") or value.get("verified_at"))
+    ):
+        return True
+    return any(
+        _mapping_proves_published(item)
+        for item in value.values()
+        if isinstance(item, Mapping)
+    )
+
+
+def _proves_published(episode: dict[str, Any]) -> bool:
+    timestamps = episode.get("stage_timestamps")
+    if isinstance(timestamps, Mapping) and timestamps.get("published"):
+        return True
+    if _normalise(episode.get("stage")) in PUBLISHED_STAGES:
+        return True
+    return any(
+        _mapping_proves_published(episode.get(key))
+        for key in ("publish_status", "publish_verification", "publish_receipt")
+    )
+
+
+def _has_recording_receipt(episode: dict[str, Any]) -> bool:
+    timestamps = episode.get("stage_timestamps")
+    return bool(isinstance(timestamps, Mapping) and timestamps.get("recording-done"))
+
+
+def _has_media(episode_dir: Path) -> bool:
+    for root_name in ("raw", "final"):
+        root = episode_dir / root_name
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            try:
+                if (
+                    path.is_file()
+                    and path.suffix.casefold() in MEDIA_SUFFIXES
+                    and path.stat().st_size > 0
+                ):
+                    return True
+            except OSError:
+                return False
+    return False
+
+
+def _hopper_depth(
+    pipeline_repo: Path, today: date
+) -> tuple[int | None, str, dict[str, Any]]:
+    episodes_dir = pipeline_repo / "episodes"
+    if not episodes_dir.is_dir():
+        return None, f"missing source: {episodes_dir}", {}
+
+    episode_paths = sorted(
+        path / "episode.json"
+        for path in episodes_dir.iterdir()
+        if path.is_dir() and (path / "episode.json").is_file()
+    )
+    counted: list[str] = []
+    scheduled_candidates = 0
+    for episode_path in episode_paths:
+        try:
+            episode = json.loads(episode_path.read_text(encoding="utf-8"))
+            if not isinstance(episode, dict):
+                raise ValueError("episode.json must contain an object")
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            return None, f"unreadable source: {episode_path}: {exc}", {}
+
+        raw_publish_date = episode.get("publish_date")
+        if raw_publish_date in (None, ""):
+            continue
+        publish_date = _parse_date(raw_publish_date)
+        if publish_date is None:
+            return None, f"unreadable publish_date: {episode_path}", {}
+        if publish_date < today or _proves_published(episode):
+            continue
+        scheduled_candidates += 1
+        if _has_recording_receipt(episode) and _has_media(episode_path.parent):
+            counted.append(episode_path.parent.name)
+
+    metrics = {
+        "proxy": "future_scheduled_recordings_with_media_not_published",
+        "scheduled_candidates": scheduled_candidates,
+        "counted_episode_ids": counted,
+    }
+    return len(counted), f"scanned {episodes_dir}", metrics
+
+
+def _observation_date(row: dict[str, Any]) -> date | None:
+    value = row.get("ts")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).date()
+
+
+def _publish_reliability(
+    state_dir: Path, sources: Path, today: date
+) -> tuple[float | None, str, dict[str, Any], bool]:
+    schedule_path = sources / "publish_schedule.json"
+    if not schedule_path.is_file():
+        return None, f"missing source: {schedule_path}", {}, True
+    try:
+        schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+        rows = schedule["episodes"]
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise TypeError("episodes must be a list of objects")
+        due_ids = [
+            str(row.get("episode_id") or "").strip()
+            for row in rows
+            if row.get("publish_date") == today.isoformat()
+        ]
+        if any(not episode_id for episode_id in due_ids):
+            raise ValueError("due episode is missing episode_id")
+        if len(set(due_ids)) != len(due_ids):
+            raise ValueError("due episode_id values must be unique")
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        return None, f"unreadable source: {schedule_path}: {exc}", {}, True
+    if not due_ids:
+        return None, "no publish due today", {"due_episodes": 0}, False
+
+    observations_path = state_dir / "observations.jsonl"
+    if not observations_path.is_file():
+        return None, f"missing verifier evidence: {observations_path}", {}, True
+    try:
+        observation_rows = [
+            json.loads(line)
+            for line in observations_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not all(isinstance(row, dict) for row in observation_rows):
+            raise TypeError("observation rows must be objects")
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return None, f"unreadable verifier evidence: {exc}", {}, True
+
+    latest: dict[str, dict[str, Any]] = {}
+    for row in observation_rows:
+        subject = str(row.get("subject") or "")
+        if (
+"""Observe the independently sourced podcast recording pipeline."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+from factory import runrecord
+from factory.charter_loader import load_charter
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _append(state_dir: Path, observation: dict) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(observation, sort_keys=True) + "\n")
+
+
+def _observation(status: str, evidence: str, detail: str, metrics: dict) -> dict:
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "sensor": "pipeline",
+        "subject": "recording-pipeline",
+        "status": status,
+        "evidence": evidence,
+        "detail": detail,
+        "metrics": metrics,
+    }
+
+
+def _read_list(path: Path) -> list[dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("source must contain a JSON list")
+    return [row for row in data if isinstance(row, dict)]
+
+
+def _pipeline_setpoint(charter: dict) -> int:
+    for item in charter.get("setpoints", {}).get("outcome_additional", []):
+        if item.get("metric") == "pipeline_guests":
+            return int(item["target"])
+    raise ValueError("charter has no pipeline_guests setpoint")
+
+
+def _key(row: dict) -> tuple[str, str]:
+    return (str(row.get("email") or "").strip().casefold(),
+            str(row.get("name") or row.get("guest") or "").strip().casefold())
+
+
+def _run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+    calendar_path = sources / "calendar.json"
+    contacts_path = sources / "hubspot_contacts.json"
+    missing = next((path for path in (calendar_path, contacts_path) if not path.is_file()), None)
+    if missing is not None:
+        obs = _observation("unknown", str(missing), f"missing source: {missing}", {})
+        _append(state_dir, obs)
+        return obs
+    try:
+        calendar = _read_list(calendar_path)
+        contacts = _read_list(contacts_path)
+        setpoint = _pipeline_setpoint(load_charter(charter_path, expect_department="podcast"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
+        obs = _observation("unknown", f"{calendar_path},{contacts_path}",
+                           f"unreadable source: {exc}", {})
+        _append(state_dir, obs)
+        return obs
+
+    contact_email_counts = Counter(_key(row)[0] for row in contacts if _key(row)[0])
+    duplicate_emails = {
+        email for email, count in contact_email_counts.items() if count > 1
+    }
+    contacts_by_email = {
+        email: row
+        for row in contacts
+        if (email := _key(row)[0]) and email not in duplicate_emails
+    }
+    emails_by_name: dict[str, list[str]] = defaultdict(list)
+    for contact in contacts:
+        email, name = _key(contact)
+        if name:
+            emails_by_name[name].append(email)
+    ambiguous_names = {
+        name
+        for name, emails in emails_by_name.items()
+        if len(emails) > 1
+        and (any(not email for email in emails) or len(set(emails)) != len(emails))
+    }
+
+    counted = []
+    seen = set()
+    identity_issues = Counter()
+    if duplicate_emails:
+        identity_issues["duplicate_hubspot_email"] += len(duplicate_emails)
+    if ambiguous_names:
+        identity_issues["duplicate_display_name_without_distinct_emails"] += len(
+            ambiguous_names
+        )
+    for event in calendar:
+        event_type = str(event.get("event_type") or "").casefold()
+        if "record" not in event_type and "podcast" not in event_type:
+            continue
+        email, name = _key(event)
+        if not email:
+            identity_issues["calendar_guest_missing_email"] += 1
+            continue
+        if email in duplicate_emails:
+            identity_issues["calendar_email_matches_duplicate_contact"] += 1
+            continue
+        contact = contacts_by_email.get(email)
+        if contact is None:
+            identity_issues["calendar_email_unmatched"] += 1
+            continue
+        status = str(contact.get("podcast_status") or "").strip().casefold()
+        if status not in {"active", "booked", "recording_pipeline", "scheduled"}:
+            continue
+        identity = email
+        if identity in seen:
+            continue
+        seen.add(identity)
+        counted.append({
+            "guest": event.get("guest") or contact.get("name") or identity,
+            "source_fields": {
+                "calendar.json": {
+                    "guest": event.get("guest"), "email": event.get("email"),
+                    "event_type": event.get("event_type"), "start_iso": event.get("start_iso"),
+                },
+                "hubspot_contacts.json": {
+                    "email": contact.get("email"), "name": contact.get("name"),
+                    "podcast_status": contact.get("podcast_status"),
+                },
+                "join": "email",
+            },
+        })
+    count = len(counted)
+    metrics = {
+        "count": count,
+        "setpoint": setpoint,
+        "counted_guests": counted,
+        "identity_issue_counts": dict(sorted(identity_issues.items())),
+    }
+    if identity_issues:
+        status = "unknown"
+        detail = "unresolved identity — suppress + review"
+    else:
+        status = "ok" if count >= setpoint else "fail"
+        detail = f"recording pipeline has {count} of {setpoint} guests"
+    obs = _observation(status, f"{calendar_path},{contacts_path}", detail, metrics)
+    _append(state_dir, obs)
+    return obs
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="pipeline_sensor",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-pipeline_sensor"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(state_dir / "observations.jsonl")]
+            if (state_dir / "observations.jsonl").exists()
+            else [],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("pipeline_sensor failed to append its runs-v2 record")
+        raise
+
+
+def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+    state_dir = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        observation = _run(state_dir, Path(sources), Path(charter_path))
+    except Exception as exc:
+        _emit_run_record(
+            state_dir,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = (
+        []
+        if observation["status"] == "ok"
+        else [f"pipeline:{observation['status']}"]
+    )
+    _emit_run_record(
+        state_dir,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+    )
+    return observation
+
+
+def main() -> None:
+    repo = Path(__file__).resolve().parents[3]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--state-dir", type=Path, default=repo / "departments/podcast/state")
+    parser.add_argument("--sources", type=Path, required=True)
+    parser.add_argument("--charter", type=Path, default=repo / "departments/podcast/charter.yaml")
+    parser.add_argument("--shadow", action=argparse.BooleanOptionalAction, default=True)
+    args = parser.parse_args()
+    run(args.state_dir, args.sources, args.charter)
+
+
+if __name__ == "__main__":
+    main()
+# podcast runtime
+
+This department uses the FACTORY-STANDARD components (no per-department copies):
+- department manager loop: factory/manager.py (run with --department podcast)
+- self-heal ladder: factory/heal_ladder.py
+- human-in-the-loop bridge: factory/human_in_the_loop.py
+- estate watchdog: factory/estate_manager.py
+- runtime enforcement kernel: kernel/ (wire via a thin kernel bridge)
+- release-pinning: factory/release.py
+
+F1 (human, owner): run the intent interview (interview/INTERVIEW.md), lock the
+intent, then author the charter setpoints + funnel subgraphs. F2-F4 then govern
+and hand-author the runtime nodes from the procedural graph, shadow, and pin a
+release. Department-SPECIFIC node code lives here; factory machinery does not.
+
+codex
+Step 1 of 3: conventions read. Next I’m extracting only the tracker’s structural key names and types, with all values suppressed.
+exec
+/bin/bash -lc "python3 - <<'PY'
+import json
+from pathlib import Path
+p=Path('/mnt/d_drive/repos/podcast/episodes/_loop_receipts/referral-touch-20260803.json')
+data=json.loads(p.read_text(encoding='utf-8'))
+def shape(v):
+    if isinstance(v, dict): return {k: shape(x) for k,x in v.items()}
+    if isinstance(v, list): return [shape(v[0])] if v else []
+    return type(v).__name__
+print(json.dumps(shape(data), indent=2, sort_keys=True))
+PY" in /mnt/d_drive/repos/loop-factory
+ succeeded in 81ms:
+{
+  "candidate_pool_applied": "bool",
+  "candidate_pool_size": "int",
+  "engaged_signals": [
+    {
+      "inbound_reply_count": "int",
+      "last_inbound_at": "str",
+      "name": "str",
+      "next_action": "str",
+      "touch_count_status": "str"
+    }
+  ],
+  "generated_at": "str",
+  "gmail_metadata_gap_count": "int",
+  "mode": "str",
+  "people": [
+    {
+      "contact_record_count": "int",
+      "first_asked_at": "str",
+      "inbound_reply_count": "int",
+      "last_inbound_at": "str",
+      "last_outbound_at": "str",
+      "last_touch_at": "str",
+      "name": "str",
+      "next_action": "str",
+      "outbound_touch_count": "int",
+      "outbound_touch_dates": [
+        "str"
+      ],
+      "published_at": "NoneType",
+      "state": "str",
+      "total_thread_touch_count": "int",
+      "touch_count_status": "str",
+      "touch_counts_known": "bool"
+    }
+  ],
+  "policy": "str",
+  "query_coverage_complete": "bool",
+  "recommendations_suppressed": "bool",
+  "schema": "str",
+  "sources": {
+    "candidate_pool": {
+      "record_count": "int",
+      "status": "str"
+    },
+    "gmail": {
+      "message_count": "int",
+      "query_count": "int",
+      "status": "str"
+    },
+    "hubspot": {
+      "record_count": "int",
+      "status": "str"
+    }
+  },
+  "subject_queries": [
+    "str"
+  ],
+  "summary": {
+    "asked_no_reply_count": "int",
+    "blocked_count": "int",
+    "coverage_unavailable_count": "int",
+    "eligible_breadth_count": "int",
+    "engaged_count": "int",
+    "inbound_reply_count": "int",
+    "lower_bound_person_count": "int",
+    "no_touch_found_count": "int",
+    "outbound_referral_touch_count": "int",
+    "past_guest_count": "int",
+    "touch_count_status": "str",
+    "unknown_touch_identity_count": "int"
+  },
+  "suppression_reasons": [],
+  "touch_coverage_complete": "bool",
+  "who_next": [
+    {
+      "name": "str",
+      "next_action": "str",
+      "outbound_touch_count": "int",
+      "published_at": "NoneType",
+      "rank": "int"
+    }
+  ]
+}
+
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/departments/podcast/runtime/comms_reconcile_sensor.py
+/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+/mnt/d_drive/repos/loop-factory/tests/fixtures/comms_reconcile/referrals_empty.json
+/mnt/d_drive/repos/loop-factory/tests/fixtures/comms_reconcile/referrals_present.json
+/mnt/d_drive/repos/loop-factory/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+/mnt/d_drive/repos/loop-factory/tests/fixtures/comms_reconcile/tracker_healthy.json
+/mnt/d_drive/repos/loop-factory/tests/test_comms_reconcile_sensor.py
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..9170a4171ce73f2813480757d72334a59cf5fc23
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,25 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- Pending verification.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..9170a4171ce73f2813480757d72334a59cf5fc23
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,25 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- Pending verification.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+codex
+Step 2 of 3: implementation and synthetic fixtures are in place. I’m running the focused tests and the exact CLI fixture check now.
+exec
+/bin/bash -lc 'PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q
+PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json' in /mnt/d_drive/repos/loop-factory
+ succeeded in 629ms:
+....                                                                     [100%]
+4 passed in 0.06s
+{"findings": [{"asked": 57, "chain": "replied->harvested", "code": "open_loop", "detail": "16 inbound replies were counted, but no referrals were harvested.", "harvested": 0, "replied": 16, "severity": "action"}]}
+
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..9170a4171ce73f2813480757d72334a59cf5fc23
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,25 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- Pending verification.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+apply patch
+patch: completed
+/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..59722711e1cf0749d0a9fe7fc4f1617e9897d020
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,28 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q`
++  - Result: `4 passed in 0.06s`
++- `PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json`
++  - Result: exit 0; one `replied->harvested` open-loop finding with asked 57, replied 16, harvested 0, severity `action`.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..59722711e1cf0749d0a9fe7fc4f1617e9897d020
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,28 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q`
++  - Result: `4 passed in 0.06s`
++- `PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json`
++  - Result: exit 0; one `replied->harvested` open-loop finding with asked 57, replied 16, harvested 0, severity `action`.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+codex
+Ankit — implemented the local, read-only comms reconcile sensor.
+
+Created:
+
+- `departments/podcast/runtime/comms_reconcile_sensor.py`
+- `tests/test_comms_reconcile_sensor.py`
+- `tests/fixtures/comms_reconcile/` with four synthetic fixtures
+- [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md)
+
+Verified:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI exited `0`
+- The 57 asked / 16 replied / 0 harvested fixture produced exactly one `replied->harvested` action finding
+- No network access, external effects, integration wiring, commits, or changes outside owned paths
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, fixtures, tests, notes, and required verification
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: `--sla-hours` is accepted but reserved because no SLA behavior was specified.
+diff --git a/departments/podcast/runtime/comms_reconcile_sensor.py b/departments/podcast/runtime/comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bef4ae08babaf7a37b00189ae54b0dc02e72d0dc
+--- /dev/null
++++ b/departments/podcast/runtime/comms_reconcile_sensor.py
+@@ -0,0 +1,103 @@
++"""Reconcile referral communication counts without performing external actions."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any
++
++
++ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
++REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
++
++
++def _read_object(path: Path) -> dict[str, Any]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(data, dict):
++        raise ValueError("input must contain a JSON object")
++    return data
++
++
++def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
++    for key in keys:
++        if key in container:
++            value = container[key]
++            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++                return None
++            return value
++    return None
++
++
++def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
++    """Return deterministic findings for gaps in the asked-to-harvested chain."""
++    summary = tracker.get("summary")
++    counts = summary if isinstance(summary, dict) else tracker
++    asked = _count(counts, ASKED_KEYS)
++    replied = _count(counts, REPLIED_KEYS)
++
++    referrals = ledger.get("referrals")
++    harvested = len(referrals) if isinstance(referrals, list) else None
++    findings: list[dict[str, Any]] = []
++
++    missing = []
++    if asked is None:
++        missing.append("asked")
++    if replied is None:
++        missing.append("replied")
++    if harvested is None:
++        missing.append("harvested")
++    if missing:
++        findings.append({
++            "code": "count_missing",
++            "counts": missing,
++            "detail": f"Required count is unknown: {', '.join(missing)}.",
++        })
++
++    if asked is not None and replied is not None and asked > 0 and replied == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "asked->replied",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "warn",
++            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
++        })
++    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
++        findings.append({
++            "code": "open_loop",
++            "chain": "replied->harvested",
++            "asked": asked,
++            "replied": replied,
++            "harvested": harvested,
++            "severity": "action",
++            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
++        })
++    return {"findings": findings}
++
++
++def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
++    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
++    del sla_hours
++    try:
++        tracker = _read_object(tracker_path)
++        ledger = _read_object(ledger_path)
++    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++        return {"findings": [{
++            "code": "input_unreadable",
++            "detail": f"Could not read an input file: {type(exc).__name__}.",
++        }]}
++    return reconcile(tracker, ledger)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--tracker", type=Path, required=True)
++    parser.add_argument("--ledger", type=Path, required=True)
++    parser.add_argument("--sla-hours", type=int)
++    args = parser.parse_args()
++    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..59722711e1cf0749d0a9fe7fc4f1617e9897d020
+--- /dev/null
++++ b/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md
+@@ -0,0 +1,28 @@
++# Comms reconcile sensor notes
++
++## Read
++
++- `departments/podcast/runtime/hopper_sensor.py`
++- `departments/podcast/runtime/pipeline_sensor.py`
++- `departments/podcast/runtime/README.md`
++- Real tracker report, structure only; no identifying values copied.
++
++## Tracker keys bound
++
++- `summary.outbound_referral_touch_count`
++- `summary.outbound_touch_count` (alternate spelling)
++- `summary.inbound_reply_count`
++- `inbound_replies_count` (defensive alternate spelling)
++
++## Assumptions
++
++- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
++- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
++- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
++
++## Commands run
++
++- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q`
++  - Result: `4 passed in 0.06s`
++- `PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json`
++  - Result: exit 0; one `replied->harvested` open-loop finding with asked 57, replied 16, harvested 0, severity `action`.
+diff --git a/tests/fixtures/comms_reconcile/referrals_empty.json b/tests/fixtures/comms_reconcile/referrals_empty.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..2081095fa3defcc25f2ee59c9d03c3b812299162
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_empty.json
+@@ -0,0 +1,4 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": []
++}
+diff --git a/tests/fixtures/comms_reconcile/referrals_present.json b/tests/fixtures/comms_reconcile/referrals_present.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c96d36053df0e839b4d273140b0dcfaa116921
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/referrals_present.json
+@@ -0,0 +1,6 @@
++{
++  "schema": "referral-ledger-v1",
++  "referrals": [
++    {"source": "synthetic-fixture"}
++  ]
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_57_16_0.json b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..67cc5e341e1dab81fdd60a98b4ea5194d348eca9
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_57_16_0.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_referral_touch_count": 57,
++    "inbound_reply_count": 16
++  }
++}
+diff --git a/tests/fixtures/comms_reconcile/tracker_healthy.json b/tests/fixtures/comms_reconcile/tracker_healthy.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..636378c8094d3e5e7930feb31c77537aa19860a4
+--- /dev/null
++++ b/tests/fixtures/comms_reconcile/tracker_healthy.json
+@@ -0,0 +1,7 @@
++{
++  "schema": "obe.referral-touch-report.v1",
++  "summary": {
++    "outbound_touch_count": 8,
++    "inbound_reply_count": 2
++  }
++}
+diff --git a/tests/test_comms_reconcile_sensor.py b/tests/test_comms_reconcile_sensor.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ac8289d8c15e915849f145b19b100cae7598f
+--- /dev/null
++++ b/tests/test_comms_reconcile_sensor.py
+@@ -0,0 +1,51 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++from departments.podcast.runtime import comms_reconcile_sensor
++
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
++SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
++
++
++def _load(name):
++    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
++
++
++def test_replies_without_harvest_yield_one_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
++    )
++    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
++    assert len(open_loops) == 1
++    assert open_loops[0]["replied"] == 16
++    assert open_loops[0]["harvested"] == 0
++
++
++def test_healthy_pair_has_no_open_loop():
++    result = comms_reconcile_sensor.reconcile(
++        _load("tracker_healthy.json"), _load("referrals_present.json")
++    )
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_missing_count_is_unknown_not_zero():
++    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
++    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
++    assert any(row["code"] == "count_missing" for row in result["findings"])
++    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
++
++
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+tokens used
+36,362
+Ankit — implemented the local, read-only comms reconcile sensor.
+
+Created:
+
+- `departments/podcast/runtime/comms_reconcile_sensor.py`
+- `tests/test_comms_reconcile_sensor.py`
+- `tests/fixtures/comms_reconcile/` with four synthetic fixtures
+- [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md)
+
+Verified:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI exited `0`
+- The 57 asked / 16 replied / 0 harvested fixture produced exactly one `replied->harvested` action finding
+- No network access, external effects, integration wiring, commits, or changes outside owned paths
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, fixtures, tests, notes, and required verification
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: `--sla-hours` is accepted but reserved because no SLA behavior was specified.
+[ringer.py] attempt 1 exited rc=0
+
+[ringer.py] attempt 2 started 2026-08-03T15:09:33.372841+00:00
+[ringer.py] engine: codex
+[ringer.py] command: /home/ankit114/repos/ringer/engines/codex-oauth.sh exec --ignore-user-config --skip-git-repo-check --sandbox workspace-write -c 'sandbox_workspace_write.writable_roots=["/mnt/d_drive/repos/loop-factory"]' -C /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor 'You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/runtime/comms_reconcile_sensor.py (create), tests/test_comms_reconcile_sensor.py (create), tests/fixtures/comms_reconcile/ (create, fixture JSONs). Nothing else. Never touch .git, never commit, never push. Never modify charter.yaml, runbooks/, CLAUDE.md, or any existing file. Do not load skills or call MCP/Apps. The sensor and your work are strictly LOCAL and READ-ONLY toward the world: no network imports (no requests/urllib usage/smtplib/googleapiclient), no sends, no writes outside owned paths.
+
+READ FIRST (read-only, for conventions): departments/podcast/runtime/hopper_sensor.py and departments/podcast/runtime/pipeline_sensor.py (the sensor idiom in this codebase: argparse CLI, pure functions, JSON out), departments/podcast/runtime/README.md if present. You MAY read /mnt/d_drive/repos/podcast/episodes/_loop_receipts/referral-touch-20260803.json READ-ONLY to learn the real tracker-report schema (schema name obe.referral-touch-report.v1) — but you must NOT copy any name, email, or contact-identifying value out of it; your fixtures are fully synthetic with counts only.
+
+FEATURE BRIEF — the comms reconcile sensor. Context: the podcast estate asks past guests for referrals. A tracker report counts outbound referral touches and inbound replies; a referral ledger (REFERRALS.json, schema referral-ledger-v1) holds harvested referrals in its referrals[] array. Recently the truth was 57 asked, 16 replied, 0 harvested — an open loop nothing detected. Build a standalone, pure, deterministic sensor that reads BOTH files and applies the open-loop invariant: if an upstream count is > 0 and the next count downstream is 0, emit a finding.
+
+CLI CONTRACT (the check depends on this exactly): python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker PATH --ledger PATH [--sla-hours N] prints to stdout a single JSON object {"findings": [...]} and exits 0 whenever it ran (findings are data, not errors; a malformed input file IS an error finding with code "input_unreadable", still exit 0). Each open-loop finding must include at least: code="open_loop", chain (e.g. "replied->harvested"), asked (int), replied (int), harvested (int), severity ("warn" or "action"), and a human-readable detail sentence. Derive asked/replied from the tracker report'"'"'s counts and harvested from len(referrals[]) in the ledger. Handle both key spellings you find in the real tracker schema gracefully; if a count is absent, treat it as unknown and emit code="count_missing" rather than assuming zero (unmeasured is never zero in this codebase).
+
+FIXTURES (all synthetic): tests/fixtures/comms_reconcile/tracker_57_16_0.json (57 outbound touches, 16 inbound replies), referrals_empty.json (valid referral-ledger-v1 with referrals: []), tracker_healthy.json + referrals_present.json (a healthy pair where replies exist AND referrals[] is non-empty so NO open_loop fires). No real names, no real email domains.
+
+TESTS (tests/test_comms_reconcile_sensor.py): (1) the 57/16/0 pair yields exactly one open_loop finding with replied=16, harvested=0; (2) the healthy pair yields no open_loop; (3) missing count key yields count_missing, not a zero assumption; (4) unreadable ledger path yields input_unreadable, exit 0.
+
+HOW TO RUN, from repo root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q · then the CLI against your fixtures as in the contract above.
+
+OUTPUT CONTRACT: the owned files, plus ./notes.md: what you read, the real tracker-schema keys you bound to (keys only, no values), commands run and results, assumptions.
+
+HARD RULES: standard library only; no wiring into the daily chain or manager (that is a separate governed map change); boring, small, matching the sibling sensors'"'"' style.
+
+Previous attempt failed: +
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+tokens used
+36,362
+Ankit — implemented the local, read-only comms reconcile sensor.
+
+Created:
+
+- `departments/podcast/runtime/comms_reconcile_sensor.py`
+- `tests/test_comms_reconcile_sensor.py`
+- `tests/fixtures/comms_reconcile/` with four synthetic fixtures
+- [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md)
+
+Verified:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI exited `0`
+- The 57 asked / 16 replied / 0 harvested fixture produced exactly one `replied->harvested` action finding
+- No network access, external effects, integration wiring, commits, or changes outside owned paths
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, fixtures, tests, notes, and required verification
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: `--sla-hours` is accepted but reserved because no SLA behavior was specified.
+[ringer.py] attempt 1 exited rc=0
+....                                                                     [100%]
+4 passed in 0.06s
+open_loop finding OK: {"asked": 57, "chain": "replied->harvested", "code": "open_loop", "detail": "16 inbound replies were counted, but no referrals were harvested.", "harvested": 0, "replied": 16, "severity": "action"}
+healthy fixture OK: no open_loop
+CHECK FAIL: files changed outside T1+T2 ownership: departments/podcast/releases/50b79dc454f5082d/manifest.json
+departments/podcast/releases/current
+departments/social/runtime/social_daily.sh. Fix it.' < /dev/null
+Reading additional input from stdin...
+OpenAI Codex v0.146.0
+--------
+workdir: /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /mnt/d_drive/repos/loop-factory]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fc82c-4acf-7040-aca3-d289c92d8878
+--------
+user
+You are a repo feature worker editing a real repository: /mnt/d_drive/repos/loop-factory. Your current working directory is a scratch task directory; use it only for ./notes.md.
+
+OWNERSHIP BOUNDARY: you own exactly: departments/podcast/runtime/comms_reconcile_sensor.py (create), tests/test_comms_reconcile_sensor.py (create), tests/fixtures/comms_reconcile/ (create, fixture JSONs). Nothing else. Never touch .git, never commit, never push. Never modify charter.yaml, runbooks/, CLAUDE.md, or any existing file. Do not load skills or call MCP/Apps. The sensor and your work are strictly LOCAL and READ-ONLY toward the world: no network imports (no requests/urllib usage/smtplib/googleapiclient), no sends, no writes outside owned paths.
+
+READ FIRST (read-only, for conventions): departments/podcast/runtime/hopper_sensor.py and departments/podcast/runtime/pipeline_sensor.py (the sensor idiom in this codebase: argparse CLI, pure functions, JSON out), departments/podcast/runtime/README.md if present. You MAY read /mnt/d_drive/repos/podcast/episodes/_loop_receipts/referral-touch-20260803.json READ-ONLY to learn the real tracker-report schema (schema name obe.referral-touch-report.v1) — but you must NOT copy any name, email, or contact-identifying value out of it; your fixtures are fully synthetic with counts only.
+
+FEATURE BRIEF — the comms reconcile sensor. Context: the podcast estate asks past guests for referrals. A tracker report counts outbound referral touches and inbound replies; a referral ledger (REFERRALS.json, schema referral-ledger-v1) holds harvested referrals in its referrals[] array. Recently the truth was 57 asked, 16 replied, 0 harvested — an open loop nothing detected. Build a standalone, pure, deterministic sensor that reads BOTH files and applies the open-loop invariant: if an upstream count is > 0 and the next count downstream is 0, emit a finding.
+
+CLI CONTRACT (the check depends on this exactly): python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker PATH --ledger PATH [--sla-hours N] prints to stdout a single JSON object {"findings": [...]} and exits 0 whenever it ran (findings are data, not errors; a malformed input file IS an error finding with code "input_unreadable", still exit 0). Each open-loop finding must include at least: code="open_loop", chain (e.g. "replied->harvested"), asked (int), replied (int), harvested (int), severity ("warn" or "action"), and a human-readable detail sentence. Derive asked/replied from the tracker report's counts and harvested from len(referrals[]) in the ledger. Handle both key spellings you find in the real tracker schema gracefully; if a count is absent, treat it as unknown and emit code="count_missing" rather than assuming zero (unmeasured is never zero in this codebase).
+
+FIXTURES (all synthetic): tests/fixtures/comms_reconcile/tracker_57_16_0.json (57 outbound touches, 16 inbound replies), referrals_empty.json (valid referral-ledger-v1 with referrals: []), tracker_healthy.json + referrals_present.json (a healthy pair where replies exist AND referrals[] is non-empty so NO open_loop fires). No real names, no real email domains.
+
+TESTS (tests/test_comms_reconcile_sensor.py): (1) the 57/16/0 pair yields exactly one open_loop finding with replied=16, harvested=0; (2) the healthy pair yields no open_loop; (3) missing count key yields count_missing, not a zero assumption; (4) unreadable ledger path yields input_unreadable, exit 0.
+
+HOW TO RUN, from repo root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q · then the CLI against your fixtures as in the contract above.
+
+OUTPUT CONTRACT: the owned files, plus ./notes.md: what you read, the real tracker-schema keys you bound to (keys only, no values), commands run and results, assumptions.
+
+HARD RULES: standard library only; no wiring into the daily chain or manager (that is a separate governed map change); boring, small, matching the sibling sensors' style.
+
+Previous attempt failed: +
++def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
++    missing = tmp_path / "missing-ledger.json"
++    completed = subprocess.run(
++        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
++         "--ledger", str(missing)],
++        check=False, capture_output=True, text=True,
++    )
++    assert completed.returncode == 0
++    output = json.loads(completed.stdout)
++    assert output["findings"][0]["code"] == "input_unreadable"
+
+tokens used
+36,362
+Ankit — implemented the local, read-only comms reconcile sensor.
+
+Created:
+
+- `departments/podcast/runtime/comms_reconcile_sensor.py`
+- `tests/test_comms_reconcile_sensor.py`
+- `tests/fixtures/comms_reconcile/` with four synthetic fixtures
+- [notes.md](/mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md)
+
+Verified:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI exited `0`
+- The 57 asked / 16 replied / 0 harvested fixture produced exactly one `replied->harvested` action finding
+- No network access, external effects, integration wiring, commits, or changes outside owned paths
+
+Status
+- % to true goal: 100% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, fixtures, tests, notes, and required verification
+- In flight: nothing
+- Not done: nothing
+- Blocked: nothing
+- Needs you: nothing
+Assumptions: `--sla-hours` is accepted but reserved because no SLA behavior was specified.
+[ringer.py] attempt 1 exited rc=0
+....                                                                     [100%]
+4 passed in 0.06s
+open_loop finding OK: {"asked": 57, "chain": "replied->harvested", "code": "open_loop", "detail": "16 inbound replies were counted, but no referrals were harvested.", "harvested": 0, "replied": 16, "severity": "action"}
+healthy fixture OK: no open_loop
+CHECK FAIL: files changed outside T1+T2 ownership: departments/podcast/releases/50b79dc454f5082d/manifest.json
+departments/podcast/releases/current
+departments/social/runtime/social_daily.sh. Fix it.
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/custom-explorer.toml must define `developer_instructions`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/reviewer.toml must define a non-empty `name`
+warning: Ignoring malformed agent role definition: agent role file at /home/ankit114/.codex/agents/ui-to-code.toml must define a non-empty `name`
+codex
+Ankit — I’ll inspect the repository diff and ownership paths, then correct only the files you assigned. I will not touch the three out-of-boundary files reported by the checker.
+exec
+/bin/bash -lc "pwd && git status --short && git diff -- departments/podcast/runtime/comms_reconcile_sensor.py tests/test_comms_reconcile_sensor.py && find tests/fixtures/comms_reconcile -maxdepth 1 -type f -print -exec sed -n '1,160p' {} \\; && sed -n '1,240p' departments/podcast/runtime/comms_reconcile_sensor.py && sed -n '1,240p' tests/test_comms_reconcile_sensor.py && if [ -f ./notes.md ]; then sed -n '1,240p' ./notes.md; fi" in /mnt/d_drive/repos/loop-factory
+ succeeded in 45ms:
+/mnt/d_drive/repos/loop-factory
+ M departments/podcast/releases/current
+ M departments/social/runtime/social_daily.sh
+ M factory/graphs.py
+ M ringer/one-true-master/checks/clip_framing_check.py
+ M ringer/one-true-master/checks/fix_with_tests.py
+?? .agents/
+?? .polly/
+?? .worktrees/
+?? departments/podcast/releases/50b79dc454f5082d/
+?? departments/podcast/runtime/comms_reconcile_sensor.py
+?? resume.md
+?? ringer-manifests/workdir/
+?? ringer/comms-loop-invariant/
+?? ringer/estate-board-live/
+?? ringer/failed-loops-fix/
+?? ringer/merge-qa/
+?? ringer/one-true-master/checks/voice_check.py
+?? ringer/one-true-master/manifest-audit.json
+?? ringer/one-true-master/manifest-probe-glm.json
+?? ringer/one-true-master/manifest-r35-publish.json
+?? ringer/one-true-master/manifest-r36-promo.json
+?? ringer/one-true-master/manifest-r37-quality2.json
+?? ringer/one-true-master/manifest-r38-timemap.json
+?? ringer/one-true-master/manifest-r39-shownotes.json
+?? ringer/one-true-master/manifest-r46-wave1.json
+?? ringer/one-true-master/manifest-r47-wave2.json
+?? ringer/one-true-master/manifest-r48-wave3.json
+?? ringer/one-true-master/manifest-r49-stall.json
+?? ringer/one-true-master/manifest-r5-transcript.json
+?? ringer/one-true-master/manifest-r50-wave4.json
+?? ringer/one-true-master/manifest-r51-ctxpkt.json
+?? ringer/one-true-master/manifest-r52-assets.json
+?? ringer/one-true-master/manifest-r53-dag.json
+?? ringer/one-true-master/manifest-r6-wiring.json
+?? ringer/one-true-master/manifest-r60-assets.json
+?? ringer/one-true-master/manifest-r61-funnel.json
+?? ringer/one-true-master/manifest-r62-funnel-physics.json
+?? ringer/one-true-master/manifest-r63-stuck-unit.json
+?? ringer/one-true-master/manifest-r64-vps-snapshot.json
+?? ringer/one-true-master/manifest-r65-outreach-trigger.json
+?? ringer/one-true-master/manifest-r7-preflight.json
+?? ringer/one-true-master/manifest-r8-editing.json
+?? ringer/one-true-master/manifest-r8b-contract.json
+?? ringer/one-true-master/manifest-r9-tier1.json
+?? ringer/one-true-master/manifest-skillpkg.json
+?? ringer/podcast-fix-grammar/
+?? ringer/podcast-full-auto/
+?? ringer/podcast-loop-hardening/manifest-r10.json
+?? ringer/podcast-loop-hardening/manifest-r11.json
+?? ringer/podcast-loop-hardening/manifest-r12.json
+?? ringer/podcast-loop-hardening/manifest-r13.json
+?? ringer/podcast-loop-hardening/manifest-r6.json
+?? ringer/podcast-loop-hardening/manifest-r7.json
+?? ringer/podcast-loop-hardening/manifest-r8.json
+?? ringer/podcast-loop-hardening/manifest-r9.json
+?? ringer/podcast-telemetry-v2/manifest-r3.json
+?? ringer/podcast-telemetry-v2/manifest-r4.json
+?? ringer/podcast-test-cleanup/
+?? ringer/triage-proposals/
+?? ringer/ultimate-process/
+?? tasks/2026-08-03-open-loop-comms-gap.md
+?? tests/fixtures/
+?? tests/test_comms_invariant_lint.py
+?? tests/test_comms_reconcile_sensor.py
+?? wayfinder/company/
+?? wayfinder/tickets/015-reconcile-three-spines.md
+?? wayfinder/tickets/resume.md
+tests/fixtures/comms_reconcile/referrals_empty.json
+{
+  "schema": "referral-ledger-v1",
+  "referrals": []
+}
+tests/fixtures/comms_reconcile/referrals_present.json
+{
+  "schema": "referral-ledger-v1",
+  "referrals": [
+    {"source": "synthetic-fixture"}
+  ]
+}
+tests/fixtures/comms_reconcile/tracker_57_16_0.json
+{
+  "schema": "obe.referral-touch-report.v1",
+  "summary": {
+    "outbound_referral_touch_count": 57,
+    "inbound_reply_count": 16
+  }
+}
+tests/fixtures/comms_reconcile/tracker_healthy.json
+{
+  "schema": "obe.referral-touch-report.v1",
+  "summary": {
+    "outbound_touch_count": 8,
+    "inbound_reply_count": 2
+  }
+}
+"""Reconcile referral communication counts without performing external actions."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+
+ASKED_KEYS = ("outbound_referral_touch_count", "outbound_touch_count")
+REPLIED_KEYS = ("inbound_reply_count", "inbound_replies_count")
+
+
+def _read_object(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("input must contain a JSON object")
+    return data
+
+
+def _count(container: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        if key in container:
+            value = container[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return None
+            return value
+    return None
+
+
+def reconcile(tracker: dict[str, Any], ledger: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return deterministic findings for gaps in the asked-to-harvested chain."""
+    summary = tracker.get("summary")
+    counts = summary if isinstance(summary, dict) else tracker
+    asked = _count(counts, ASKED_KEYS)
+    replied = _count(counts, REPLIED_KEYS)
+
+    referrals = ledger.get("referrals")
+    harvested = len(referrals) if isinstance(referrals, list) else None
+    findings: list[dict[str, Any]] = []
+
+    missing = []
+    if asked is None:
+        missing.append("asked")
+    if replied is None:
+        missing.append("replied")
+    if harvested is None:
+        missing.append("harvested")
+    if missing:
+        findings.append({
+            "code": "count_missing",
+            "counts": missing,
+            "detail": f"Required count is unknown: {', '.join(missing)}.",
+        })
+
+    if asked is not None and replied is not None and asked > 0 and replied == 0:
+        findings.append({
+            "code": "open_loop",
+            "chain": "asked->replied",
+            "asked": asked,
+            "replied": replied,
+            "harvested": harvested,
+            "severity": "warn",
+            "detail": f"{asked} referral touches were asked, but no inbound replies were counted.",
+        })
+    if replied is not None and harvested is not None and replied > 0 and harvested == 0:
+        findings.append({
+            "code": "open_loop",
+            "chain": "replied->harvested",
+            "asked": asked,
+            "replied": replied,
+            "harvested": harvested,
+            "severity": "action",
+            "detail": f"{replied} inbound replies were counted, but no referrals were harvested.",
+        })
+    return {"findings": findings}
+
+
+def run(tracker_path: Path, ledger_path: Path, sla_hours: int | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Read local inputs and return findings; SLA is accepted for CLI compatibility."""
+    del sla_hours
+    try:
+        tracker = _read_object(tracker_path)
+        ledger = _read_object(ledger_path)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return {"findings": [{
+            "code": "input_unreadable",
+            "detail": f"Could not read an input file: {type(exc).__name__}.",
+        }]}
+    return reconcile(tracker, ledger)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tracker", type=Path, required=True)
+    parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument("--sla-hours", type=int)
+    args = parser.parse_args()
+    print(json.dumps(run(args.tracker, args.ledger, args.sla_hours), sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from departments.podcast.runtime import comms_reconcile_sensor
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests/fixtures/comms_reconcile"
+SCRIPT = ROOT / "departments/podcast/runtime/comms_reconcile_sensor.py"
+
+
+def _load(name):
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_replies_without_harvest_yield_one_open_loop():
+    result = comms_reconcile_sensor.reconcile(
+        _load("tracker_57_16_0.json"), _load("referrals_empty.json")
+    )
+    open_loops = [row for row in result["findings"] if row["code"] == "open_loop"]
+    assert len(open_loops) == 1
+    assert open_loops[0]["replied"] == 16
+    assert open_loops[0]["harvested"] == 0
+
+
+def test_healthy_pair_has_no_open_loop():
+    result = comms_reconcile_sensor.reconcile(
+        _load("tracker_healthy.json"), _load("referrals_present.json")
+    )
+    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
+
+
+def test_missing_count_is_unknown_not_zero():
+    tracker = {"schema": "obe.referral-touch-report.v1", "summary": {"inbound_reply_count": 0}}
+    result = comms_reconcile_sensor.reconcile(tracker, _load("referrals_empty.json"))
+    assert any(row["code"] == "count_missing" for row in result["findings"])
+    assert not [row for row in result["findings"] if row["code"] == "open_loop"]
+
+
+def test_unreadable_ledger_is_finding_and_exit_zero(tmp_path):
+    missing = tmp_path / "missing-ledger.json"
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--tracker", str(FIXTURES / "tracker_57_16_0.json"),
+         "--ledger", str(missing)],
+        check=False, capture_output=True, text=True,
+    )
+    assert completed.returncode == 0
+    output = json.loads(completed.stdout)
+    assert output["findings"][0]["code"] == "input_unreadable"
+
+codex
+The checker failure is not caused by the sensor diff: the three named paths are pre-existing shared-worktree changes outside my ownership. Reverting or deleting them would violate your explicit boundary and could destroy another worker’s work. I’m checking the assigned artifacts and rerunning only the focused tests and CLI, which do not mutate those paths.
+exec
+/bin/bash -lc "sed -n '1,220p' departments/podcast/runtime/hopper_sensor.py && sed -n '1,220p' departments/podcast/runtime/pipeline_sensor.py && if [ -f departments/podcast/runtime/README.md ]; then sed -n '1,220p' departments/podcast/runtime/README.md; fi && sed -n '1,240p' /mnt/d_drive/repos/loop-factory/ringer/comms-loop-invariant/workdir/t2-reconcile-sensor/notes.md && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q && PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json" in /mnt/d_drive/repos/loop-factory
+ succeeded in 589ms:
+"""Observe owner objectives from deterministic, read-only pipeline evidence.
+
+``hopper_depth`` is intentionally a weaker proxy than "every recording that has
+not been published."  The pipeline has old, unscheduled and overdue episode
+directories whose local stages do not prove that they remain release inventory.
+Counting those directories made the known empty hopper look full.  This sensor
+therefore counts ``future_scheduled_recordings_with_media_not_published``:
+
+* ``episodes/<id>/episode.json`` has a publish date on or after the UTC reading
+  date;
+* its stage timestamps contain ``recording-done``;
+* a non-empty audio/video asset exists under ``raw/`` or ``final/``; and
+* neither the stage history nor provider/readback data proves publication.
+
+This is deterministic and makes a real empty result distinguishable from a
+missing source.  Its limit is deliberate: an unscheduled recording, or a
+scheduled row without both the stage receipt and media, is not counted.  If the
+episodes source is absent or any episode record is unreadable/ambiguous, the
+sensor emits no ``hopper_depth`` value rather than inventing zero.
+
+``publish_reliability`` reuses same-UTC-day ``publish_verifier`` observations
+for every episode due in ``publish_schedule.json``.  It is omitted when there
+are no episodes due or complete verifier evidence is unavailable; historical
+on-time reliability cannot be reconstructed from current public-state evidence.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+import tempfile
+import time
+from collections.abc import Mapping
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from factory import runrecord
+
+
+DEFAULT_PIPELINE_REPO = Path("/mnt/d_drive/repos/podcast")
+MEDIA_SUFFIXES = frozenset(
+    {".aac", ".flac", ".m4a", ".mkv", ".mov", ".mp3", ".mp4", ".wav", ".webm"}
+)
+PUBLISHED_STAGES = frozenset(
+    {
+        "published",
+        "promo-scheduled",
+        "promo-kit-sent",
+        "promo-sent",
+        "followup-sent",
+        "complete",
+    }
+)
+OWNED_VALUES = frozenset({"hopper_depth", "publish_reliability"})
+LOGGER = logging.getLogger(__name__)
+
+
+def _append(state_dir: Path, observation: dict[str, Any]) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(observation, sort_keys=True) + "\n")
+
+
+def _normalise(value: Any) -> str:
+    return str(value or "").strip().casefold().replace("_", "-")
+
+
+def _parse_date(value: Any) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            return None
+
+
+def _mapping_proves_published(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("published") is True or value.get("verified_public") is True:
+        return True
+    if _normalise(value.get("status")) == "published":
+        return True
+    if (
+        _normalise(value.get("privacy_status")) == "public"
+        and (value.get("observed_at") or value.get("verified_at"))
+    ):
+        return True
+    return any(
+        _mapping_proves_published(item)
+        for item in value.values()
+        if isinstance(item, Mapping)
+    )
+
+
+def _proves_published(episode: dict[str, Any]) -> bool:
+    timestamps = episode.get("stage_timestamps")
+    if isinstance(timestamps, Mapping) and timestamps.get("published"):
+        return True
+    if _normalise(episode.get("stage")) in PUBLISHED_STAGES:
+        return True
+    return any(
+        _mapping_proves_published(episode.get(key))
+        for key in ("publish_status", "publish_verification", "publish_receipt")
+    )
+
+
+def _has_recording_receipt(episode: dict[str, Any]) -> bool:
+    timestamps = episode.get("stage_timestamps")
+    return bool(isinstance(timestamps, Mapping) and timestamps.get("recording-done"))
+
+
+def _has_media(episode_dir: Path) -> bool:
+    for root_name in ("raw", "final"):
+        root = episode_dir / root_name
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            try:
+                if (
+                    path.is_file()
+                    and path.suffix.casefold() in MEDIA_SUFFIXES
+                    and path.stat().st_size > 0
+                ):
+                    return True
+            except OSError:
+                return False
+    return False
+
+
+def _hopper_depth(
+    pipeline_repo: Path, today: date
+) -> tuple[int | None, str, dict[str, Any]]:
+    episodes_dir = pipeline_repo / "episodes"
+    if not episodes_dir.is_dir():
+        return None, f"missing source: {episodes_dir}", {}
+
+    episode_paths = sorted(
+        path / "episode.json"
+        for path in episodes_dir.iterdir()
+        if path.is_dir() and (path / "episode.json").is_file()
+    )
+    counted: list[str] = []
+    scheduled_candidates = 0
+    for episode_path in episode_paths:
+        try:
+            episode = json.loads(episode_path.read_text(encoding="utf-8"))
+            if not isinstance(episode, dict):
+                raise ValueError("episode.json must contain an object")
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            return None, f"unreadable source: {episode_path}: {exc}", {}
+
+        raw_publish_date = episode.get("publish_date")
+        if raw_publish_date in (None, ""):
+            continue
+        publish_date = _parse_date(raw_publish_date)
+        if publish_date is None:
+            return None, f"unreadable publish_date: {episode_path}", {}
+        if publish_date < today or _proves_published(episode):
+            continue
+        scheduled_candidates += 1
+        if _has_recording_receipt(episode) and _has_media(episode_path.parent):
+            counted.append(episode_path.parent.name)
+
+    metrics = {
+        "proxy": "future_scheduled_recordings_with_media_not_published",
+        "scheduled_candidates": scheduled_candidates,
+        "counted_episode_ids": counted,
+    }
+    return len(counted), f"scanned {episodes_dir}", metrics
+
+
+def _observation_date(row: dict[str, Any]) -> date | None:
+    value = row.get("ts")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).date()
+
+
+def _publish_reliability(
+    state_dir: Path, sources: Path, today: date
+) -> tuple[float | None, str, dict[str, Any], bool]:
+    schedule_path = sources / "publish_schedule.json"
+    if not schedule_path.is_file():
+        return None, f"missing source: {schedule_path}", {}, True
+    try:
+        schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+        rows = schedule["episodes"]
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise TypeError("episodes must be a list of objects")
+        due_ids = [
+            str(row.get("episode_id") or "").strip()
+            for row in rows
+            if row.get("publish_date") == today.isoformat()
+        ]
+        if any(not episode_id for episode_id in due_ids):
+            raise ValueError("due episode is missing episode_id")
+        if len(set(due_ids)) != len(due_ids):
+            raise ValueError("due episode_id values must be unique")
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        return None, f"unreadable source: {schedule_path}: {exc}", {}, True
+    if not due_ids:
+"""Observe the independently sourced podcast recording pipeline."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+from factory import runrecord
+from factory.charter_loader import load_charter
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _append(state_dir: Path, observation: dict) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(observation, sort_keys=True) + "\n")
+
+
+def _observation(status: str, evidence: str, detail: str, metrics: dict) -> dict:
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "sensor": "pipeline",
+        "subject": "recording-pipeline",
+        "status": status,
+        "evidence": evidence,
+        "detail": detail,
+        "metrics": metrics,
+    }
+
+
+def _read_list(path: Path) -> list[dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("source must contain a JSON list")
+    return [row for row in data if isinstance(row, dict)]
+
+
+def _pipeline_setpoint(charter: dict) -> int:
+    for item in charter.get("setpoints", {}).get("outcome_additional", []):
+        if item.get("metric") == "pipeline_guests":
+            return int(item["target"])
+    raise ValueError("charter has no pipeline_guests setpoint")
+
+
+def _key(row: dict) -> tuple[str, str]:
+    return (str(row.get("email") or "").strip().casefold(),
+            str(row.get("name") or row.get("guest") or "").strip().casefold())
+
+
+def _run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+    calendar_path = sources / "calendar.json"
+    contacts_path = sources / "hubspot_contacts.json"
+    missing = next((path for path in (calendar_path, contacts_path) if not path.is_file()), None)
+    if missing is not None:
+        obs = _observation("unknown", str(missing), f"missing source: {missing}", {})
+        _append(state_dir, obs)
+        return obs
+    try:
+        calendar = _read_list(calendar_path)
+        contacts = _read_list(contacts_path)
+        setpoint = _pipeline_setpoint(load_charter(charter_path, expect_department="podcast"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
+        obs = _observation("unknown", f"{calendar_path},{contacts_path}",
+                           f"unreadable source: {exc}", {})
+        _append(state_dir, obs)
+        return obs
+
+    contact_email_counts = Counter(_key(row)[0] for row in contacts if _key(row)[0])
+    duplicate_emails = {
+        email for email, count in contact_email_counts.items() if count > 1
+    }
+    contacts_by_email = {
+        email: row
+        for row in contacts
+        if (email := _key(row)[0]) and email not in duplicate_emails
+    }
+    emails_by_name: dict[str, list[str]] = defaultdict(list)
+    for contact in contacts:
+        email, name = _key(contact)
+        if name:
+            emails_by_name[name].append(email)
+    ambiguous_names = {
+        name
+        for name, emails in emails_by_name.items()
+        if len(emails) > 1
+        and (any(not email for email in emails) or len(set(emails)) != len(emails))
+    }
+
+    counted = []
+    seen = set()
+    identity_issues = Counter()
+    if duplicate_emails:
+        identity_issues["duplicate_hubspot_email"] += len(duplicate_emails)
+    if ambiguous_names:
+        identity_issues["duplicate_display_name_without_distinct_emails"] += len(
+            ambiguous_names
+        )
+    for event in calendar:
+        event_type = str(event.get("event_type") or "").casefold()
+        if "record" not in event_type and "podcast" not in event_type:
+            continue
+        email, name = _key(event)
+        if not email:
+            identity_issues["calendar_guest_missing_email"] += 1
+            continue
+        if email in duplicate_emails:
+            identity_issues["calendar_email_matches_duplicate_contact"] += 1
+            continue
+        contact = contacts_by_email.get(email)
+        if contact is None:
+            identity_issues["calendar_email_unmatched"] += 1
+            continue
+        status = str(contact.get("podcast_status") or "").strip().casefold()
+        if status not in {"active", "booked", "recording_pipeline", "scheduled"}:
+            continue
+        identity = email
+        if identity in seen:
+            continue
+        seen.add(identity)
+        counted.append({
+            "guest": event.get("guest") or contact.get("name") or identity,
+            "source_fields": {
+                "calendar.json": {
+                    "guest": event.get("guest"), "email": event.get("email"),
+                    "event_type": event.get("event_type"), "start_iso": event.get("start_iso"),
+                },
+                "hubspot_contacts.json": {
+                    "email": contact.get("email"), "name": contact.get("name"),
+                    "podcast_status": contact.get("podcast_status"),
+                },
+                "join": "email",
+            },
+        })
+    count = len(counted)
+    metrics = {
+        "count": count,
+        "setpoint": setpoint,
+        "counted_guests": counted,
+        "identity_issue_counts": dict(sorted(identity_issues.items())),
+    }
+    if identity_issues:
+        status = "unknown"
+        detail = "unresolved identity — suppress + review"
+    else:
+        status = "ok" if count >= setpoint else "fail"
+        detail = f"recording pipeline has {count} of {setpoint} guests"
+    obs = _observation(status, f"{calendar_path},{contacts_path}", detail, metrics)
+    _append(state_dir, obs)
+    return obs
+
+
+def _emit_run_record(
+    state_dir: Path,
+    *,
+    started: float,
+    status: str,
+    errors: list[str],
+) -> None:
+    try:
+        runrecord.emit_record(
+            state_dir,
+            department="podcast",
+            node="pipeline_sensor",
+            status=status,
+            release=runrecord.read_release(state_dir.parent),
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-pipeline_sensor"
+                ),
+            },
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            errors=errors,
+            artifacts=[str(state_dir / "observations.jsonl")]
+            if (state_dir / "observations.jsonl").exists()
+            else [],
+            external_actions_taken=0,
+        )
+    except Exception:
+        LOGGER.exception("pipeline_sensor failed to append its runs-v2 record")
+        raise
+
+
+def run(state_dir: Path, sources: Path, charter_path: Path) -> dict:
+    state_dir = Path(state_dir)
+    started = time.perf_counter()
+    try:
+        observation = _run(state_dir, Path(sources), Path(charter_path))
+    except Exception as exc:
+        _emit_run_record(
+            state_dir,
+            started=started,
+            status="error",
+            errors=[type(exc).__name__],
+        )
+        raise
+    errors = (
+        []
+        if observation["status"] == "ok"
+        else [f"pipeline:{observation['status']}"]
+    )
+    _emit_run_record(
+        state_dir,
+        started=started,
+        status="error" if errors else "ok",
+        errors=errors,
+    )
+    return observation
+
+
+def main() -> None:
+    repo = Path(__file__).resolve().parents[3]
+    parser = argparse.ArgumentParser()
+# podcast runtime
+
+This department uses the FACTORY-STANDARD components (no per-department copies):
+- department manager loop: factory/manager.py (run with --department podcast)
+- self-heal ladder: factory/heal_ladder.py
+- human-in-the-loop bridge: factory/human_in_the_loop.py
+- estate watchdog: factory/estate_manager.py
+- runtime enforcement kernel: kernel/ (wire via a thin kernel bridge)
+- release-pinning: factory/release.py
+
+F1 (human, owner): run the intent interview (interview/INTERVIEW.md), lock the
+intent, then author the charter setpoints + funnel subgraphs. F2-F4 then govern
+and hand-author the runtime nodes from the procedural graph, shadow, and pin a
+release. Department-SPECIFIC node code lives here; factory machinery does not.
+# Comms reconcile sensor notes
+
+## Read
+
+- `departments/podcast/runtime/hopper_sensor.py`
+- `departments/podcast/runtime/pipeline_sensor.py`
+- `departments/podcast/runtime/README.md`
+- Real tracker report, structure only; no identifying values copied.
+
+## Tracker keys bound
+
+- `summary.outbound_referral_touch_count`
+- `summary.outbound_touch_count` (alternate spelling)
+- `summary.inbound_reply_count`
+- `inbound_replies_count` (defensive alternate spelling)
+
+## Assumptions
+
+- `--sla-hours` is reserved CLI input because the brief defines no timestamp/SLA behavior.
+- An asked-to-replied gap is `warn`; a replied-to-harvested gap is `action`.
+- Missing or invalid non-negative integer counts are unknown and produce `count_missing`.
+
+## Commands run
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_comms_reconcile_sensor.py -q`
+  - Result: `4 passed in 0.06s`
+- `PYTHONDONTWRITEBYTECODE=1 python3 departments/podcast/runtime/comms_reconcile_sensor.py --tracker tests/fixtures/comms_reconcile/tracker_57_16_0.json --ledger tests/fixtures/comms_reconcile/referrals_empty.json`
+  - Result: exit 0; one `replied->harvested` open-loop finding with asked 57, replied 16, harvested 0, severity `action`.
+....                                                                     [100%]
+4 passed in 0.06s
+{"findings": [{"asked": 57, "chain": "replied->harvested", "code": "open_loop", "detail": "16 inbound replies were counted, but no referrals were harvested.", "harvested": 0, "replied": 16, "severity": "action"}]}
+
+codex
+Ankit — the sensor is correct; the ownership check is blocked by shared-worktree changes outside my boundary:
+
+- `departments/podcast/releases/50b79dc454f5082d/manifest.json`
+- `departments/podcast/releases/current`
+- `departments/social/runtime/social_daily.sh`
+
+I did not modify or revert them because you explicitly prohibited touching existing files outside my three owned paths.
+
+Verified again:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI: exit `0`, exactly one `replied->harvested` finding
+- Owned artifacts and `./notes.md` are present
+- No commit, push, network access, or external write
+
+Status
+- % to true goal: 95% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, synthetic fixtures, tests, notes, focused test and CLI proof
+- In flight: nothing
+- Not done: clean ownership-check run
+- Blocked: shared worktree contains three out-of-boundary changes
+- Needs you: have the owning worker remove/reconcile those three changes, then rerun the checker
+Assumptions: the reported files belong to another worker because they are outside my explicit ownership.
+tokens used
+31,634
+Ankit — the sensor is correct; the ownership check is blocked by shared-worktree changes outside my boundary:
+
+- `departments/podcast/releases/50b79dc454f5082d/manifest.json`
+- `departments/podcast/releases/current`
+- `departments/social/runtime/social_daily.sh`
+
+I did not modify or revert them because you explicitly prohibited touching existing files outside my three owned paths.
+
+Verified again:
+
+- Focused tests: `4 passed in 0.06s`
+- CLI: exit `0`, exactly one `replied->harvested` finding
+- Owned artifacts and `./notes.md` are present
+- No commit, push, network access, or external write
+
+Status
+- % to true goal: 95% (99%)
+- % to current goal: 100% (99%)
+- Done / ready: sensor, synthetic fixtures, tests, notes, focused test and CLI proof
+- In flight: nothing
+- Not done: clean ownership-check run
+- Blocked: shared worktree contains three out-of-boundary changes
+- Needs you: have the owning worker remove/reconcile those three changes, then rerun the checker
+Assumptions: the reported files belong to another worker because they are outside my explicit ownership.
+[ringer.py] attempt 2 exited rc=0

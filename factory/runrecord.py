@@ -284,6 +284,7 @@ def emit_record(
     department: str,
     node: str,
     status: str,
+    run_id: str | None = None,
     epoch: int = 0,
     attempt: int = 1,
     round: int | None = None,
@@ -304,14 +305,15 @@ def emit_record(
 ) -> Path:
     """Build and append one v2 record with generated identity and timestamp.
 
-    Under the graph runner, promotion replaces this locally minted identity
+    ``LOOP_FACTORY_RUN_ID`` is how the daily chain binds all node records to
+    one minted run. Under the graph runner, promotion replaces this identity
     with the runner's canonical ``new_run_id`` value. Outside the runner this
     emitter remains the identity owner.
     """
     record = build_record(
         schema=SCHEMA,
         rev=2,
-        run_id=new_run_id(),
+        run_id=run_id or os.environ.get("LOOP_FACTORY_RUN_ID") or new_run_id(),
         department=department,
         node=node,
         epoch=epoch,

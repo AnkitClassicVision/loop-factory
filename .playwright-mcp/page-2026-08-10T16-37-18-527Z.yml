@@ -1,0 +1,175 @@
+- generic [ref=f1e2]:
+  - heading "The OBE guest funnel, right now" [level=1] [ref=f1e3]
+  - paragraph [ref=f1e4]:
+    - strong [ref=f1e5]: "The podcast is a prospecting machine:"
+    - text: cold leads and referrals go in one end; published episodes, promotion, and warm MyBCAT sales handoffs come out the other. Four of six stages are below their minimum, zero outreach went out this week, and four finished episodes are stuck past their publish dates.
+  - paragraph [ref=f1e6]:
+    - text: Counts read 2026-08-10 from
+    - code [ref=f1e7]: episodes/FUNNEL-LEDGER.json
+    - text: ","
+    - code [ref=f1e8]: episodes/*/episode.json
+    - text: ","
+    - code [ref=f1e9]: CANDIDATE-INBOX.json
+    - text: ", the publish schedule, and the department's floor file. Minimums are the owner-goal floors in"
+    - code [ref=f1e10]: floors.yaml
+    - text: . Click any stage for who fills it and what fires when it runs low.
+  - generic [ref=f1e11]:
+    - generic [ref=f1e12]:
+      - generic [ref=f1e13]:
+        - generic [ref=f1e14]: Prospect pool
+        - generic [ref=f1e15]: "26"
+        - generic [ref=f1e16]: no floor · raw names
+        - generic [ref=f1e17]: 14 inbox + 12 new inbound
+        - generic [ref=f1e18]: "fed by: cold sourcing + referrals"
+      - generic [ref=f1e19]: →
+    - generic [ref=f1e20]:
+      - generic [ref=f1e21]:
+        - generic [ref=f1e22]: Invited
+        - generic [ref=f1e23]: "1"
+        - generic [ref=f1e24]: min 18 in play · 20/wk
+        - generic [ref=f1e25]: 0 sent this week
+        - generic [ref=f1e26]: guest-acquisition loop
+      - generic [ref=f1e27]: →
+    - generic [ref=f1e28]:
+      - generic [ref=f1e29]:
+        - generic [ref=f1e30]: Talking
+        - generic [ref=f1e31]: "2"
+        - generic [ref=f1e32]: min 12 · 10 replies/wk
+        - generic [ref=f1e33]: 0 live replies · 13 stale touches
+        - generic [ref=f1e34]: reply monitor + triage
+      - generic [ref=f1e35]: →
+    - generic [ref=f1e36]:
+      - generic [ref=f1e37]:
+        - generic [ref=f1e38]: Prep done
+        - generic [ref=f1e39]: "2"
+        - generic [ref=f1e40]: min 8 · 6/wk
+        - generic [ref=f1e41]: awaiting recording
+        - generic [ref=f1e42]: prep booking + prep call
+      - generic [ref=f1e43]: →
+    - generic [ref=f1e44]:
+      - generic [ref=f1e45]:
+        - generic [ref=f1e46]: Booked
+        - generic [ref=f1e47]: "2"
+        - generic [ref=f1e48]: min 9 · 3/wk
+        - generic [ref=f1e49]: recordings on calendar
+        - generic [ref=f1e50]: booking readiness
+      - generic [ref=f1e51]: →
+    - generic [ref=f1e52]:
+      - generic [ref=f1e53]:
+        - generic [ref=f1e54]: In post
+        - generic [ref=f1e55]: "6"
+        - generic [ref=f1e56]: min 6 recorded stock
+        - generic [ref=f1e57]: 2 in edit · 4 queued, ALL past date
+        - generic [ref=f1e58]: production-publish loop
+      - generic [ref=f1e59]: →
+    - generic [ref=f1e60]:
+      - generic [ref=f1e61]:
+        - generic [ref=f1e62]: Published
+        - generic [ref=f1e63]: "0"
+        - generic [ref=f1e64]: 1/wk floor
+        - generic [ref=f1e65]: "this week · next: Aug 20"
+        - generic [ref=f1e66]: publish + promo kit + socials
+      - generic [ref=f1e67]: →
+    - generic [ref=f1e69]:
+      - generic [ref=f1e70]: Sales handoff
+      - generic [ref=f1e71]: ⊘
+      - generic [ref=f1e72]: not measured in this pass
+      - generic [ref=f1e73]: guests → MyBCAT prospects
+      - generic [ref=f1e74]: sales-handoff loop
+  - heading "Back to full the five moves that refill this funnel, in order of impact" [level=2] [ref=f1e75]:
+    - text: Back to full
+    - generic [ref=f1e76]: the five moves that refill this funnel, in order of impact
+  - list [ref=f1e77]:
+    - listitem [ref=f1e78]:
+      - strong [ref=f1e79]: Ship the 4 stuck episodes.
+      - generic [ref=f1e80]: MACHINE + YOU
+      - text: Fred Cho (due Jul 30), Kevin/Stefany (Jul 9), 100-conversations (Jul 23), solo-every-other-OD (Aug 6) are publish-queued past date. The production-publish loop's service is
+      - emphasis [ref=f1e81]: inactive
+      - text: and its auto-restart keeps failing; the escalation card is in the outbox. This is finished inventory not shipping.
+    - listitem [ref=f1e82]:
+      - strong [ref=f1e83]: Turn outreach back on.
+      - generic [ref=f1e84]: YOUR GATE
+      - text: "Quota is 20 invites/wk; this week is 0 against 26 available names (focus list is already in DEFICIT mode with 17 targets picked). The loop-drive contract that makes a zero-send run a FAILURE is half landed: verdicts are computed from receipts now, but the units that actually draft and send are awaiting your sign-off. Until then the funnel cannot refill itself."
+    - listitem [ref=f1e85]:
+      - strong [ref=f1e86]: Work the 13 stale touches + 2 expired holds.
+      - generic [ref=f1e87]: MACHINE
+      - text: Warm conversations going cold; re-touch is reply-monitor/triage work that needs no new permission.
+    - listitem [ref=f1e88]:
+      - strong [ref=f1e89]: Convert the 2 prep-done into booked recordings.
+      - generic [ref=f1e90]: MACHINE
+      - text: Booked stock is 2 against a floor of 9; prep-done people waiting on a calendar slot are the cheapest bookings available.
+    - listitem [ref=f1e91]:
+      - strong [ref=f1e92]: Ask published guests for referrals.
+      - generic [ref=f1e93]: MACHINE
+      - text: Referral flywheel is running but its last QA receipt is stale (flagged Aug 7); each published guest should be producing nominee names for the pool.
+  - heading "Stage detail who fills each stage, what good looks like, what fires when it runs low" [level=2] [ref=f1e94]:
+    - text: Stage detail
+    - generic [ref=f1e95]: who fills each stage, what good looks like, what fires when it runs low
+  - group [ref=f1e96]:
+    - generic "Prospect pool · 26 raw names cold sourcing + referrals in, invites out" [ref=f1e97] [cursor=pointer]:
+      - text: Prospect pool · 26 raw names
+      - generic [ref=f1e99]: cold sourcing + referrals in, invites out
+  - group [ref=f1e100]:
+    - generic "Invited · 1 in play, 0 sent this week floor 18 in play, quota 20/wk" [ref=f1e101] [cursor=pointer]:
+      - text: Invited · 1 in play, 0 sent this week
+      - generic [ref=f1e103]: floor 18 in play, quota 20/wk
+  - group [ref=f1e104]:
+    - generic "Talking · 2 warm threads floor 12 · 13 stale touches · 2 expired holds" [ref=f1e105] [cursor=pointer]:
+      - text: Talking · 2 warm threads
+      - generic [ref=f1e107]: floor 12 · 13 stale touches · 2 expired holds
+  - group [ref=f1e108]:
+    - generic "Prep done · 2 awaiting recording floor 8 · prep is the gate before booking" [ref=f1e109] [cursor=pointer]:
+      - text: Prep done · 2 awaiting recording
+      - generic [ref=f1e111]: floor 8 · prep is the gate before booking
+  - group [ref=f1e112]:
+    - generic "Booked · 2 on the calendar floor 9 · quota 3 recordings/wk" [ref=f1e113] [cursor=pointer]:
+      - text: Booked · 2 on the calendar
+      - generic [ref=f1e115]: floor 9 · quota 3 recordings/wk
+  - group [ref=f1e116]:
+    - generic "In post · 6 (2 editing, 4 queued and stuck) recorded stock floor 6 · stuck inventory is the problem" [ref=f1e117] [cursor=pointer]:
+      - text: In post · 6 (2 editing, 4 queued and stuck)
+      - generic [ref=f1e119]: recorded stock floor 6 · stuck inventory is the problem
+  - group [ref=f1e120]:
+    - generic "Published + promoted · 0 this week floor 1/wk · next scheduled Aug 20" [ref=f1e121] [cursor=pointer]:
+      - text: Published + promoted · 0 this week
+      - generic [ref=f1e123]: floor 1/wk · next scheduled Aug 20
+  - group [ref=f1e124]:
+    - generic "Sales handoff · not measured in this pass the business outcome behind the show" [ref=f1e125] [cursor=pointer]:
+      - text: Sales handoff · not measured in this pass
+      - generic [ref=f1e127]: the business outcome behind the show
+  - group [ref=f1e128]:
+    - generic "Killed · 4 episodes excluded from the funnel" [ref=f1e129] [cursor=pointer]:
+      - text: Killed · 4 episodes
+      - generic [ref=f1e131]: excluded from the funnel
+  - 'heading "Weekly flow the floors expect the funnel math the owner set: each stage feeds the next" [level=2] [ref=f1e132]':
+    - text: Weekly flow the floors expect
+    - generic [ref=f1e133]: "the funnel math the owner set: each stage feeds the next"
+  - paragraph [ref=f1e134]:
+    - strong [ref=f1e135]: 20 invited
+    - text: →
+    - strong [ref=f1e136]: 10 replies
+    - text: →
+    - strong [ref=f1e137]: 6 preps
+    - text: →
+    - strong [ref=f1e138]: 3 bookings
+    - text: →
+    - strong [ref=f1e139]: 2 recordings
+    - text: →
+    - strong [ref=f1e140]: 1 published
+    - text: "per week. This week's actuals: 0 → 0 → 0 → 0 → 0 → 0. The machine knows: the funnel alarm fired this morning and the manager brief carries the gap. What it cannot yet do is send its way back to full without your sign-off on the sending units."
+  - contentinfo [ref=f1e141]:
+    - strong [ref=f1e142]: "Numbers, verbatim sources:"
+    - text: ledger stages from
+    - code [ref=f1e143]: /mnt/d_drive/repos/podcast/episodes/FUNNEL-LEDGER.json
+    - text: "(17 people: 12 new_inbound, 1 outreach_sent, 2 prep_call_done, 2 published) · episode stages from"
+    - code [ref=f1e144]: episodes/*/episode.json
+    - text: (2026-08-10) · candidates from
+    - code [ref=f1e145]: CANDIDATE-INBOX.json
+    - text: (14) · warm/stale/hold counts from the department's
+    - code [ref=f1e146]: objectives_observed.json
+    - text: (11:30 ET run) · floors from
+    - code [ref=f1e147]: departments/podcast/floors.yaml
+    - text: "· publish dates from the exported publish schedule. Anything marked ⊘ was not measured, never assumed. The supervision machinery that watches this funnel (sensors, QA gates, heal ladder, escalation cards) has its own map:"
+    - link "podcast-machinery-map.html" [ref=f1e148] [cursor=pointer]:
+      - /url: podcast-machinery-map.html
+    - text: .

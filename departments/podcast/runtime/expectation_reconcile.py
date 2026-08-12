@@ -139,7 +139,14 @@ def main() -> int:
     print(json.dumps({"status": worst,
                       "observations": [o["subject"] + ":" + o["status"] for o in observations],
                       "errors": errors}))
-    return 0 if worst == "ok" and not errors else 1
+    # OLD:
+    # return 0 if worst == "ok" and not errors else 1
+    # NEW — exit contract consumed by podcast_daily.sh:
+    #   0 = all expectations met; 2 = findings recorded (valid verdict, the
+    #   compare/dedup chain must process them); 1 = crash (node failure).
+    if errors:
+        return 1
+    return 0 if worst == "ok" else 2
 
 
 if __name__ == "__main__":

@@ -1,0 +1,20 @@
+{
+  "run_name": "loop-factory-v2-merge-qa",
+  "workdir": "/home/ankit114/ringer-work/merge-qa-r2",
+  "worktrees": true,
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "telemetry-reconcile",
+      "engine": "codex",
+      "task_type": "code-review",
+      "timeout_s": 3600,
+      "engine_args": ["-c", "model_reasoning_effort=high"],
+      "spec": "You are a read-only reconciliation reviewer. Your current working directory is a git worktree of the loop-factory repo. You may run git and read-only python; you must not edit any repo file. Your ONLY deliverable is ./review.md in the task working directory.\n\nCONTEXT: Two lanes shipped telemetry into this repo on the same day, from two different sessions, and the owner predicted they would need end-process reconciliation. LANE A (merged via PR #13, commits 9da809c..42ae723): the runs-v2 run-record contract — factory/runrecord.py (per-node-run JSON receipts: run_id, release, trigger, engine/model/auth_class, usage tokens, status, external_actions_taken; fcntl-locked runs-v2.jsonl), consumed by factory/boardfeed.py + factory/board.py (estate board). LANE B (merged via PR #12, commit d98778e 'v2: OTel-aligned step telemetry, score records, budget actuals, SQLite rollup + NDJSON export'): inspect git show d98778e --stat and its files to learn exactly what it added.\n\nPRODUCE A RECONCILIATION REVIEW answering, with file:line evidence: (1) INVENTORY — what does lane B actually consist of (modules, schemas, storage, writers, consumers, systemd/cron hooks)? (2) OVERLAP MAP — for each concern (per-step timing, token/usage capture, cost/budget actuals, run identity, storage format, rollup/export, board/reporting), which lane covers it, do both, and do their schemas agree or conflict (field names, id formats, storage locations)? (3) COLLISION CHECK — do they write to the same files/dirs, double-count anything, or race (locks)? Do any daily chains invoke both? (4) COMPOSITION VERDICT — can they coexist as-is (A = per-run receipts/governance, B = fine-grained step observability?) or is one a subset that should fold into the other? (5) RECOMMENDATION — the smallest reconciliation the owner should order: adopt-both-with-bridge (e.g. B's rollup consuming A's records), merge-schemas, or retire-one; name concrete next steps with effort S/M/L each. Run any read-only proof that helps (import both modules, run their validators against each other's sample records if feasible) and quote actual output.\n\nWrite ./review.md: FIRST LINE 'VERDICT: COMPOSE' or 'VERDICT: CONFLICT' or 'VERDICT: SUBSET', then the five sections with Evidence lines. Honesty rules: unknown is a valid finding; do not invent behavior for code you did not read.",
+      "check": "python3 -c \"import re,sys;from pathlib import Path;t=Path('review.md').read_text(encoding='utf-8',errors='replace') if Path('review.md').exists() else sys.exit(print('FAIL: review.md missing') or 1);f=t.strip().splitlines()[0].upper();ok=bool(re.match(r'^VERDICT: (COMPOSE|CONFLICT|SUBSET)',f));low=t.lower();need=['inventory','overlap','collision','composition','recommendation','runrecord','d98778e'];miss=[n for n in need if n not in low];cites=len(re.findall(r'(:\\d+|evidence|\\.py)',low));fails=([] if ok else ['bad verdict line'])+[f'missing section/topic: {m}' for m in miss]+([] if cites>=8 else ['fewer than 8 evidence citations']);print('RECONCILE CHECK:','PASS — '+f if not fails else 'FAIL');[print(' -',x) for x in fails];sys.exit(1 if fails else 0)\"",
+      "expect_files": ["review.md"],
+      "verified": "an executed-check-gated reconciliation review maps lane A (runs-v2 receipts) against lane B (#12 OTel step telemetry) and recommends the smallest composition"
+    }
+  ]
+}

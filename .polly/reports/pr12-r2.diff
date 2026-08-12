@@ -1,0 +1,2363 @@
+diff --git a/factory/prices.json b/factory/prices.json
+new file mode 100644
+index 0000000..5499b46
+--- /dev/null
++++ b/factory/prices.json
+@@ -0,0 +1,71 @@
++{
++  "schema_version": "model-prices/v1",
++  "effective_date": "2026-08-02",
++  "ratified": false,
++  "source": "https://openai.com/index/gpt-5-6/",
++  "models": {
++    "claude-subscription/default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "claude_subscription"
++    },
++    "codex-oauth/default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "codex_oauth"
++    },
++    "gemini-subscription/default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "gemini_subscription"
++    },
++    "gpt-5.6-luna": {
++      "input_usd_per_1m_tokens": 1.0,
++      "output_usd_per_1m_tokens": 6.0,
++      "estimated": false,
++      "price_status": "candidate_official",
++      "engine": "codex_oauth"
++    },
++    "gpt-5.6-sol": {
++      "input_usd_per_1m_tokens": 5.0,
++      "output_usd_per_1m_tokens": 30.0,
++      "estimated": false,
++      "price_status": "candidate_official",
++      "engine": "codex_oauth"
++    },
++    "gpt-5.6-terra": {
++      "input_usd_per_1m_tokens": 2.5,
++      "output_usd_per_1m_tokens": 15.0,
++      "estimated": false,
++      "price_status": "candidate_official",
++      "engine": "codex_oauth"
++    },
++    "glm-oauth/default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "glm_oauth"
++    },
++    "kimi-subscription/default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "kimi_subscription"
++    },
++    "openrouter/x-ai/grok-default": {
++      "input_usd_per_1m_tokens": null,
++      "output_usd_per_1m_tokens": null,
++      "estimated": false,
++      "price_status": "unknown_placeholder",
++      "engine": "grok_openrouter"
++    }
++  }
++}
+diff --git a/factory/rollup.py b/factory/rollup.py
+new file mode 100644
+index 0000000..b85c3be
+--- /dev/null
++++ b/factory/rollup.py
+@@ -0,0 +1,777 @@
++"""Deterministic SQLite rollup and sanitized per-entity NDJSON export."""
++from __future__ import annotations
++
++import fcntl
++import hashlib
++import json
++import logging
++import math
++import os
++import re
++import sqlite3
++import stat
++import tempfile
++from pathlib import Path
++from typing import Any, Iterable
++
++from factory import scores as score_records
++
++
++LOGGER = logging.getLogger(__name__)
++SCHEMA_VERSION = "rollup/v1"
++ENTITIES = (
++    "department",
++    "run",
++    "step_telemetry",
++    "receipt",
++    "score",
++    "incident",
++    "approval",
++)
++_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@?=&%#+-]{0,255}\Z")
++_FINISH_REASONS = frozenset(
++    {"stop", "length", "tool_calls", "content_filter", "error", "other"}
++)
++_AUTH_ROUTES = frozenset(
++    {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
++)
++
++DDL = """
++CREATE TABLE department (
++  id TEXT PRIMARY KEY, epoch INTEGER, status TEXT, last_cycle_at TEXT,
++  ok INTEGER, source_ref TEXT, schema_version TEXT NOT NULL
++);
++CREATE TABLE run (
++  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT NOT NULL,
++  current_step TEXT, status TEXT, ts TEXT, epoch INTEGER, source_ref TEXT,
++  schema_version TEXT NOT NULL
++);
++CREATE TABLE step_telemetry (
++  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, step_id TEXT, node TEXT,
++  ts TEXT, operation_name TEXT, provider_name TEXT, request_model TEXT,
++  response_model TEXT, input_tokens INTEGER, output_tokens INTEGER,
++  finish_reasons_json TEXT, duration_ms INTEGER, error_type TEXT,
++  cost_usd REAL, auth_route TEXT, engine TEXT, estimated INTEGER NOT NULL,
++  price_schema_version TEXT, price_effective_date TEXT, telemetry_source TEXT,
++  source_ref TEXT, schema_version TEXT NOT NULL
++);
++CREATE TABLE receipt (
++  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, step_id TEXT, node TEXT,
++  receipt_type TEXT, status TEXT, ts TEXT, verified INTEGER, source_ref TEXT,
++  schema_version TEXT NOT NULL
++);
++CREATE TABLE score (
++  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, step_id TEXT,
++  node TEXT NOT NULL, name TEXT NOT NULL, value REAL NOT NULL, label TEXT NOT NULL,
++  explanation TEXT NOT NULL, source TEXT NOT NULL, judge_model TEXT,
++  config_version TEXT NOT NULL, ts TEXT NOT NULL, source_ref TEXT,
++  schema_version TEXT NOT NULL
++);
++CREATE TABLE incident (
++  id TEXT PRIMARY KEY, department TEXT, code TEXT NOT NULL, severity TEXT,
++  status TEXT NOT NULL, ts TEXT, source_ref TEXT, schema_version TEXT NOT NULL
++);
++CREATE TABLE approval (
++  id TEXT PRIMARY KEY, department TEXT, decision_id TEXT, status TEXT NOT NULL,
++  queued_at TEXT, card_ref TEXT, source_ref TEXT, schema_version TEXT NOT NULL
++);
++CREATE INDEX run_by_status_ts ON run(status, ts);
++CREATE INDEX telemetry_by_department_ts ON step_telemetry(department, ts);
++CREATE INDEX score_by_department_label ON score(department, label);
++CREATE INDEX incident_by_status ON incident(status);
++CREATE INDEX approval_by_status_age ON approval(status, queued_at);
++"""
++
++
++def _stable_id(*parts: Any) -> str:
++    raw = "\x1f".join("" if part is None else str(part) for part in parts)
++    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
++
++
++def _relative(root: Path, path: Path) -> str:
++    try:
++        return path.absolute().relative_to(root.absolute()).as_posix()
++    except ValueError:
++        return path.name
++
++
++def _identifier(value: Any, field: str, *, nullable: bool = True) -> str | None:
++    if value is None and nullable:
++        return None
++    if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
++        raise ValueError(f"{field} is not a safe identifier")
++    return value
++
++
++def _number(
++    value: Any, field: str, *, integer: bool = False, nullable: bool = True
++) -> int | float | None:
++    if value is None and nullable:
++        return None
++    expected = int if integer else (int, float)
++    if isinstance(value, bool) or not isinstance(value, expected):
++        raise ValueError(f"{field} has an invalid type")
++    if value < 0 or (not integer and not math.isfinite(value)):
++        raise ValueError(f"{field} must be finite and non-negative")
++    return value
++
++
++def _open_source(root: Path, path: Path):
++    """Open a source beneath root without following any symlink component."""
++    relative = path.absolute().relative_to(root.absolute())
++    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
++    directory_fd = os.open(root.absolute(), flags)
++    try:
++        for component in relative.parts[:-1]:
++            next_fd = os.open(component, flags, dir_fd=directory_fd)
++            os.close(directory_fd)
++            directory_fd = next_fd
++        source_fd = os.open(
++            relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd
++        )
++        return os.fdopen(source_fd, encoding="utf-8")
++    finally:
++        os.close(directory_fd)
++
++
++def _incident(
++    *, department: str | None, code: str, source_ref: str, ts: str | None = None
++) -> dict[str, Any]:
++    return {
++        "id": _stable_id("incident", department, code, source_ref),
++        "department": department,
++        "code": code,
++        "severity": "breach",
++        "status": "open",
++        "ts": ts,
++        "source_ref": source_ref,
++        "schema_version": SCHEMA_VERSION,
++    }
++
++
++def _source_available(
++    root: Path,
++    path: Path,
++    department: str | None,
++    incidents: list[dict[str, Any]],
++    *,
++    required: bool = False,
++) -> bool:
++    """Distinguish absent optional inputs from unsafe or missing required inputs."""
++    try:
++        stat_result = path.lstat()
++    except FileNotFoundError:
++        if required:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code="source_missing",
++                    source_ref=_relative(root, path),
++                )
++            )
++        return False
++    if not stat.S_ISREG(stat_result.st_mode):
++        incidents.append(
++            _incident(
++                department=department,
++                code="source_unreadable:UnsafeFileType",
++                source_ref=_relative(root, path),
++            )
++        )
++        return False
++    return stat_result.st_size >= 0
++
++
++def _read_jsonl(
++    root: Path, path: Path, department: str | None, incidents: list[dict[str, Any]]
++) -> list[tuple[int, dict[str, Any]]]:
++    rows: list[tuple[int, dict[str, Any]]] = []
++    source_ref = _relative(root, path)
++    try:
++        with _open_source(root, path) as handle:
++            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
++            try:
++                for line_number, line in enumerate(handle, 1):
++                    if not line.strip():
++                        continue
++                    try:
++                        row = json.loads(line)
++                        if not isinstance(row, dict):
++                            raise TypeError("row is not an object")
++                        rows.append((line_number, row))
++                    except (json.JSONDecodeError, TypeError, ValueError) as exc:
++                        incidents.append(
++                            _incident(
++                                department=department,
++                                code=f"source_unreadable:{type(exc).__name__}",
++                                source_ref=f"{source_ref}:{line_number}",
++                            )
++                        )
++            finally:
++                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
++    except (OSError, UnicodeError) as exc:
++        incidents.append(
++            _incident(
++                department=department,
++                code=f"source_unreadable:{type(exc).__name__}",
++                source_ref=source_ref,
++            )
++        )
++    return rows
++
++
++def _read_json(
++    root: Path, path: Path, department: str | None, incidents: list[dict[str, Any]]
++) -> dict[str, Any] | None:
++    try:
++        with _open_source(root, path) as handle:
++            value = json.load(handle)
++        if not isinstance(value, dict):
++            raise TypeError("source is not an object")
++        return value
++    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
++        incidents.append(
++            _incident(
++                department=department,
++                code=f"source_unreadable:{type(exc).__name__}",
++                source_ref=_relative(root, path),
++            )
++        )
++        return None
++
++
++def _department_row(root: Path, department: str, state_dir: Path, state: dict | None):
++    state = state or {}
++    status = state.get("status") or ("ok" if state.get("ok") is True else "unknown")
++    try:
++        status = _identifier(status, "department status", nullable=False)
++        last_cycle_at = _identifier(
++            state.get("last_cycle_at") or state.get("ts"), "last_cycle_at"
++        )
++    except ValueError:
++        status = "invalid"
++        last_cycle_at = None
++    return {
++        "id": department,
++        "epoch": state.get("epoch") if isinstance(state.get("epoch"), int) else None,
++        "status": status,
++        "last_cycle_at": last_cycle_at,
++        "ok": None if state.get("ok") is None else int(bool(state.get("ok"))),
++        "source_ref": _relative(root, state_dir),
++        "schema_version": SCHEMA_VERSION,
++    }
++
++
++def _run_rows(
++    root: Path, path: Path, department: str, incidents: list[dict[str, Any]]
++) -> list[dict[str, Any]]:
++    latest: dict[str, dict[str, Any]] = {}
++    source_ref = _relative(root, path)
++    for line_number, row in _read_jsonl(root, path, department, incidents):
++        run_id = row.get("run_id")
++        if not isinstance(run_id, str) or not run_id:
++            run_id = _stable_id(department, source_ref, line_number)
++        node = row.get("node")
++        ts = row.get("ts") or row.get("timestamp") or row.get("queued_at")
++        status = row.get("status")
++        if status is None:
++            status = "active" if node and node != "manager_tick" else "unknown"
++        try:
++            run_id = _identifier(run_id, "run_id", nullable=False)
++            node = _identifier(node, "node")
++            ts = _identifier(ts, "timestamp")
++            status = _identifier(status, "status", nullable=False)
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"run_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        candidate = {
++            "id": _stable_id("run", department, run_id),
++            "department": department,
++            "run_id": run_id,
++            "current_step": node,
++            "status": status,
++            "ts": ts,
++            "epoch": row.get("epoch") if isinstance(row.get("epoch"), int) else None,
++            "source_ref": f"{source_ref}:{line_number}",
++            "schema_version": SCHEMA_VERSION,
++        }
++        prior = latest.get(run_id)
++        if prior is None or ((candidate["ts"] or ""), line_number) >= (
++            (prior["ts"] or ""), prior.get("_line", -1)
++        ):
++            candidate["_line"] = line_number
++            latest[run_id] = candidate
++    for row in latest.values():
++        row.pop("_line", None)
++    return sorted(latest.values(), key=lambda row: row["id"])
++
++
++def _telemetry_rows(root, path, department, incidents):
++    out = []
++    source_ref = _relative(root, path)
++    for line_number, row in _read_jsonl(root, path, department, incidents):
++        reasons = row.get("gen_ai.response.finish_reasons")
++        try:
++            if reasons is not None and (
++                not isinstance(reasons, list)
++                or len(reasons) > 8
++                or any(reason not in _FINISH_REASONS for reason in reasons)
++            ):
++                raise ValueError("finish reasons are invalid")
++            if row.get("schema_version") != "step-telemetry/v1":
++                raise ValueError("telemetry schema_version is invalid")
++            if row.get("loopfactory.auth.route") not in _AUTH_ROUTES:
++                raise ValueError("auth route is invalid")
++            if not isinstance(row.get("estimated"), bool):
++                raise ValueError("estimated must be boolean")
++            safe_values = {
++                "ts": _identifier(row.get("ts"), "timestamp", nullable=False),
++                "department": _identifier(
++                    row.get("loopfactory.department") or department,
++                    "department",
++                    nullable=False,
++                ),
++                "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
++                "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
++                "node": _identifier(row.get("loopfactory.node"), "node"),
++                "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
++                "provider_name": _identifier(row.get("gen_ai.provider.name"), "provider_name"),
++                "request_model": _identifier(row.get("gen_ai.request.model"), "request_model"),
++                "response_model": _identifier(row.get("gen_ai.response.model"), "response_model"),
++                "error_type": _identifier(row.get("error.type"), "error_type"),
++                "auth_route": _identifier(row.get("loopfactory.auth.route"), "auth_route"),
++                "engine": _identifier(row.get("loopfactory.engine"), "engine"),
++                "price_schema_version": _identifier(
++                    row.get("loopfactory.price.schema_version"), "price_schema_version"
++                ),
++                "price_effective_date": _identifier(
++                    row.get("loopfactory.price.effective_date"), "price_effective_date"
++                ),
++                "telemetry_source": _identifier(
++                    row.get("loopfactory.telemetry.source"), "telemetry_source"
++                ),
++                "input_tokens": _number(
++                    row.get("gen_ai.usage.input_tokens"), "input_tokens", integer=True
++                ),
++                "output_tokens": _number(
++                    row.get("gen_ai.usage.output_tokens"), "output_tokens", integer=True
++                ),
++                "duration_ms": _number(
++                    row.get("duration_ms"), "duration_ms", integer=True, nullable=False
++                ),
++                "cost_usd": _number(row.get("loopfactory.cost_usd"), "cost_usd"),
++            }
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"telemetry_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        out.append(
++            {
++                "id": _stable_id("telemetry", department, source_ref, line_number),
++                "department": safe_values["department"],
++                "run_id": safe_values["run_id"],
++                "step_id": safe_values["step_id"],
++                "node": safe_values["node"],
++                "ts": safe_values["ts"],
++                "operation_name": safe_values["operation_name"],
++                "provider_name": safe_values["provider_name"],
++                "request_model": safe_values["request_model"],
++                "response_model": safe_values["response_model"],
++                "input_tokens": safe_values["input_tokens"],
++                "output_tokens": safe_values["output_tokens"],
++                "finish_reasons_json": json.dumps(reasons, separators=(",", ":")) if reasons is not None else None,
++                "duration_ms": safe_values["duration_ms"],
++                "error_type": safe_values["error_type"],
++                "cost_usd": safe_values["cost_usd"],
++                "auth_route": safe_values["auth_route"],
++                "engine": safe_values["engine"],
++                "estimated": int(row.get("estimated") is True),
++                "price_schema_version": safe_values["price_schema_version"],
++                "price_effective_date": safe_values["price_effective_date"],
++                "telemetry_source": safe_values["telemetry_source"],
++                "source_ref": f"{source_ref}:{line_number}",
++                "schema_version": row["schema_version"],
++            }
++        )
++    return out
++
++
++def _score_rows(root, path, department, incidents):
++    out = []
++    source_ref = _relative(root, path)
++    for line_number, row in _read_jsonl(root, path, department, incidents):
++        try:
++            row = score_records.validate_score(row)
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"score_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        target = row["target_ref"]
++        value = row["gen_ai.evaluation.score.value"]
++        out.append(
++            {
++                "id": _stable_id("score", department, source_ref, line_number),
++                "department": target.get("department") or department,
++                "run_id": target.get("run_id"),
++                "step_id": target.get("step_id"),
++                "node": target.get("node") or "unknown",
++                "name": row.get("gen_ai.evaluation.name") or "unknown",
++                "value": value,
++                "label": row.get("gen_ai.evaluation.score.label") or "unknown",
++                "explanation": row.get("gen_ai.evaluation.explanation") or "",
++                "source": row.get("source") or "unknown",
++                "judge_model": row.get("judge_model"),
++                "config_version": row.get("config_version") or "unknown",
++                "ts": row.get("ts") or "unknown",
++                "source_ref": f"{source_ref}:{line_number}",
++                "schema_version": row.get("schema_version") or SCHEMA_VERSION,
++            }
++        )
++    return out
++
++
++def _approval_rows(root, path, department, incidents):
++    out = []
++    source_ref = _relative(root, path)
++    for line_number, row in _read_jsonl(root, path, department, incidents):
++        decision_id = row.get("decision_id")
++        packet = row.get("packet") if isinstance(row.get("packet"), dict) else {}
++        status = row.get("status") or ("pending_approval" if decision_id else "pending")
++        queued_at = row.get("queued_at") or row.get("ts")
++        card_ref = row.get("card_ref") or packet.get("card_ref")
++        try:
++            safe_department = _identifier(
++                row.get("department") or department, "department", nullable=False
++            )
++            decision_id = _identifier(decision_id, "decision_id")
++            status = _identifier(status, "status", nullable=False)
++            queued_at = _identifier(queued_at, "queued_at")
++            card_ref = _identifier(card_ref, "card_ref")
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"approval_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        out.append(
++            {
++                "id": _stable_id("approval", department, decision_id, source_ref, line_number),
++                "department": safe_department,
++                "decision_id": decision_id,
++                "status": status,
++                "queued_at": queued_at,
++                "card_ref": card_ref,
++                "source_ref": f"{source_ref}:{line_number}",
++                "schema_version": SCHEMA_VERSION,
++            }
++        )
++    return out
++
++
++def _incident_rows(root, path, department, incidents):
++    out = []
++    source_ref = _relative(root, path)
++    for line_number, row in _read_jsonl(root, path, department, incidents):
++        code = row.get("code") or row.get("issue") or row.get("kind") or "incident"
++        try:
++            safe_department = _identifier(
++                row.get("department") or department, "department", nullable=False
++            )
++            code = _identifier(code, "incident code", nullable=False)
++            severity = _identifier(row.get("severity"), "severity")
++            status = _identifier(row.get("status") or "open", "status", nullable=False)
++            timestamp = _identifier(row.get("ts") or row.get("timestamp"), "timestamp")
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"incident_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        out.append(
++            {
++                "id": _stable_id("incident", department, source_ref, line_number),
++                "department": safe_department,
++                "code": code,
++                "severity": severity,
++                "status": status,
++                "ts": timestamp,
++                "source_ref": f"{source_ref}:{line_number}",
++                "schema_version": SCHEMA_VERSION,
++            }
++        )
++    return out
++
++
++def _receipt_rows(root, path, department, incidents):
++    source_ref = _relative(root, path)
++    if path.suffix == ".jsonl":
++        source_rows = _read_jsonl(root, path, department, incidents)
++    else:
++        value = _read_json(root, path, department, incidents)
++        source_rows = [] if value is None else [(1, value)]
++    out = []
++    for line_number, row in source_rows:
++        receipt_id = row.get("receipt_id") or row.get("id") or row.get("nonce")
++        try:
++            safe_department = _identifier(
++                row.get("department") or department, "department", nullable=False
++            )
++            receipt_id = _identifier(receipt_id, "receipt_id")
++            run_id = _identifier(row.get("run_id"), "run_id")
++            step_id = _identifier(row.get("step_id"), "step_id")
++            node = _identifier(row.get("node"), "node")
++            receipt_type = _identifier(
++                row.get("receipt_type") or row.get("kind") or path.stem,
++                "receipt_type",
++                nullable=False,
++            )
++            status = _identifier(row.get("status"), "status")
++            timestamp = _identifier(row.get("ts") or row.get("timestamp"), "timestamp")
++        except ValueError as exc:
++            incidents.append(
++                _incident(
++                    department=department,
++                    code=f"receipt_invalid:{type(exc).__name__}",
++                    source_ref=f"{source_ref}:{line_number}",
++                )
++            )
++            continue
++        out.append(
++            {
++                "id": _stable_id("receipt", department, receipt_id, source_ref, line_number),
++                "department": safe_department,
++                "run_id": run_id,
++                "step_id": step_id,
++                "node": node,
++                "receipt_type": receipt_type,
++                "status": status,
++                "ts": timestamp,
++                "verified": None if row.get("verified") is None else int(bool(row.get("verified"))),
++                "source_ref": f"{source_ref}:{line_number}",
++                "schema_version": SCHEMA_VERSION,
++            }
++        )
++    return out
++
++
++def _insert_rows(connection: sqlite3.Connection, table: str, rows: Iterable[dict[str, Any]]):
++    for row in sorted(rows, key=lambda item: item["id"]):
++        columns = tuple(row)
++        connection.execute(
++            f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
++            tuple(row[column] for column in columns),
++        )
++
++
++def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, Any]:
++    root = Path(root).resolve()
++    db_path = Path(db_path or root / "estate" / "state" / "rollup.sqlite3")
++    incidents: list[dict[str, Any]] = []
++    rows: dict[str, list[dict[str, Any]]] = {entity: [] for entity in ENTITIES}
++
++    department_dirs = sorted((root / "departments").glob("*/state"))
++    for state_dir in department_dirs:
++        department = state_dir.parent.name
++        state_path = state_dir / "STATE.json"
++        state = (
++            _read_json(root, state_path, department, incidents)
++            if _source_available(
++                root, state_path, department, incidents, required=True
++            )
++            else None
++        )
++        rows["department"].append(_department_row(root, department, state_dir, state))
++        if state:
++            findings = state.get("open_findings") or state.get("findings") or []
++            if isinstance(findings, list):
++                for index, finding in enumerate(findings):
++                    if not isinstance(finding, dict):
++                        continue
++                    code = finding.get("code") or "manager_finding"
++                    try:
++                        code = _identifier(code, "finding code", nullable=False)
++                        severity = _identifier(finding.get("severity"), "severity")
++                        status = _identifier(
++                            finding.get("status") or "open", "status", nullable=False
++                        )
++                        timestamp = _identifier(
++                            finding.get("ts") or state.get("last_cycle_at"), "timestamp"
++                        )
++                    except ValueError as exc:
++                        incidents.append(
++                            _incident(
++                                department=department,
++                                code=f"state_finding_invalid:{type(exc).__name__}",
++                                source_ref=_relative(root, state_path),
++                            )
++                        )
++                        continue
++                    rows["incident"].append(
++                        {
++                            "id": _stable_id("state-finding", department, code, index),
++                            "department": department,
++                            "code": code,
++                            "severity": severity,
++                            "status": status,
++                            "ts": timestamp,
++                            "source_ref": _relative(root, state_path),
++                            "schema_version": SCHEMA_VERSION,
++                        }
++                    )
++        for run_path in (state_dir / "runs.jsonl", state_dir / "runs-v2.jsonl"):
++            if _source_available(root, run_path, department, incidents):
++                rows["run"].extend(_run_rows(root, run_path, department, incidents))
++        if _source_available(root, state_dir / "telemetry.jsonl", department, incidents):
++            rows["step_telemetry"].extend(_telemetry_rows(root, state_dir / "telemetry.jsonl", department, incidents))
++        if _source_available(root, state_dir / "scores.jsonl", department, incidents):
++            rows["score"].extend(_score_rows(root, state_dir / "scores.jsonl", department, incidents))
++        for path in sorted(state_dir.rglob("*")):
++            if path.is_symlink():
++                incidents.append(
++                    _incident(
++                        department=department,
++                        code="source_unreadable:UnsafeFileType",
++                        source_ref=_relative(root, path),
++                    )
++                )
++                continue
++            if not path.is_file():
++                continue
++            name = path.name.lower()
++            if "receipt" in name and path.suffix in {".json", ".jsonl"}:
++                rows["receipt"].extend(_receipt_rows(root, path, department, incidents))
++            elif "incident" in name and path.suffix == ".jsonl":
++                rows["incident"].extend(_incident_rows(root, path, department, incidents))
++            elif ("approval" in name or "outbox" in name) and path.suffix == ".jsonl":
++                rows["approval"].extend(_approval_rows(root, path, department, incidents))
++
++    estate_state = root / "estate" / "state"
++    if estate_state.exists():
++        estate_json = estate_state / "STATE.json"
++        estate_value = (
++            _read_json(root, estate_json, "estate", incidents)
++            if _source_available(
++                root, estate_json, "estate", incidents, required=True
++            )
++            else None
++        )
++        rows["department"].append(_department_row(root, "estate", estate_state, estate_value))
++        for path in sorted(estate_state.rglob("*.jsonl")):
++            if path.is_symlink():
++                incidents.append(
++                    _incident(
++                        department="estate",
++                        code="source_unreadable:UnsafeFileType",
++                        source_ref=_relative(root, path),
++                    )
++                )
++                continue
++            name = path.name.lower()
++            if "incident" in name:
++                rows["incident"].extend(_incident_rows(root, path, "estate", incidents))
++            elif "approval" in name or "outbox" in name:
++                rows["approval"].extend(_approval_rows(root, path, "estate", incidents))
++            elif "receipt" in name:
++                rows["receipt"].extend(_receipt_rows(root, path, "estate", incidents))
++    rows["incident"].extend(incidents)
++    rows["incident"] = list({row["id"]: row for row in rows["incident"]}.values())
++    deduped_runs: dict[str, dict[str, Any]] = {}
++    for row in rows["run"]:
++        prior = deduped_runs.get(row["id"])
++        if prior is None or ((row.get("ts") or ""), row.get("source_ref") or "") >= (
++            (prior.get("ts") or ""), prior.get("source_ref") or ""
++        ):
++            deduped_runs[row["id"]] = row
++    rows["run"] = list(deduped_runs.values())
++
++    db_path = db_path.absolute()
++    db_path.parent.mkdir(parents=True, exist_ok=True)
++    temp_dir = Path(tempfile.mkdtemp(prefix=f".{db_path.name}.", dir=db_path.parent))
++    temp_path = temp_dir / "rollup.sqlite3"
++    connection = sqlite3.connect(temp_path)
++    try:
++        connection.executescript(DDL)
++        for entity in ENTITIES:
++            _insert_rows(connection, entity, rows[entity])
++        connection.commit()
++        connection.execute("VACUUM")
++    finally:
++        connection.close()
++    complete = not incidents
++    published_path = (
++        db_path if complete else db_path.with_name(db_path.name + ".incomplete")
++    )
++    os.replace(temp_path, published_path)
++    temp_dir.rmdir()
++    return {
++        "database": str(published_path),
++        "requested_database": str(db_path),
++        "counts": {entity: len(rows[entity]) for entity in ENTITIES},
++        "findings": len(incidents),
++        "complete": complete,
++        "schema_version": SCHEMA_VERSION,
++    }
++
++
++def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]:
++    db_path = Path(db_path)
++    if db_path.name.endswith(".incomplete"):
++        raise ValueError("refusing export from an incomplete rollup")
++    export_dir = Path(export_dir)
++    export_dir.mkdir(parents=True, exist_ok=True)
++    connection = sqlite3.connect(db_path)
++    connection.row_factory = sqlite3.Row
++    counts = {}
++    try:
++        for entity in ENTITIES:
++            columns = "*"
++            if entity == "score":
++                columns = (
++                    "id,department,run_id,step_id,node,name,value,label,source,"
++                    "judge_model,config_version,ts,source_ref,schema_version"
++                )
++            records = [
++                dict(row)
++                for row in connection.execute(
++                    f"SELECT {columns} FROM {entity} ORDER BY id"
++                )
++            ]
++            target = export_dir / f"{entity}.ndjson"
++            content = "".join(
++                json.dumps(record, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
++                for record in records
++            )
++            temp_fd, temp_name = tempfile.mkstemp(
++                prefix=f".{target.name}.", suffix=".tmp", dir=export_dir
++            )
++            with os.fdopen(temp_fd, "w", encoding="utf-8") as handle:
++                handle.write(content)
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.replace(temp_name, target)
++            counts[entity] = len(records)
++    finally:
++        connection.close()
++    return counts
+diff --git a/factory/scores.py b/factory/scores.py
+new file mode 100644
+index 0000000..18b9d0c
+--- /dev/null
++++ b/factory/scores.py
+@@ -0,0 +1,113 @@
++"""Validated append-only evaluator score records, separate from receipts."""
++from __future__ import annotations
++
++import copy
++import json
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++from kernel.jsonl_store import append_jsonl
++
++
++SCHEMA_VERSION = "score-record/v1"
++SOURCES = frozenset({"script", "judge", "human"})
++FIELDS = frozenset(
++    {
++        "gen_ai.evaluation.name",
++        "gen_ai.evaluation.score.value",
++        "gen_ai.evaluation.score.label",
++        "gen_ai.evaluation.explanation",
++        "source",
++        "judge_model",
++        "config_version",
++        "target_ref",
++        "ts",
++        "schema_version",
++    }
++)
++TARGET_FIELDS = frozenset({"run_id", "step_id", "node", "department"})
++
++
++def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
++    if nullable and value is None:
++        return
++    if not isinstance(value, str) or not value.strip():
++        raise ValueError(f"{field} must be a non-empty string")
++
++
++def validate_score(record: dict[str, Any]) -> dict[str, Any]:
++    if not isinstance(record, dict):
++        raise ValueError("score record must be an object")
++    if set(record) != FIELDS:
++        missing = sorted(FIELDS - set(record))
++        unknown = sorted(set(record) - FIELDS)
++        raise ValueError(f"score fields mismatch: missing={missing}, unknown={unknown}")
++    if record["schema_version"] != SCHEMA_VERSION:
++        raise ValueError(f"schema_version must equal {SCHEMA_VERSION}")
++    for field in (
++        "gen_ai.evaluation.name",
++        "gen_ai.evaluation.score.label",
++        "gen_ai.evaluation.explanation",
++        "config_version",
++        "ts",
++    ):
++        _require_text(field, record[field])
++    explanation = record["gen_ai.evaluation.explanation"]
++    if len(explanation) > 500 or "\n" in explanation or "\r" in explanation:
++        raise ValueError(
++            "gen_ai.evaluation.explanation must be a single line of at most 500 characters"
++        )
++    _require_text("judge_model", record["judge_model"], nullable=True)
++    value = record["gen_ai.evaluation.score.value"]
++    if isinstance(value, bool) or not isinstance(value, (int, float)):
++        raise ValueError("gen_ai.evaluation.score.value must be numeric")
++    if record["source"] not in SOURCES:
++        raise ValueError(f"source must be one of {sorted(SOURCES)}")
++    if record["source"] == "judge" and record["judge_model"] is None:
++        raise ValueError("judge_model is required when source is judge")
++    target = record["target_ref"]
++    if not isinstance(target, dict) or set(target) != TARGET_FIELDS:
++        raise ValueError("target_ref must contain run_id, step_id, node, department")
++    for field in ("node", "department"):
++        _require_text(f"target_ref.{field}", target[field])
++    for field in ("run_id", "step_id"):
++        _require_text(f"target_ref.{field}", target[field], nullable=True)
++    try:
++        json.dumps(record, allow_nan=False)
++    except (TypeError, ValueError) as exc:
++        raise ValueError(f"score record must be finite JSON: {exc}") from exc
++    return copy.deepcopy(record)
++
++
++def build_score(
++    *,
++    name: str,
++    value: int | float,
++    label: str,
++    explanation: str,
++    source: str,
++    judge_model: str | None,
++    config_version: str,
++    target_ref: dict[str, Any],
++    ts: str | None = None,
++) -> dict[str, Any]:
++    return validate_score(
++        {
++            "gen_ai.evaluation.name": name,
++            "gen_ai.evaluation.score.value": value,
++            "gen_ai.evaluation.score.label": label,
++            "gen_ai.evaluation.explanation": explanation,
++            "source": source,
++            "judge_model": judge_model,
++            "config_version": config_version,
++            "target_ref": target_ref,
++            "ts": ts or datetime.now(timezone.utc).isoformat(),
++            "schema_version": SCHEMA_VERSION,
++        }
++    )
++
++
++def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
++    """Validate and append one score to ``state/scores.jsonl``."""
++    return append_jsonl(Path(state_dir) / "scores.jsonl", validate_score(record))
+diff --git a/kernel/gateways/budget.py b/kernel/gateways/budget.py
+index eb1f143..41bd733 100644
+--- a/kernel/gateways/budget.py
++++ b/kernel/gateways/budget.py
+@@ -1,8 +1,19 @@
+ """Fail-closed budget reservations for kernel work."""
+ 
++import fcntl
+ import json
++import math
++import os
++from contextlib import contextmanager
+ from pathlib import Path
+ 
++from kernel.jsonl_store import (
++    append_jsonl,
++    ensure_parent_dirs,
++    open_no_follow,
++    trusted_root_for,
++)
++
+ 
+ DEFAULT_CEILINGS = {
+     "model_calls": 900,
+@@ -22,16 +33,19 @@ class BudgetReviewRequired(RuntimeError):
+ class BudgetBroker:
+     def __init__(self, ledger_path, ceilings=None):
+         self.ledger_path = Path(ledger_path)
++        self.trusted_root = trusted_root_for(self.ledger_path)
+         self.ceilings = dict(DEFAULT_CEILINGS if ceilings is None else ceilings)
+         self._reservations = {}
+         self._telemetry_failed = False
+         self._load_ledger()
+ 
+     def _load_ledger(self):
+-        if not self.ledger_path.exists():
+-            return
++        self._reservations = {}
+         try:
+-            with self.ledger_path.open(encoding="utf-8") as ledger:
++            fd = open_no_follow(
++                self.ledger_path, os.O_RDONLY, trusted_root=self.trusted_root
++            )
++            with os.fdopen(fd, encoding="utf-8") as ledger:
+                 for line in ledger:
+                     row = json.loads(line)
+                     event = row.get("event", "reserve")
+@@ -49,17 +63,44 @@ class BudgetBroker:
+                         del self._reservations[rid]
+                     else:
+                         raise ValueError(f"unknown ledger event: {event}")
++        except FileNotFoundError:
++            return
+         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+             self._telemetry_failed = True
+ 
+-    def _append(self, row):
++    @contextmanager
++    def _transaction(self):
++        lock_path = self.ledger_path.with_suffix(self.ledger_path.suffix + ".lock")
++        ensure_parent_dirs(lock_path, trusted_root=self.trusted_root)
+         try:
+-            self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+-            with self.ledger_path.open("a", encoding="utf-8") as ledger:
+-                ledger.write(json.dumps(row, separators=(",", ":")) + "\n")
++            fd = open_no_follow(
++                lock_path,
++                os.O_CREAT | os.O_RDWR,
++                0o600,
++                trusted_root=self.trusted_root,
++            )
+         except OSError as exc:
+             self._telemetry_failed = True
+             raise BudgetExceeded("budget telemetry unavailable") from exc
++        with os.fdopen(fd, "a+") as lock_handle:
++            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
++            try:
++                self._telemetry_failed = False
++                self._load_ledger()
++                if self._telemetry_failed:
++                    raise BudgetExceeded("budget telemetry unavailable")
++                yield
++            finally:
++                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
++
++    def _append(self, row):
++        try:
++            append_jsonl(
++                self.ledger_path, row, trusted_root=self.trusted_root
++            )
++        except (OSError, TypeError, ValueError) as exc:
++            self._telemetry_failed = True
++            raise BudgetExceeded("budget telemetry unavailable") from exc
+ 
+     def usage(self, kind):
+         return sum(
+@@ -69,28 +110,36 @@ class BudgetBroker:
+         )
+ 
+     def reserve(self, kind, amount, now):
+-        if self._telemetry_failed:
+-            raise BudgetExceeded("budget telemetry unavailable")
+-        if kind not in self.ceilings:
+-            raise BudgetExceeded("no ceiling for " + kind)
+-
+-        projected = self.usage(kind) + amount
+-        cap = self.ceilings[kind]
+-        if projected > cap:
+-            raise BudgetExceeded(f"{kind} budget exceeded")
+-        if projected >= 0.8 * cap:
+-            raise BudgetReviewRequired(f"{kind} budget requires review")
+-
+-        rid = f"{kind}-{len(self._reservations)}-{now}"
+-        self._append({"rid": rid, "kind": kind, "amount": amount, "now": now})
+-        self._reservations[rid] = (kind, amount, None)
+-        return rid
++        with self._transaction():
++            if kind not in self.ceilings:
++                raise BudgetExceeded("no ceiling for " + kind)
++
++            projected = self.usage(kind) + amount
++            cap = self.ceilings[kind]
++            if projected > cap:
++                raise BudgetExceeded(f"{kind} budget exceeded")
++            if projected >= 0.8 * cap:
++                raise BudgetReviewRequired(f"{kind} budget requires review")
++
++            rid = f"{kind}-{now}-{os.urandom(8).hex()}"
++            self._append({"rid": rid, "kind": kind, "amount": amount, "now": now})
++            self._reservations[rid] = (kind, amount, None)
++            return rid
+ 
+     def commit(self, rid, actual):
+-        kind, amount, _ = self._reservations[rid]
+-        self._append({"event": "commit", "rid": rid, "actual": actual})
+-        self._reservations[rid] = (kind, amount, actual)
++        if (
++            isinstance(actual, bool)
++            or not isinstance(actual, (int, float))
++            or not math.isfinite(actual)
++            or actual < 0
++        ):
++            raise BudgetExceeded("budget actual must be a finite non-negative number")
++        with self._transaction():
++            kind, amount, _ = self._reservations[rid]
++            self._append({"event": "commit", "rid": rid, "actual": actual})
++            self._reservations[rid] = (kind, amount, actual)
+ 
+     def release(self, rid):
+-        self._append({"event": "release", "rid": rid})
+-        del self._reservations[rid]
++        with self._transaction():
++            self._append({"event": "release", "rid": rid})
++            del self._reservations[rid]
+diff --git a/kernel/gateways/model.py b/kernel/gateways/model.py
+index b3b72c8..766e7b4 100644
+--- a/kernel/gateways/model.py
++++ b/kernel/gateways/model.py
+@@ -2,8 +2,20 @@ import sys, pathlib
+ 
+ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+ import receipts
++from kernel.jsonl_store import append_jsonl
+ 
+ import hashlib
++import json
++import logging
++import re
++import time
++from datetime import datetime, timezone
++from decimal import Decimal, InvalidOperation
++from pathlib import Path
++from typing import Any
++
++
++LOGGER = logging.getLogger(__name__)
+ 
+ 
+ class GatewayDenied(RuntimeError):
+@@ -18,18 +30,350 @@ def model_binding(prompt, sanitized=True) -> dict:
+     return {"prompt_hash": prompt_hash(prompt), "sanitized": bool(sanitized)}
+ 
+ 
+-def call_model(prompt, receipt, *, signer, now, seen_nonces, revoked=frozenset(), runner) -> str:
+-    if receipt is None:
+-        raise GatewayDenied("no sanitation receipt")
+-    chk = receipts.verify_receipt(
+-        receipt,
+-        "model_call",
+-        model_binding(prompt),
+-        signer=signer,
+-        now=now,
+-        seen_nonces=seen_nonces,
+-        revoked=revoked,
+-    )
+-    if not chk.ok:
+-        raise GatewayDenied("receipt: " + chk.reason)
+-    return runner(prompt)
++SCHEMA_VERSION = "step-telemetry/v1"
++AUTH_ROUTES = frozenset(
++    {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
++)
++DEFAULT_PRICE_TABLE = Path(__file__).resolve().parents[2] / "factory" / "prices.json"
++_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
++_PROVIDERS = frozenset(
++    {
++        "openai",
++        "anthropic",
++        "aws.bedrock",
++        "azure.ai.openai",
++        "gcp.vertex_ai",
++        "google.gemini",
++        "local",
++        "other",
++    }
++)
++_FINISH_REASONS = frozenset(
++    {"stop", "length", "tool_calls", "content_filter", "error", "other"}
++)
++_ENGINES = frozenset(
++    {"codex_oauth", "claude_subscription", "glm_oauth", "glm_coding_plan", "local_model"}
++)
++
++
++def _optional_token(value: Any, field: str) -> int | None:
++    if value is None:
++        return None
++    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++        raise ValueError(f"{field} must be a non-negative integer or null")
++    return value
++
++
++def _optional_identifier(value: Any, field: str) -> str | None:
++    if value is None:
++        return None
++    if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
++        raise ValueError(f"{field} must be a safe identifier")
++    return value
++
++
++def _normalize_result(result: Any) -> tuple[str, dict[str, Any]]:
++    """Accept legacy text runners and metadata-aware result mappings.
++
++    Mapping keys are allowlisted. The generated text is returned to the caller
++    but is deliberately excluded from telemetry.
++    """
++    if isinstance(result, str):
++        return result, {}
++    if not isinstance(result, dict) or not isinstance(result.get("output"), str):
++        raise TypeError("model runner must return text or a mapping with string output")
++    usage = result.get("usage") or {}
++    if not isinstance(usage, dict):
++        raise TypeError("model runner usage must be a mapping")
++    finish_reasons = result.get("finish_reasons")
++    if finish_reasons is not None:
++        if isinstance(finish_reasons, str):
++            finish_reasons = [finish_reasons]
++        if not isinstance(finish_reasons, list):
++            raise TypeError("finish_reasons must be a list of strings or null")
++        if len(finish_reasons) > 8:
++            raise ValueError("finish_reasons must contain at most 8 values")
++        finish_reasons = [
++            _optional_identifier(reason, "finish_reason") for reason in finish_reasons
++        ]
++        if any(reason is None for reason in finish_reasons):
++            raise TypeError("finish_reasons entries must be strings")
++        if any(reason not in _FINISH_REASONS for reason in finish_reasons):
++            raise ValueError("finish_reasons contains an unsupported value")
++    metadata = {
++        "provider": _optional_identifier(result.get("provider"), "provider"),
++        "request_model": _optional_identifier(result.get("request_model"), "request_model"),
++        "response_model": _optional_identifier(
++            result.get("response_model", result.get("model")), "response_model"
++        ),
++        "input_tokens": _optional_token(
++            usage.get("input_tokens", result.get("input_tokens")), "input_tokens"
++        ),
++        "output_tokens": _optional_token(
++            usage.get("output_tokens", result.get("output_tokens")), "output_tokens"
++        ),
++        "finish_reasons": finish_reasons,
++        "auth_route": _optional_identifier(result.get("auth_route"), "auth_route"),
++        "engine": _optional_identifier(result.get("engine"), "engine"),
++        "estimated": result.get("estimated", False),
++    }
++    if not isinstance(metadata["estimated"], bool):
++        raise TypeError("estimated must be boolean")
++    if metadata["provider"] is not None and metadata["provider"] not in _PROVIDERS:
++        raise ValueError("provider is not allowlisted")
++    return result["output"], metadata
++
++
++def compute_cost_usd(
++    model: str | None,
++    input_tokens: int | None,
++    output_tokens: int | None,
++    price_table_path: str | Path = DEFAULT_PRICE_TABLE,
++) -> float | None:
++    """Compute token cost from the versioned table, or return null honestly."""
++    if model is None or input_tokens is None or output_tokens is None:
++        return None
++    table = _load_price_table(price_table_path)
++    if table.get("ratified") is not True:
++        raise ValueError("model price table is not owner-ratified")
++    price = (table.get("models") or {}).get(model)
++    if not isinstance(price, dict):
++        return None
++    try:
++        input_rate = Decimal(str(price["input_usd_per_1m_tokens"]))
++        output_rate = Decimal(str(price["output_usd_per_1m_tokens"]))
++        cost = (
++            Decimal(input_tokens) * input_rate
++            + Decimal(output_tokens) * output_rate
++        ) / Decimal(1_000_000)
++    except (KeyError, InvalidOperation, TypeError, ValueError):
++        return None
++    return float(cost)
++
++
++def _load_price_table(price_table_path: str | Path) -> dict[str, Any]:
++    table = json.loads(Path(price_table_path).read_text(encoding="utf-8"))
++    if not isinstance(table, dict) or table.get("schema_version") != "model-prices/v1":
++        raise ValueError("unsupported model price schema")
++    _optional_identifier(table.get("effective_date"), "price effective_date")
++    if not isinstance(table.get("ratified"), bool):
++        raise ValueError("model price table ratified must be boolean")
++    models = table.get("models")
++    if not isinstance(models, dict):
++        raise ValueError("model price table models must be an object")
++    for model_name, price in models.items():
++        _optional_identifier(model_name, "price model")
++        if not isinstance(price, dict):
++            raise ValueError("model price entry must be an object")
++    return table
++
++
++def _price_model_allowlist(price_table_path: str | Path) -> frozenset[str]:
++    """Return the owner-reviewed model identifiers safe to persist."""
++    return frozenset(_load_price_table(price_table_path)["models"])
++
++
++def call_model(
++    prompt,
++    receipt,
++    *,
++    signer,
++    now,
++    seen_nonces,
++    revoked=frozenset(),
++    runner,
++    telemetry_path=None,
++    department=None,
++    run_id=None,
++    step_id=None,
++    node=None,
++    operation_name="chat",
++    provider_name=None,
++    request_model=None,
++    auth_route="blocked",
++    engine=None,
++    price_table_path=DEFAULT_PRICE_TABLE,
++    budget_broker=None,
++    budget_reservation_id=None,
++) -> str:
++    """Verify, execute, account, and append one payload-free telemetry row.
++
++    Invalid declared attribution and unratified declared models refuse before
++    provider invocation. Telemetry persistence is best-effort after execution:
++    loss is logged and chained to an existing call failure, but telemetry loss
++    alone never discards a successful provider result.
++    """
++    started = time.perf_counter()
++    invoked = False
++    output = None
++    metadata: dict[str, Any] = {}
++    failure: Exception | None = None
++    secondary_failure: Exception | None = None
++    safe_operation = None
++    safe_provider = None
++    safe_request_model = None
++    safe_engine = None
++    safe_department = None
++    safe_run_id = None
++    safe_step_id = None
++    safe_node = None
++    safe_auth_route = "blocked"
++    try:
++        safe_operation = _optional_identifier(operation_name, "operation_name")
++        safe_provider = _optional_identifier(provider_name, "provider_name")
++        if safe_provider is not None and safe_provider not in _PROVIDERS:
++            safe_provider = None
++            raise ValueError("provider is not allowlisted")
++        safe_request_model = _optional_identifier(request_model, "request_model")
++        safe_engine = _optional_identifier(engine, "engine")
++        if safe_engine is not None and safe_engine not in _ENGINES:
++            safe_engine = None
++            raise ValueError("engine is not allowlisted")
++        safe_department = _optional_identifier(department, "department")
++        safe_run_id = _optional_identifier(run_id, "run_id")
++        safe_step_id = _optional_identifier(step_id, "step_id")
++        safe_node = _optional_identifier(node, "node")
++        safe_auth_route = _optional_identifier(auth_route, "auth_route")
++        if safe_auth_route not in AUTH_ROUTES:
++            safe_auth_route = "blocked"
++            raise ValueError("auth route is not allowlisted")
++        if safe_request_model is not None:
++            price_table = _load_price_table(price_table_path)
++            if safe_request_model not in price_table["models"]:
++                safe_request_model = None
++                raise ValueError("request model is not allowlisted")
++            if price_table["ratified"] is not True:
++                raise ValueError("model price table is not owner-ratified")
++        if receipt is None:
++            raise GatewayDenied("no sanitation receipt")
++        chk = receipts.verify_receipt(
++            receipt,
++            "model_call",
++            model_binding(prompt),
++            signer=signer,
++            now=now,
++            seen_nonces=seen_nonces,
++            revoked=revoked,
++        )
++        if not chk.ok:
++            raise GatewayDenied("receipt: " + chk.reason)
++        invoked = True
++        output, metadata = _normalize_result(runner(prompt))
++    except Exception as exc:
++        failure = exc
++
++    resolved_route = metadata.get("auth_route") or safe_auth_route
++    if resolved_route not in AUTH_ROUTES:
++        if failure is None:
++            failure = ValueError("auth route is not allowlisted")
++        resolved_route = "blocked"
++    input_tokens = metadata.get("input_tokens")
++    output_tokens = metadata.get("output_tokens")
++    resolved_request_model = metadata.get("request_model") or safe_request_model
++    resolved_response_model = metadata.get("response_model")
++    resolved_engine = metadata.get("engine") or safe_engine
++    if resolved_engine is not None and resolved_engine not in _ENGINES:
++        if failure is None:
++            failure = ValueError("engine is not allowlisted")
++        resolved_engine = None
++    if resolved_request_model is not None or resolved_response_model is not None:
++        try:
++            model_allowlist = _price_model_allowlist(price_table_path)
++        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
++            model_allowlist = frozenset()
++            if failure is None:
++                failure = exc
++        if resolved_request_model not in model_allowlist:
++            if failure is None:
++                failure = ValueError("request model is not allowlisted")
++            resolved_request_model = None
++        if (
++            resolved_response_model is not None
++            and resolved_response_model not in model_allowlist
++        ):
++            if failure is None:
++                failure = ValueError("response model is not allowlisted")
++            resolved_response_model = None
++    price_model = resolved_response_model or resolved_request_model
++    try:
++        cost = compute_cost_usd(
++            price_model, input_tokens, output_tokens, price_table_path
++        )
++    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
++        cost = None
++        if failure is None:
++            failure = exc
++    price_schema_version = None
++    price_effective_date = None
++    if price_model is not None and input_tokens is not None and output_tokens is not None:
++        try:
++            price_table = _load_price_table(price_table_path)
++            price_schema_version = _optional_identifier(
++                price_table.get("schema_version"), "price schema_version"
++            )
++            price_effective_date = _optional_identifier(
++                price_table.get("effective_date"), "price effective_date"
++            )
++        except (OSError, json.JSONDecodeError, TypeError, ValueError):
++            pass
++
++    if budget_broker is not None and budget_reservation_id is not None:
++        try:
++            if invoked:
++                budget_broker.commit(budget_reservation_id, 1)
++            else:
++                budget_broker.release(budget_reservation_id)
++        except Exception as exc:
++            if failure is None:
++                failure = exc
++            else:
++                secondary_failure = exc
++                LOGGER.error(
++                    "model budget accounting failed while preserving %s",
++                    type(failure).__name__,
++                    exc_info=True,
++                )
++    row = {
++        "schema_version": SCHEMA_VERSION,
++        "ts": datetime.fromtimestamp(now, timezone.utc).isoformat(),
++        "gen_ai.operation.name": safe_operation,
++        "gen_ai.provider.name": metadata.get("provider") or safe_provider,
++        "gen_ai.request.model": resolved_request_model,
++        "gen_ai.response.model": resolved_response_model,
++        "gen_ai.usage.input_tokens": input_tokens,
++        "gen_ai.usage.output_tokens": output_tokens,
++        "gen_ai.response.finish_reasons": metadata.get("finish_reasons"),
++        "duration_ms": max(0, round((time.perf_counter() - started) * 1000)),
++        "error.type": type(failure).__name__ if failure is not None else None,
++        "loopfactory.cost_usd": cost,
++        "loopfactory.auth.route": resolved_route,
++        "loopfactory.engine": resolved_engine,
++        "loopfactory.price.schema_version": price_schema_version,
++        "loopfactory.price.effective_date": price_effective_date,
++        "loopfactory.department": safe_department,
++        "loopfactory.run_id": safe_run_id,
++        "loopfactory.step_id": safe_step_id,
++        "loopfactory.node": safe_node,
++        "loopfactory.telemetry.source": (
++            "runner_reported" if metadata else "legacy_null"
++        ),
++        "estimated": metadata.get("estimated", False),
++    }
++    telemetry_error: Exception | None = None
++    if telemetry_path is not None:
++        try:
++            append_jsonl(telemetry_path, row)
++        except Exception as exc:
++            telemetry_error = exc
++            LOGGER.error(
++                "model telemetry append failed after %s",
++                "provider invocation" if invoked else "preflight refusal",
++                exc_info=True,
++            )
++    if failure is not None:
++        if telemetry_error is not None:
++            raise failure from telemetry_error
++        if secondary_failure is not None:
++            raise failure from secondary_failure
++        raise failure
++    return output
+diff --git a/kernel/jsonl_store.py b/kernel/jsonl_store.py
+new file mode 100644
+index 0000000..31bbff7
+--- /dev/null
++++ b/kernel/jsonl_store.py
+@@ -0,0 +1,110 @@
++"""Concurrent-safe append primitives for local JSONL source records."""
++from __future__ import annotations
++
++import fcntl
++import json
++import os
++import threading
++from pathlib import Path
++from typing import Any
++
++
++_LOCKS_GUARD = threading.Lock()
++_LOCKS: dict[str, threading.Lock] = {}
++
++
++def trusted_root_for(path: str | Path) -> Path:
++    """Return the nearest lexical ``state`` root, or the file's parent."""
++    path = Path(path).absolute()
++    for parent in path.parents:
++        if parent.name == "state":
++            return parent
++    return path.parent
++
++
++def open_no_follow(
++    path: str | Path,
++    flags: int,
++    mode: int = 0o600,
++    *,
++    trusted_root: str | Path | None = None,
++) -> int:
++    """Open ``path`` without following symlinks beneath a trusted root.
++
++    The trusted root itself is opened normally so a symlinked mount or parent
++    remains usable. Every descendant directory and the target file use
++    ``O_NOFOLLOW``.
++    """
++    path = Path(path).absolute()
++    root = Path(trusted_root or trusted_root_for(path)).absolute()
++    relative = path.relative_to(root)
++    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
++    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
++    try:
++        for component in relative.parts[:-1]:
++            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
++            os.close(directory_fd)
++            directory_fd = next_fd
++        return os.open(
++            relative.parts[-1], flags | os.O_NOFOLLOW, mode, dir_fd=directory_fd
++        )
++    finally:
++        os.close(directory_fd)
++
++
++def ensure_parent_dirs(
++    path: str | Path, *, trusted_root: str | Path | None = None
++) -> Path:
++    """Create parent directories without traversing descendant symlinks."""
++    path = Path(path).absolute()
++    root = Path(trusted_root or trusted_root_for(path)).absolute()
++    root.mkdir(parents=True, exist_ok=True)
++    relative_parent = path.parent.relative_to(root)
++    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
++    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
++    try:
++        for component in relative_parent.parts:
++            try:
++                os.mkdir(component, mode=0o700, dir_fd=directory_fd)
++            except FileExistsError:
++                pass
++            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
++            os.close(directory_fd)
++            directory_fd = next_fd
++    finally:
++        os.close(directory_fd)
++    return root
++
++
++def _thread_lock(path: Path) -> threading.Lock:
++    key = str(path.absolute())
++    with _LOCKS_GUARD:
++        return _LOCKS.setdefault(key, threading.Lock())
++
++
++def append_jsonl(
++    path: str | Path,
++    row: dict[str, Any],
++    *,
++    trusted_root: str | Path | None = None,
++) -> Path:
++    """Append one canonical JSON line under an exclusive advisory lock."""
++    path = Path(path).absolute()
++    root = ensure_parent_dirs(path, trusted_root=trusted_root)
++    line = json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
++    with _thread_lock(path):
++        fd = open_no_follow(
++            path,
++            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
++            0o600,
++            trusted_root=root,
++        )
++        with os.fdopen(fd, "a", encoding="utf-8") as handle:
++            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
++            try:
++                handle.write(line)
++                handle.flush()
++                os.fsync(handle.fileno())
++            finally:
++                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
++    return path
+diff --git a/kernel/lock_service.py b/kernel/lock_service.py
+index 4bf002b..661db85 100644
+--- a/kernel/lock_service.py
++++ b/kernel/lock_service.py
+@@ -87,15 +87,26 @@ class DurableNonceSet:
+ 
+ class LockService:
+     def __init__(self, signer, *, budget_ledger, freq_ledger, nonce_ledger,
+-                 clock=time.time, budget_ceilings=None, max_ttl_s=MAX_TTL_S):
++                 clock=time.time, budget_ceilings=None, max_ttl_s=MAX_TTL_S,
++                 telemetry_path=None, price_table_path=None):
+         self.signer = signer
+         self.clock = clock  # server clock; NOT caller-supplied per call
+         self.max_ttl_s = max_ttl_s
+         nonce_ledger = pathlib.Path(nonce_ledger)
+         self.seen_nonces = DurableNonceSet(nonce_ledger.with_suffix(".consumed.jsonl"))
+         self.revoked = DurableNonceSet(nonce_ledger.with_suffix(".revoked.jsonl"))
++        budget_ledger = pathlib.Path(budget_ledger)
+         self.budget = budget_mod.BudgetBroker(budget_ledger, budget_ceilings or DEFAULT_CEILINGS)
+         self.freq = freq_mod.FrequencyService(freq_ledger)
++        state_dir = (
++            budget_ledger.parent.parent
++            if budget_ledger.parent.name == "kernel"
++            else budget_ledger.parent
++        )
++        self.telemetry_path = pathlib.Path(telemetry_path or state_dir / "telemetry.jsonl")
++        self.price_table_path = price_table_path or model.DEFAULT_PRICE_TABLE
++        self.department = state_dir.parent.name if state_dir.name == "state" else None
++        self._model_reservations = {}
+ 
+     # --- trusted internals --------------------------------------------------- #
+ 
+@@ -152,12 +163,13 @@ class LockService:
+         # reserve the model-call spend first — raises BudgetExceeded /
+         # BudgetReviewRequired on/near the ceiling, so no receipt is minted for a
+         # call that would breach budget (GLM P0 #3, budget half).
+-        self.budget.reserve("model_calls", 1, self._now())
++        reservation_id = self.budget.reserve("model_calls", 1, self._now())
+         nonce = self._nonce()
+         binding = model.model_binding(prompt, sanitized=True)
+         receipt = receipts.issue_receipt(
+             "model_call", binding, self._ttl(ttl_s), self.signer, self._now(), nonce
+         )
++        self._model_reservations[receipt] = reservation_id
+         return {"receipt": receipt, "nonce": nonce}
+ 
+     # --- execution (server clock + revocation + durable single-use) ---------- #
+@@ -175,14 +187,46 @@ class LockService:
+         except Exception as exc:  # gateway malfunction -> refuse, never allow
+             raise LockServiceDown(f"dispatch gateway error: {exc}") from exc
+ 
+-    def call_model(self, prompt, receipt, *, runner) -> str:
++    def call_model(
++        self,
++        prompt,
++        receipt,
++        *,
++        runner,
++        run_id=None,
++        step_id=None,
++        node=None,
++        operation_name="chat",
++        provider_name=None,
++        request_model=None,
++        auth_route="blocked",
++        engine=None,
++    ) -> str:
++        reservation_id = self._model_reservations.get(receipt)
+         try:
+             return model.call_model(
+                 prompt, receipt,
+                 signer=self.signer, now=self._now(),
+                 seen_nonces=self.seen_nonces, revoked=self.revoked, runner=runner,
++                telemetry_path=self.telemetry_path,
++                department=self.department,
++                run_id=run_id,
++                step_id=step_id,
++                node=node,
++                operation_name=operation_name,
++                provider_name=provider_name,
++                request_model=request_model,
++                auth_route=auth_route,
++                engine=engine,
++                price_table_path=self.price_table_path,
++                budget_broker=self.budget,
++                budget_reservation_id=reservation_id,
+             )
+         except model.GatewayDenied:
+             raise
+         except Exception as exc:
+-            raise LockServiceDown(f"model gateway error: {exc}") from exc
++            raise LockServiceDown(
++                f"model gateway error: {type(exc).__name__}"
++            ) from exc
++        finally:
++            self._model_reservations.pop(receipt, None)
+diff --git a/loopfactory.py b/loopfactory.py
+index 42e2602..e6e6444 100644
+--- a/loopfactory.py
++++ b/loopfactory.py
+@@ -12,6 +12,7 @@ Commands map 1:1 to the factory pipeline (see runbooks/factory-pipeline.md):
+   heal           record a node failure/success against the self-heal ladder
+   hil            human-in-the-loop queue: push / apply / escalate
+   qa             full deterministic QA: charter + maps + release drift
++  rollup         rebuild SQLite reporting state and optional NDJSON exports
+   check          factory self-test: compileall + pytest
+ 
+ Everything here is deterministic and model-free. The LLM-directed parts of the
+@@ -23,6 +24,7 @@ from __future__ import annotations
+ import argparse
+ import importlib.util
+ import json
++import logging
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -164,6 +166,25 @@ def cmd_qa(args) -> int:
+     return 0 if verdict["ok"] else 1
+ 
+ 
++def cmd_rollup(args) -> int:
++    rollup = _load("rollup", "factory/rollup.py")
++    root = Path(args.root or ROOT)
++    db_path = Path(args.db) if args.db else root / "estate" / "state" / "rollup.sqlite3"
++    result = rollup.rebuild(root, db_path)
++    if not result["complete"]:
++        logging.getLogger(__name__).error(
++            "rollup incomplete; prior complete database preserved: %s",
++            json.dumps(result, sort_keys=True),
++        )
++        return 1
++    if args.export:
++        result["export"] = rollup.export_ndjson(result["database"], args.export)
++    logging.getLogger(__name__).info(
++        "rollup complete: %s", json.dumps(result, sort_keys=True)
++    )
++    return 0
++
++
+ def cmd_check(args) -> int:
+     ok = True
+     for step in (
+@@ -239,10 +260,17 @@ def main() -> int:
+     p.add_argument("--root", default=None)
+     p.set_defaults(fn=cmd_qa)
+ 
++    p = sub.add_parser("rollup", help="rebuild SQLite rollup and optional NDJSON feed")
++    p.add_argument("--root", default=None)
++    p.add_argument("--db", default=None)
++    p.add_argument("--export", default=None, metavar="DIR")
++    p.set_defaults(fn=cmd_rollup)
++
+     p = sub.add_parser("check", help="factory self-test (compileall + pytest)")
+     p.set_defaults(fn=cmd_check)
+ 
+     args = parser.parse_args()
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+     return args.fn(args)
+ 
+ 
+diff --git a/tests/test_telemetry_rollup.py b/tests/test_telemetry_rollup.py
+new file mode 100644
+index 0000000..2fb4498
+--- /dev/null
++++ b/tests/test_telemetry_rollup.py
+@@ -0,0 +1,557 @@
++import json
++import sqlite3
++import subprocess
++import sys
++from concurrent.futures import ThreadPoolExecutor
++from pathlib import Path
++
++import pytest
++
++from factory import rollup, scores
++from kernel import lock_service
++from kernel import receipts
++from kernel.jsonl_store import append_jsonl
++
++
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++
++
++class Clock:
++    def __init__(self, value=1_786_000_000.0):
++        self.value = value
++
++    def __call__(self):
++        return self.value
++
++
++def _service(tmp_path, prices):
++    return lock_service.LockService(
++        receipts.LocalSigner(key="test"),
++        budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
++        freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
++        nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
++        telemetry_path=tmp_path / "state" / "telemetry.jsonl",
++        price_table_path=prices,
++        clock=Clock(),
++    )
++
++
++def _read_jsonl(path):
++    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()]
++
++
++def test_model_call_records_exact_usage_cost_and_budget_actual(tmp_path):
++    prices = tmp_path / "prices.json"
++    prices.write_text(
++        json.dumps(
++            {
++                "schema_version": "model-prices/v1",
++                "effective_date": "2026-08-02",
++                "ratified": True,
++                "models": {
++                    "requested-model": {
++                        "input_usd_per_1m_tokens": 2,
++                        "output_usd_per_1m_tokens": 8,
++                    },
++                    "resolved-model": {
++                        "input_usd_per_1m_tokens": 2,
++                        "output_usd_per_1m_tokens": 8,
++                    }
++                },
++            }
++        ),
++        encoding="utf-8",
++    )
++    service = _service(tmp_path, prices)
++    issued = service.request_model("sanitized prompt", sanitized=True)
++
++    result = service.call_model(
++        "sanitized prompt",
++        issued["receipt"],
++        runner=lambda _prompt: {
++            "output": "private generated body",
++            "provider": "openai",
++            "request_model": "requested-model",
++            "response_model": "resolved-model",
++            "usage": {"input_tokens": 1_000, "output_tokens": 500},
++            "finish_reasons": ["stop"],
++            "auth_route": "oauth_cli",
++            "engine": "codex_oauth",
++            "estimated": True,
++        },
++        run_id="run-1",
++        step_id="step-2",
++        node="draft",
++    )
++
++    assert result == "private generated body"
++    telemetry = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")
++    assert len(telemetry) == 1
++    row = telemetry[0]
++    assert row["gen_ai.usage.input_tokens"] == 1_000
++    assert row["gen_ai.usage.output_tokens"] == 500
++    assert row["loopfactory.cost_usd"] == pytest.approx(0.006)
++    assert row["loopfactory.auth.route"] == "oauth_cli"
++    assert row["loopfactory.run_id"] == "run-1"
++    assert row["estimated"] is True
++    assert row["loopfactory.price.schema_version"] == "model-prices/v1"
++    assert row["loopfactory.telemetry.source"] == "runner_reported"
++    assert "sanitized prompt" not in json.dumps(row)
++    assert "private generated body" not in json.dumps(row)
++    budget = _read_jsonl(tmp_path / "state" / "kernel" / "budget.jsonl")
++    assert budget[-1] == {"event": "commit", "rid": budget[0]["rid"], "actual": 1}
++    with pytest.raises(lock_service.budget_mod.BudgetExceeded):
++        service.budget.commit(budget[0]["rid"], -1)
++
++
++def test_runner_cannot_persist_unreviewed_model_or_engine_identifiers(tmp_path):
++    secret_hex = "736563726574"
++    prices = tmp_path / "prices.json"
++    prices.write_text(
++        json.dumps(
++            {
++                "schema_version": "model-prices/v1",
++                "effective_date": "2026-08-02",
++                "ratified": True,
++                "models": {},
++            }
++        ),
++        encoding="utf-8",
++    )
++    service = _service(tmp_path, prices)
++    issued = service.request_model("safe", sanitized=True)
++    with pytest.raises(lock_service.LockServiceDown):
++        service.call_model(
++            "safe",
++            issued["receipt"],
++            runner=lambda _: {
++                "output": "ok",
++                "request_model": secret_hex,
++                "engine": secret_hex,
++            },
++        )
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
++    assert row["gen_ai.request.model"] is None
++    assert row["loopfactory.engine"] is None
++    assert secret_hex not in json.dumps(row)
++
++
++def test_legacy_runner_records_null_usage_and_failure_records_error(tmp_path):
++    prices = tmp_path / "prices.json"
++    prices.write_text(json.dumps({"models": {}}), encoding="utf-8")
++    service = _service(tmp_path, prices)
++    issued = service.request_model("legacy", sanitized=True)
++    assert service.call_model("legacy", issued["receipt"], runner=lambda _: "ok") == "ok"
++    legacy = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
++    assert legacy["gen_ai.usage.input_tokens"] is None
++    assert legacy["gen_ai.usage.output_tokens"] is None
++    assert legacy["loopfactory.cost_usd"] is None
++    assert legacy["loopfactory.auth.route"] == "blocked"
++
++    failed = service.request_model("fails", sanitized=True)
++    with pytest.raises(lock_service.LockServiceDown) as raised:
++        service.call_model(
++            "fails", failed["receipt"], runner=lambda _: (_ for _ in ()).throw(RuntimeError("secret body"))
++        )
++    failure = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
++    assert failure["error.type"] == "RuntimeError"
++    assert "secret body" not in json.dumps(failure)
++    assert "secret body" not in str(raised.value)
++    budget = _read_jsonl(tmp_path / "state" / "kernel" / "budget.jsonl")
++    assert budget[-1]["event"] == "commit"
++
++    revoked = service.request_model("revoked", sanitized=True)
++    service.revoke(revoked["nonce"])
++    with pytest.raises(lock_service.model.GatewayDenied):
++        service.call_model("revoked", revoked["receipt"], runner=lambda _: "never")
++    denied = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
++    assert denied["error.type"] == "GatewayDenied"
++
++
++def test_known_usage_refuses_unratified_price_table(tmp_path):
++    prices = tmp_path / "prices.json"
++    prices.write_text(
++        json.dumps(
++            {
++                "schema_version": "model-prices/v1",
++                "effective_date": "2026-08-02",
++                "ratified": False,
++                "models": {"m": {"input_usd_per_1m_tokens": 1, "output_usd_per_1m_tokens": 2}},
++            }
++        ),
++        encoding="utf-8",
++    )
++    with pytest.raises(ValueError, match="not owner-ratified"):
++        lock_service.model.compute_cost_usd("m", 1, 1, prices)
++
++
++def test_declared_model_refuses_unratified_table_before_runner(tmp_path):
++    prices = tmp_path / "prices.json"
++    prices.write_text(
++        json.dumps(
++            {
++                "schema_version": "model-prices/v1",
++                "effective_date": "2026-08-02",
++                "ratified": False,
++                "models": {
++                    "m": {
++                        "input_usd_per_1m_tokens": None,
++                        "output_usd_per_1m_tokens": None,
++                    }
++                },
++            }
++        ),
++        encoding="utf-8",
++    )
++    service = _service(tmp_path, prices)
++    issued = service.request_model("safe", sanitized=True)
++    invoked = []
++
++    with pytest.raises(lock_service.LockServiceDown):
++        service.call_model(
++            "safe",
++            issued["receipt"],
++            runner=lambda _: invoked.append(True) or "must not run",
++            provider_name="openai",
++            request_model="m",
++            auth_route="oauth_cli",
++            engine="codex_oauth",
++        )
++
++    assert invoked == []
++    budget = _read_jsonl(tmp_path / "state" / "kernel" / "budget.jsonl")
++    assert [row.get("event", "reserve") for row in budget] == ["reserve", "release"]
++
++
++def test_caller_provider_uses_the_same_allowlist_and_refuses_before_runner(tmp_path):
++    prices = tmp_path / "prices.json"
++    prices.write_text(json.dumps({"models": {}}), encoding="utf-8")
++    service = _service(tmp_path, prices)
++    issued = service.request_model("safe", sanitized=True)
++    invoked = []
++
++    with pytest.raises(lock_service.LockServiceDown):
++        service.call_model(
++            "safe",
++            issued["receipt"],
++            runner=lambda _: invoked.append(True) or "must not run",
++            provider_name="untrusted-provider",
++        )
++
++    assert invoked == []
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[-1]
++    assert row["gen_ai.provider.name"] is None
++
++
++def test_success_survives_telemetry_loss_and_failure_chains_it(tmp_path, monkeypatch, caplog):
++    prices = tmp_path / "prices.json"
++    prices.write_text(json.dumps({"models": {}}), encoding="utf-8")
++    service = _service(tmp_path, prices)
++
++    def append_failure(*_args, **_kwargs):
++        raise OSError("telemetry unavailable")
++
++    monkeypatch.setattr(lock_service.model, "append_jsonl", append_failure)
++    issued = service.request_model("safe", sanitized=True)
++    assert service.call_model("safe", issued["receipt"], runner=lambda _: "kept") == "kept"
++    assert "model telemetry append failed" in caplog.text
++
++    failed = service.request_model("fails", sanitized=True)
++    with pytest.raises(lock_service.LockServiceDown) as raised:
++        service.call_model(
++            "fails",
++            failed["receipt"],
++            runner=lambda _: (_ for _ in ()).throw(RuntimeError("provider failed")),
++        )
++    assert isinstance(raised.value.__cause__, RuntimeError)
++    assert isinstance(raised.value.__cause__.__cause__, OSError)
++
++
++def test_model_and_budget_share_the_kernel_jsonl_module_identity():
++    assert lock_service.model.append_jsonl is append_jsonl
++    assert lock_service.budget_mod.append_jsonl is append_jsonl
++
++
++def test_candidate_price_table_covers_review_lanes():
++    table = json.loads((PROJECT_ROOT / "factory" / "prices.json").read_text(encoding="utf-8"))
++    assert table["ratified"] is False
++    assert {
++        "claude-subscription/default",
++        "codex-oauth/default",
++        "glm-oauth/default",
++        "gemini-subscription/default",
++        "kimi-subscription/default",
++        "openrouter/x-ai/grok-default",
++    } <= set(table["models"])
++    for model in table["models"].values():
++        if model["input_usd_per_1m_tokens"] is None:
++            assert model["output_usd_per_1m_tokens"] is None
++            assert model["estimated"] is False
++            assert model["price_status"] == "unknown_placeholder"
++
++
++def test_jsonl_append_is_concurrent_and_score_records_are_separate(tmp_path):
++    path = tmp_path / "state" / "concurrent.jsonl"
++    with ThreadPoolExecutor(max_workers=8) as pool:
++        list(pool.map(lambda value: append_jsonl(path, {"value": value}), range(100)))
++    assert sorted(row["value"] for row in _read_jsonl(path)) == list(range(100))
++
++    score = scores.build_score(
++        name="qa",
++        value=1.0,
++        label="pass",
++        explanation="deterministic validator passed",
++        source="script",
++        judge_model=None,
++        config_version="qa/v1",
++        target_ref={"run_id": "run-1", "step_id": "step-2", "node": "qa", "department": "alpha"},
++        ts="2026-08-02T10:00:00+00:00",
++    )
++    target = scores.append_score(tmp_path / "state", score)
++    assert target.name == "scores.jsonl"
++    assert _read_jsonl(target) == [score]
++    assert not (tmp_path / "state" / "runs.jsonl").exists()
++    with pytest.raises(ValueError):
++        scores.build_score(
++            name="qa",
++            value=1,
++            label="pass",
++            explanation="x",
++            source="judge",
++            judge_model=None,
++            config_version="v1",
++            target_ref={"run_id": None, "step_id": None, "node": "qa", "department": "alpha"},
++        )
++
++
++def test_jsonl_allows_symlinked_parent_but_refuses_symlink_below_state(tmp_path):
++    real_root = tmp_path / "real-root"
++    state_dir = real_root / "state"
++    state_dir.mkdir(parents=True)
++    linked_root = tmp_path / "linked-root"
++    linked_root.symlink_to(real_root, target_is_directory=True)
++
++    linked_path = linked_root / "state" / "telemetry.jsonl"
++    append_jsonl(linked_path, {"ok": True})
++    assert _read_jsonl(state_dir / "telemetry.jsonl") == [{"ok": True}]
++
++    outside = tmp_path / "outside"
++    outside.mkdir()
++    (state_dir / "redirected").symlink_to(outside, target_is_directory=True)
++    with pytest.raises(OSError):
++        append_jsonl(
++            state_dir / "redirected" / "nested" / "telemetry.jsonl",
++            {"ok": False},
++        )
++    assert list(outside.iterdir()) == []
++
++
++def test_budget_reservations_replay_inside_cross_process_transaction(tmp_path):
++    ledger = tmp_path / "budget.jsonl"
++    brokers = [
++        lock_service.budget_mod.BudgetBroker(ledger, {"model_calls": 100})
++        for _ in range(10)
++    ]
++    with ThreadPoolExecutor(max_workers=10) as pool:
++        reservation_ids = list(
++            pool.map(
++                lambda pair: pair[1].reserve("model_calls", 1, pair[0]),
++                enumerate(brokers),
++            )
++        )
++    rows = _read_jsonl(ledger)
++    assert len(rows) == 10
++    assert len(set(reservation_ids)) == 10
++    reloaded = lock_service.budget_mod.BudgetBroker(ledger, {"model_calls": 100})
++    assert reloaded.usage("model_calls") == 10
++
++
++def _write_jsonl(path, rows):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
++
++
++def _rollup_fixture(root):
++    alpha = root / "departments" / "alpha" / "state"
++    beta = root / "departments" / "beta" / "state"
++    estate = root / "estate" / "state"
++    alpha.mkdir(parents=True)
++    beta.mkdir(parents=True)
++    estate.mkdir(parents=True)
++    (alpha / "STATE.json").write_text(
++        json.dumps({"epoch": 4, "ok": True, "last_cycle_at": "2026-08-02T12:00:00Z"}), encoding="utf-8"
++    )
++    (beta / "STATE.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
++    (estate / "STATE.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
++    _write_jsonl(
++        alpha / "runs.jsonl",
++        [
++            {"run_id": "active-1", "node": "extract", "status": "active", "timestamp": "2026-08-02T10:00:00Z"},
++            {"run_id": "active-1", "node": "qa", "status": "active", "timestamp": "2026-08-02T10:01:00Z"},
++        ],
++    )
++    _write_jsonl(
++        alpha / "telemetry.jsonl",
++        [
++            {
++                "schema_version": "step-telemetry/v1",
++                "ts": "2026-08-02T10:01:00Z",
++                "gen_ai.operation.name": "chat",
++                "gen_ai.provider.name": "openai",
++                "gen_ai.request.model": "m",
++                "gen_ai.response.model": "m",
++                "gen_ai.usage.input_tokens": 100,
++                "gen_ai.usage.output_tokens": 20,
++                "gen_ai.response.finish_reasons": ["stop"],
++                "duration_ms": 12,
++                "error.type": None,
++                "loopfactory.cost_usd": 0.25,
++                "loopfactory.auth.route": "oauth_cli",
++                "loopfactory.engine": "engine",
++                "loopfactory.price.schema_version": "model-prices/v1",
++                "loopfactory.price.effective_date": "2026-08-02",
++                "loopfactory.telemetry.source": "runner_reported",
++                "loopfactory.department": "alpha",
++                "loopfactory.run_id": "active-1",
++                "loopfactory.step_id": "step-qa",
++                "loopfactory.node": "qa",
++                "estimated": False,
++            }
++        ],
++    )
++    _write_jsonl(
++        alpha / "scores.jsonl",
++        [
++            scores.build_score(
++                name="qa", value=1, label="pass", explanation="ok", source="script",
++                judge_model=None, config_version="v1",
++                target_ref={"run_id": "active-1", "step_id": "step-qa", "node": "qa", "department": "alpha"},
++                ts="2026-08-02T10:02:00Z",
++            ),
++            scores.build_score(
++                name="qa", value=0, label="fail", explanation="failed", source="script",
++                judge_model=None, config_version="v1",
++                target_ref={"run_id": "older", "step_id": "step-qa", "node": "qa", "department": "alpha"},
++                ts="2026-08-01T10:02:00Z",
++            ),
++        ],
++    )
++    _write_jsonl(alpha / "incidents.jsonl", [{"code": "engine_down", "status": "open", "severity": "breach", "ts": "2026-08-02T09:00:00Z"}])
++    (alpha / "receipt.json").write_text(
++        json.dumps({"receipt_id": "rec-1", "run_id": "active-1", "node": "qa", "status": "ok", "verified": True}), encoding="utf-8"
++    )
++    _write_jsonl(
++        estate / "decisions_outbox.jsonl",
++        [
++            {"decision_id": "newer", "department": "alpha", "ts": "2026-08-02T11:00:00Z", "packet": {"draft": "must not export"}},
++            {"decision_id": "older", "department": "beta", "ts": "2026-08-01T11:00:00Z", "packet": {"draft": "must not export"}},
++        ],
++    )
++
++
++def test_fresh_rollup_export_answers_board_minimum_queries_deterministically(tmp_path):
++    root = tmp_path / "repo"
++    _rollup_fixture(root)
++    db_one = tmp_path / "one.sqlite3"
++    db_two = tmp_path / "two.sqlite3"
++    export_one = tmp_path / "export-one"
++    export_two = tmp_path / "export-two"
++
++    first = rollup.rebuild(root, db_one)
++    assert first["complete"] is True
++    rollup.export_ndjson(db_one, export_one)
++    second = rollup.rebuild(root, db_two)
++    rollup.export_ndjson(db_two, export_two)
++    assert first["counts"] == second["counts"]
++    for entity in rollup.ENTITIES:
++        assert (export_one / f"{entity}.ndjson").read_bytes() == (export_two / f"{entity}.ndjson").read_bytes()
++
++    connection = sqlite3.connect(db_one)
++    try:
++        assert connection.execute(
++            "SELECT run_id, current_step FROM run WHERE status = 'active' ORDER BY ts"
++        ).fetchall() == [("active-1", "qa")]
++        assert connection.execute(
++            "SELECT department, substr(ts,1,10), round(sum(cost_usd),2) FROM step_telemetry GROUP BY department, substr(ts,1,10)"
++        ).fetchall() == [("alpha", "2026-08-02", 0.25)]
++        assert connection.execute(
++            "SELECT round(avg(CASE WHEN label = 'pass' THEN 1.0 ELSE 0.0 END),2) FROM score"
++        ).fetchone() == (0.5,)
++        open_incidents = connection.execute(
++            "SELECT code FROM incident WHERE status = 'open' ORDER BY code"
++        ).fetchall()
++        assert ("engine_down",) in open_incidents
++        assert connection.execute(
++            "SELECT decision_id FROM approval WHERE status IN ('pending','pending_approval') ORDER BY queued_at"
++        ).fetchall() == [("older",), ("newer",)]
++    finally:
++        connection.close()
++    exported_approvals = (export_one / "approval.ndjson").read_text(encoding="utf-8")
++    assert "must not export" not in exported_approvals
++    assert "explanation" not in (export_one / "score.ndjson").read_text(encoding="utf-8")
++
++
++def test_unreadable_or_symlinked_source_records_finding_without_replacing_complete_rollup(tmp_path):
++    root = tmp_path / "repo"
++    _rollup_fixture(root)
++    db_path = tmp_path / "rollup.sqlite3"
++    complete = rollup.rebuild(root, db_path)
++    assert complete["complete"] is True
++    before = db_path.read_bytes()
++
++    outside = tmp_path / "outside.jsonl"
++    outside.write_text(json.dumps({"loopfactory.cost_usd": 999}) + "\n", encoding="utf-8")
++    source = root / "departments" / "beta" / "state" / "telemetry.jsonl"
++    source.symlink_to(outside)
++    incomplete = rollup.rebuild(root, db_path)
++
++    assert incomplete["complete"] is False
++    assert db_path.read_bytes() == before
++    incomplete_path = Path(incomplete["database"])
++    assert incomplete_path.name.endswith(".incomplete")
++    connection = sqlite3.connect(incomplete_path)
++    try:
++        codes = [row[0] for row in connection.execute("SELECT code FROM incident")]
++    finally:
++        connection.close()
++    assert any(code.startswith("source_unreadable:") for code in codes)
++    with pytest.raises(ValueError, match="incomplete"):
++        rollup.export_ndjson(incomplete_path, tmp_path / "blocked-export")
++    cli_db = tmp_path / "cli.sqlite3"
++    cli_export = tmp_path / "cli-export"
++    completed = subprocess.run(
++        [
++            sys.executable,
++            str(PROJECT_ROOT / "loopfactory.py"),
++            "rollup",
++            "--root",
++            str(root),
++            "--db",
++            str(cli_db),
++            "--export",
++            str(cli_export),
++        ],
++        cwd=PROJECT_ROOT,
++        capture_output=True,
++        text=True,
++        check=False,
++    )
++    assert completed.returncode == 1
++    assert not cli_export.exists()
++
++
++def test_missing_required_state_is_an_incomplete_rollup(tmp_path):
++    root = tmp_path / "repo"
++    _rollup_fixture(root)
++    (root / "departments" / "beta" / "state" / "STATE.json").unlink()
++
++    result = rollup.rebuild(root, tmp_path / "rollup.sqlite3")
++
++    assert result["complete"] is False
++    connection = sqlite3.connect(result["database"])
++    try:
++        assert connection.execute(
++            "SELECT count(*) FROM incident WHERE code = 'source_missing'"
++        ).fetchone() == (1,)
++    finally:
++        connection.close()

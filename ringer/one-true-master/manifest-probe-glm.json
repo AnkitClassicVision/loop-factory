@@ -1,0 +1,28 @@
+{
+  "run_name": "one-true-master",
+  "workdir": "/home/ankit114/ringer-work/one-true-master-probe",
+  "max_parallel": 2,
+  "worktrees": false,
+  "tasks": [
+    {
+      "key": "probe-glm-tiny-spec",
+      "engine": "glm-coding-plan",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "Write a file named probe.md in your current working directory. Its first line must be exactly: GLM LANE ALIVE. On the second line, write the number of files you can see in your current working directory. Do nothing else.",
+      "check": "python3 -c \"import sys,os;p='probe.md';(print('FAIL: probe.md was never written; dir holds '+str(sorted(os.listdir('.')))) or sys.exit(1)) if not os.path.isfile(p) else None;t=open(p).read();(print('FAIL: marker missing. content=' + repr(t[:300])) or sys.exit(1)) if 'GLM LANE ALIVE' not in t else print('PASS: ' + repr(t[:120]))\"",
+      "expect_files": ["probe.md"],
+      "verified": "the GLM coding-plan lane can start, call a tool, and write one file within 300s"
+    },
+    {
+      "key": "probe-codex-tiny-spec",
+      "engine": "codex",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "Write a file named probe.md in your current working directory. Its first line must be exactly: CODEX LANE ALIVE. On the second line, write the number of files you can see in your current working directory. Do nothing else.",
+      "check": "python3 -c \"import sys,os;p='probe.md';(print('FAIL: probe.md was never written; dir holds '+str(sorted(os.listdir('.')))) or sys.exit(1)) if not os.path.isfile(p) else None;t=open(p).read();(print('FAIL: marker missing. content=' + repr(t[:300])) or sys.exit(1)) if 'CODEX LANE ALIVE' not in t else print('PASS: ' + repr(t[:120]))\"",
+      "expect_files": ["probe.md"],
+      "verified": "the Codex OAuth lane can start, call a tool, and write one file within 300s"
+    }
+  ]
+}

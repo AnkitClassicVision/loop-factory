@@ -1,0 +1,1 @@
+{"events":[{"event_id":"fixture-held-1","attendee_email":"owner1@example.test","start":"2026-08-01T14:00:00Z","minutes":25,"attended":true,"decision_maker_present":true},{"event_id":"fixture-noshow-1","attendee_email":"decision1@example.test","start":"2026-08-02T15:00:00Z","minutes":30,"attended":false,"decision_maker_present":true}]}

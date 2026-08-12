@@ -23,6 +23,7 @@ from typing import Any
 
 LOGGER = logging.getLogger("loop_factory.estate_deadman")
 DEFAULT_MAX_AGE_SECONDS = 27 * 3600
+CONDUCTOR_MAX_AGE_SECONDS = 26 * 3600
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 5 * 60
 DEFAULT_ALARM_COOLDOWN_SECONDS = 6 * 3600
 
@@ -113,6 +114,34 @@ def evaluate_deadman(
     else:
         if not entries:
             findings.append(_finding("estate_registry_empty", "registry contains no entries"))
+        repository_root = registry_dir.parent.parent
+        for entry in entries:
+            state_dir = entry.get("state_dir")
+            if not isinstance(state_dir, str) or not state_dir:
+                continue
+            conductor_heartbeat_path = repository_root / state_dir / "conductor-heartbeat.json"
+            if not conductor_heartbeat_path.exists():
+                continue
+            conductor_heartbeat, conductor_error = _read_json_object(conductor_heartbeat_path)
+            conductor_ts = (
+                _parse_timestamp(conductor_heartbeat.get("ts"))
+                if conductor_heartbeat is not None
+                else None
+            )
+            conductor_age_seconds = (
+                (observed_at - conductor_ts).total_seconds()
+                if conductor_ts is not None
+                else None
+            )
+            if (
+                conductor_error
+                or conductor_age_seconds is None
+                or conductor_age_seconds > CONDUCTOR_MAX_AGE_SECONDS
+            ):
+                findings.append(_finding(
+                    "conductor_heartbeat_stale",
+                    f"{entry['id']} conductor heartbeat stale",
+                ))
 
     state, state_error = _read_json_object(estate_state_dir / "STATE.json")
     heartbeat, heartbeat_error = _read_last_heartbeat(estate_state_dir / "heartbeats.jsonl")
@@ -214,6 +243,13 @@ def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, An
     human_loop = _load_module("human_in_the_loop_deadman", "human_in_the_loop.py")
     codes = [finding["code"] for finding in report["findings"]]
     issue = f"[deadman] estate watchdog alarm: {', '.join(codes)}"
+    conductor_details = [
+        finding["detail"]
+        for finding in report["findings"]
+        if finding["code"] == "conductor_heartbeat_stale"
+    ]
+    if conductor_details:
+        issue += f"; {', '.join(conductor_details)}"
     return human_loop.escalate(
         "estate",
         issue,
@@ -224,6 +260,16 @@ def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, An
             "observed_at": report["observed_at"],
             "max_age_seconds": report["max_age_seconds"],
         },
+        meaning=(
+            "The estate watchdog itself went quiet or a conductor heartbeat "
+            "is stale, so automated supervision cannot be trusted"
+        ),
+        needs="Inspect the stale heartbeat and restart the affected watchdog or conductor",
+        actions=[{
+            "action": "Inspect and restart",
+            "effect": "inspect the stale heartbeat and restart the affected watchdog or conductor",
+            "reply": "approve inspect-restart",
+        }],
     )
 
 

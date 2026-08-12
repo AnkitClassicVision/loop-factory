@@ -16,8 +16,6 @@ SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
-mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
-
 append_heal_failure() {
     local fingerprint="$1" stage="$2" exit_code="$3" detail="$4" playbook="${5:-}"
     python3 - "${STATE_DIR}/heal_failures.jsonl" "${fingerprint}" "${playbook}" "${stage}" "${exit_code}" "${detail}" <<'PY'
@@ -115,6 +113,14 @@ if [ "${1:-}" = "--heal-phase-only" ]; then
     exit $?
 fi
 
+mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
+
+# P1: mint the run manifest BEFORE the first node (spec C2). Mint refusal is a
+# hard stop: a run that cannot declare its plan does not run (deny-by-default).
+mint_out="$(PYTHONPATH="${REPO}" python3 -m kernel.run_manifest mint --department "${DEPARTMENT}" --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --trigger daily)"
+LOOP_FACTORY_RUN_ID="$(json_object_field run_id <<<"${mint_out}")"
+export LOOP_FACTORY_RUN_ID
+
 # 1) Watchdog chain (SHADOW). Each node runs through the confinement launcher
 #    (factory/launch.py) so the department holds no credentials, and stays in
 #    shadow. These nodes are authored by a concurrent lane; referenced by path.
@@ -123,7 +129,22 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
-python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/expectation_reconcile.py" --shadow --sources "${SOURCES}" || true
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/funnel_floor_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/floor_compiler_run.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
+# U12 outreach dead man's switch (owner approved 2026-08-10). Reports through an
+# observation, never an exit code: a Sense node that exits non-zero mid-chain
+# would stop the nodes behind it, so an outreach drought would take the whole
+# watchdog down with it.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/outreach_absence_sensor.py" --shadow --sources "${SOURCES}" --state-dir "${STATE_DIR}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+# Expectation reconcile is receipt-gated like the DAG supervisor: exit 2 is a
+# VALID findings verdict (observations recorded; compare/dedup below must
+# process them). Any other nonzero exit is a node failure and stops the chain.
+exp_rc=0
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/expectation_reconcile.py" --shadow --sources "${SOURCES}" || exp_rc=$?
+if [ "${exp_rc}" -ne 0 ] && [ "${exp_rc}" -ne 2 ]; then
+    echo "expectation_reconcile failed with rc=${exp_rc} (not a findings verdict)" >&2
+    exit "${exp_rc}"
+fi
 # The escalation answer-return reader is receipt-gated: nonzero, empty, or
 # non-object stdout stops the chain before compare/dedup can advance.
 comms_receipt="$(
@@ -147,8 +168,17 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/fingerprint_dedup.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/escalate_outbox.py" --shadow
 
+# The verifier's observation reaches compare on the next daily run; the
+# manager consumes its verdict during this run. Exit 2 is an advisory verdict.
+ver_rc=0
+PYTHONPATH="${REPO}" python3 -m kernel.run_manifest verify --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --run-id "${LOOP_FACTORY_RUN_ID}" || ver_rc=$?
+if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
+    echo "run_manifest verify failed with rc=${ver_rc} (not a verdict)" >&2
+    exit "${ver_rc}"
+fi
+
 # 2) Manager cycle (deterministic; charter is the source of truth).
-python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}"
+python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
 
 # 3) Publish pending approvals to the human-in-the-loop outbox.
 python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
@@ -166,3 +196,4 @@ python3 -m factory.boardfeed --repo-root "${REPO}"
 python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
 # Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
 # Legacy command replaced by tabs: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --department "${DEPARTMENT}" --out "${REPO}/estate/state/${DEPARTMENT}-board.html"
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"

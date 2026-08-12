@@ -188,6 +188,12 @@ def sense(
 
     budget_used: dict[str, Any] = {}
     budget_unreadable = False
+    # Red-team operator catch: a configured ceiling with no usage feed must
+    # never read as healthy zero spend. Distinguish the three honest states:
+    # unconfigured (no path wired), missing (path wired, file absent), and
+    # unreadable (file present, corrupt).
+    budget_unconfigured = budget_path is None
+    budget_missing = False
     if budget_path and Path(budget_path).exists():
         try:
             budget_used = json.loads(Path(budget_path).read_text(encoding="utf-8"))
@@ -196,6 +202,8 @@ def sense(
             # breach, never silently read as a healthy zero-spend baseline.
             budget_used = {}
             budget_unreadable = True
+    elif budget_path:
+        budget_missing = True
 
     return {
         "now": now_dt.isoformat(),
@@ -211,6 +219,8 @@ def sense(
         "conversions": conversions,
         "budget_used": budget_used,
         "budget_unreadable": budget_unreadable,
+        "budget_telemetry_missing": budget_missing,
+        "budget_telemetry_unconfigured": budget_unconfigured,
     }
 
 
@@ -263,6 +273,53 @@ def sense_graph_escalations(state_dir) -> dict[str, Any]:
         "graph_escalations_truncated":
             len(escalations) > STATE_GRAPH_ESCALATION_BOUND,
         "graph_escalations_unreadable": unreadable,
+    }
+
+
+def sense_manifest_verdict(state_dir) -> dict[str, Any]:
+    """Read the verdict paired with the newest run manifest, if adopted."""
+    manifest_dir = Path(state_dir) / "run-manifests"
+    empty = {
+        "manifest_verdict_status": "none",
+        "manifest_verdict_counts": {},
+    }
+    if not manifest_dir.is_dir():
+        return empty
+
+    manifests = [
+        path
+        for path in manifest_dir.glob("*.json")
+        if not path.name.endswith(".verdict.json")
+    ]
+    if not manifests:
+        return empty
+
+    manifest = max(manifests, key=lambda path: path.stat().st_mtime)
+    verdict_path = manifest.with_name(f"{manifest.stem}.verdict.json")
+    if not verdict_path.exists():
+        return {
+            "manifest_verdict_status": "absent",
+            "manifest_verdict_counts": {},
+        }
+
+    try:
+        verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+        counts = {
+            key: len(verdict[key])
+            for key in ("missing", "unexpected", "duplicates", "reordered")
+        }
+        status = verdict["status"]
+        if not isinstance(status, str):
+            raise TypeError("verdict status must be a string")
+    except (KeyError, TypeError, ValueError, OSError):
+        return {
+            "manifest_verdict_status": "unknown",
+            "manifest_verdict_counts": {},
+        }
+
+    return {
+        "manifest_verdict_status": status,
+        "manifest_verdict_counts": counts,
     }
 
 
@@ -456,6 +513,52 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
             _finding("budget_telemetry_unreadable", "breach",
                      "budget telemetry exists but could not be parsed — spend is unverifiable",
                      observed=None, setpoint=None)
+        )
+
+    # breach: a ceiling exists but its usage feed is wired and absent —
+    # spend is unverifiable, which is a guard failure, not a zero.
+    if t["budget_ceilings"] and sensed.get("budget_telemetry_missing"):
+        findings.append(
+            _finding("budget_telemetry_missing", "breach",
+                     "budget ceilings are set but the usage telemetry file is "
+                     "absent — spend is unverifiable (wire the producer or fix "
+                     "the path)",
+                     observed=None, setpoint=None)
+        )
+    # warn: ceilings exist and no telemetry path is wired at all — visible
+    # pressure without an estate-wide alarm storm for departments that have
+    # not adopted the budget feed yet.
+    if t["budget_ceilings"] and sensed.get("budget_telemetry_unconfigured"):
+        findings.append(
+            _finding("budget_telemetry_unconfigured", "warn",
+                     "budget ceilings are set but no usage telemetry path is "
+                     "configured — pass --budget to the manager invocation",
+                     observed=None, setpoint=None)
+        )
+
+    manifest_status = sensed.get("manifest_verdict_status")
+    if manifest_status == "red":
+        counts = sensed.get("manifest_verdict_counts") or None
+        findings.append(
+            _finding(
+                "runmanifest_red",
+                "warn",
+                "the last daily run's declared plan has steps with no "
+                "completion record — see run-manifests verdict",
+                observed=counts,
+                setpoint=None,
+            )
+        )
+    elif manifest_status in {"absent", "unknown"}:
+        findings.append(
+            _finding(
+                "runmanifest_unverified",
+                "warn",
+                "a run manifest exists but no trustworthy verdict does — the "
+                "verifier did not run or could not read it",
+                observed=None,
+                setpoint=None,
+            )
         )
 
     # release drift (hard rule 4: process change = map change + QA). The
@@ -927,6 +1030,7 @@ def run_manager_cycle(
     # escalated/killed graph run must never depend on the worker's telemetry
     # contract to reach a human.
     sensed.update(sense_graph_escalations(state_dir))
+    sensed.update(sense_manifest_verdict(state_dir))
     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
     actions = decide(findings, autonomy_state=autonomy_state)
     report = act(
@@ -976,6 +1080,10 @@ def main() -> None:
     parser.add_argument("--autonomy-state", default=None,
                         help="override; the charter is the source of truth when present")
     parser.add_argument("--outbox", default=None, help="human-in-the-loop outbox to escalate into")
+    parser.add_argument("--budget", default=None,
+                        help="usage telemetry JSON ({kind: used}) compared "
+                             "against the charter's weekly ceilings; a wired "
+                             "path whose file is absent is a breach")
     parser.add_argument("--resolve-graph-run", default=None, metavar="RUN_ID",
                         help="record a human resolution for a bridged graph "
                              "escalation (clears BOTH ledgers, coordinated) "
@@ -1014,7 +1122,48 @@ def main() -> None:
         spec.loader.exec_module(hil)
 
         def escalate_fn(issue, context=None):  # noqa: E306
-            hil.escalate(args.department, issue, args.outbox, context=context)
+            context = context or {}
+            code = str(context.get("finding") or "unknown")
+            detail = issue.split(": ", 1)[1] if ": " in issue else issue
+            if code == "budget_telemetry_missing":
+                card = {
+                    "meaning": "Budget ceilings are set but no usage data exists, so spend cannot be verified",
+                    "needs": "Wire the telemetry producer or confirm the path",
+                    "actions": [{
+                        "action": "Acknowledge until the P-next producer lands",
+                        "effect": "card stays parked, re-raised weekly",
+                        "reply": "approve ack-budget-telemetry",
+                    }],
+                }
+            elif code.startswith("budget_near:"):
+                card = {
+                    "meaning": detail,
+                    "needs": "Approve a spend pause or confirm continued operation",
+                    "actions": [{
+                        "action": "Pause spend",
+                        "effect": "new spend pauses pending owner review",
+                        "reply": "approve pause-spend",
+                    }],
+                }
+            elif code == "runmanifest_red":
+                card = {
+                    "meaning": detail,
+                    "needs": "Approve a rerun investigation",
+                    "actions": [{
+                        "action": "Rerun investigation",
+                        "effect": "ops investigates and reruns the unproven steps",
+                        "reply": "approve rerun-investigation",
+                    }],
+                }
+            else:
+                card = {
+                    "meaning": detail,
+                    "needs": "Ops review",
+                    "fyi_only": True,
+                }
+            hil.escalate(
+                args.department, issue, args.outbox, context=context, **card
+            )
 
     # dept_dir passes unconditionally: a CLI invocation whose department dir
     # cannot be resolved must surface drift_check_failed, never silently take
@@ -1023,6 +1172,7 @@ def main() -> None:
         state_dir, autonomy_state=autonomy, thresholds=thresholds,
         escalate_fn=escalate_fn, department=args.department,
         dept_dir=root / "departments" / args.department,
+        budget_path=args.budget,
     )
     print(json.dumps({
         "department": args.department,

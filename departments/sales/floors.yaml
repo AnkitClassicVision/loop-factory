@@ -1,0 +1,31 @@
+# MACHINE-WRITTEN — derived; humans set goals in charter.yaml
+status: ok
+reason: floors compiled
+floors:
+  held:
+    flow_per_week: 10
+    stock_min: 0
+    rate_used: 1.0
+    rate_source: prior
+  booked:
+    flow_per_week: 16
+    stock_min: 14
+    rate_used: 0.7
+    rate_source: prior
+  conversation_live:
+    flow_per_week: 46
+    stock_min: 60
+    rate_used: 0.4
+    rate_source: prior
+  qualified:
+    flow_per_week: 89
+    stock_min: 46
+    rate_used: 0.6
+    rate_source: prior
+  received:
+    flow_per_week: 196
+    stock_min: 31
+    rate_used: 0.5
+    rate_source: prior
+changes: []
+computed_at: '2026-08-06T16:11:33.679949+00:00'

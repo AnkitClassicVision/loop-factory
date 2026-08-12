@@ -1,0 +1,72 @@
+{
+  "hash": "71bbc184ea6ce79f",
+  "source_ref": "bbcbccb2122ec6fcc03f19b5ea014d97675eed6c",
+  "factory_version": {
+    "graph_schema_version": 2,
+    "runner_version": "2.5.0",
+    "telemetry_schema_version": 1,
+    "template_set_hash": "6e67d9ea9dc0e34c"
+  },
+  "artifacts": [
+    {
+      "path": "charter.yaml",
+      "sha256": "7560eb28029210aae9cde21cc4bbb07c0889ba444170d75693dea3f7f54b1230"
+    },
+    {
+      "path": "interview/intent-interview.md",
+      "sha256": "65a6e1d3bb5b36f4a3421ab5d87461fe7147792bce5c105a60d8d18bf6119428"
+    },
+    {
+      "path": "knowledge/concept-map.md",
+      "sha256": "2e21ffa2d89f2cf0738b5f8a734866a0f59c57311736474626ccde0c6377e80f"
+    },
+    {
+      "path": "procedural-graph.md",
+      "sha256": "0a0fd8ec9c811d638ee08b1512d371d4dfe28470db2f623d5f3e7370110a9246"
+    },
+    {
+      "path": "runtime/booked_sensor.py",
+      "sha256": "9bc0ce983757a21be0e59037fa8fe4f0c983cab03eed71d26b88bf1ce7b351a8"
+    },
+    {
+      "path": "runtime/conductor_tick.py",
+      "sha256": "8fc0def7056267f6ae6f2b58a7c4e28ca90755a283ba659e66654e0e8c220b15"
+    },
+    {
+      "path": "runtime/floor_compiler_run.py",
+      "sha256": "5fee9d5d8682ec1bdecb0201b45335e2a7f493cd707069ceaf496ad75ea13d6a"
+    },
+    {
+      "path": "runtime/held_sensor.py",
+      "sha256": "37252c0f06d57aeda97458a2c67fe60e50826c51e3dab456601d472f3874720a"
+    },
+    {
+      "path": "runtime/intake_sensor.py",
+      "sha256": "badff588c4a4d7d59c6bea4e0a44819d01b301a79fc089ffa2713ec696e87ccf"
+    },
+    {
+      "path": "runtime/qualify_scorer.py",
+      "sha256": "3594e4ba99b97c9275a4b31be070d32b8bea57e2dd4c2f7e1db85a831048b1b4"
+    },
+    {
+      "path": "runtime/run-roster.json",
+      "sha256": "8c239fe53ac7ff09079c3c7e278563cc314dba6e1feca80e90ac5dae67a73648"
+    },
+    {
+      "path": "runtime/runtime_node.py",
+      "sha256": "4c84450ad2fbd24cbfda00a932ddc53e5ffef84aadcf5208d37ecdf785a43d8a"
+    },
+    {
+      "path": "runtime/sales_daily.sh",
+      "sha256": "b0a1aad679c15ada0d553e182b15621a656d6a3f7351160d2f9cdf63ba1d7a6b"
+    },
+    {
+      "path": "runtime/sense_gates.py",
+      "sha256": "88f9fa2b1736c45b57d4a25a95bbd09ec4bc107297f83bf69c210542d35343c4"
+    },
+    {
+      "path": "subgraphs.json",
+      "sha256": "414dfb3ab798b712df423d508d44a2de05b942239a42cd475a9b9c48a413d4f7"
+    }
+  ]
+}

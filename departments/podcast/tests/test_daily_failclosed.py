@@ -146,3 +146,42 @@ def test_success_and_recorded_refusal_keep_happy_path_without_failure_receipt(tm
     refusal = json.loads((state / "heals.jsonl").read_text().strip())
     assert refusal["result"] == "refused"
     assert failures == []
+
+
+def test_expectation_line_has_no_silent_bypass():
+    text = SCRIPT.read_text(encoding="utf-8")
+    expectation_lines = [l for l in text.splitlines() if "expectation_reconcile.py" in l]
+    assert expectation_lines, "expectation_reconcile invocation missing from daily chain"
+    assert not any("|| true" in l for l in expectation_lines), (
+        "expectation_reconcile must not be silenced with || true; "
+        "exit 2 is a findings verdict handled like dag_supervisor's alarm")
+    assert "exp_rc" in text, "expected the rc-capture alarm-verdict pattern"
+
+
+def test_floor_compiler_runs_between_floor_sensor_and_expectation_reconcile():
+    text = SCRIPT.read_text(encoding="utf-8")
+    funnel_index = text.index("runtime/funnel_floor_sensor.py")
+    compiler_index = text.index("runtime/floor_compiler_run.py")
+    expectation_index = text.index("runtime/expectation_reconcile.py")
+
+    assert funnel_index < compiler_index < expectation_index
+
+
+def test_run_manifest_is_minted_before_nodes_and_verified_before_manager():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert text.index("run_manifest mint") < text.index("sense_estate.py")
+    assert "export LOOP_FACTORY_RUN_ID" in text
+    assert "ver_rc=0" in text
+    assert "|| ver_rc=$?" in text
+    assert text.index("run_manifest verify") < text.index("factory/manager.py")
+
+
+def test_conductor_tick_is_the_last_runtime_node_invocation():
+    runtime_invocations = [
+        line
+        for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+        if "factory/launch.py" in line and "/runtime/" in line
+    ]
+
+    assert runtime_invocations
+    assert "runtime/conductor_tick.py" in runtime_invocations[-1]

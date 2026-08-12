@@ -102,6 +102,12 @@ class BudgetBroker:
             self._telemetry_failed = True
             raise BudgetExceeded("budget telemetry unavailable") from exc
 
+    @property
+    def telemetry_ok(self):
+        """False when the ledger existed but could not be replayed — readers
+        must treat usage() as unverifiable, never as zero."""
+        return not self._telemetry_failed
+
     def usage(self, kind):
         return sum(
             amount if actual is None else actual

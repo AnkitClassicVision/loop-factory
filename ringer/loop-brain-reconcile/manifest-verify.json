@@ -1,0 +1,68 @@
+{
+  "run_name": "loop-brain-reconcile",
+  "workdir": "/home/ankit114/ringer-work/loop-brain-reconcile-verify",
+  "worktrees": false,
+  "max_parallel": 5,
+  "tasks": [
+    {
+      "key": "verify-lf-controller-audit",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "cp /mnt/d_drive/ringer-work/loop-brain-reconcile/lf-controller-audit/report.md ./report.md",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-brain-reconcile/checks/report_check.py report.md --sections 'CONTROL FLOW TODAY;STALL CATALOG;PRIOR ART;CONTROLLER GAP' --min-words 700 --min-citations 10 --roots /mnt/d_drive/repos/loop-factory /mnt/d_drive/repos/EA /mnt/d_drive/repos/podcast",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "The preserved lf-controller-audit report passes the corrected citation gate: all sections, word floor, and resolvable cited files."
+    },
+    {
+      "key": "verify-ea-architecture-extract",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "cp /mnt/d_drive/ringer-work/loop-brain-reconcile/ea-architecture-extract/report.md ./report.md",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-brain-reconcile/checks/report_check.py report.md --sections 'LAYER MAP;EXECUTION SPINE;LEARN LOOP;TRANSPLANT NOTES;MISSING FOR LOOPS' --min-words 700 --min-citations 10 --roots /mnt/d_drive/repos/EA /mnt/d_drive/repos/loop-factory",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "The preserved ea-architecture-extract report passes the corrected citation gate: all sections, word floor, and resolvable cited files."
+    },
+    {
+      "key": "verify-podcast-funnel-anatomy",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "cp /mnt/d_drive/ringer-work/loop-brain-reconcile/podcast-funnel-anatomy/report.md ./report.md",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-brain-reconcile/checks/report_check.py report.md --sections 'STAGE MAP;EXISTING TARGETS AND FLOORS;CONVERSION EVIDENCE;DRIVE MECHANICS;GAPS' --min-words 700 --min-citations 10 --roots /mnt/d_drive/repos/podcast /mnt/d_drive/repos/loop-factory",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "The preserved podcast-funnel-anatomy report passes the corrected citation gate: all sections, word floor, and resolvable cited files."
+    },
+    {
+      "key": "verify-receipts-vs-manifest-audit",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "cp /mnt/d_drive/ringer-work/loop-brain-reconcile/receipts-vs-manifest-audit/report.md ./report.md",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-brain-reconcile/checks/report_check.py report.md --sections 'PROOF CHAIN TODAY;SKIP PATHS;PRE-DECLARED MANIFEST DELTA;MINIMAL MECHANISM' --min-words 700 --min-citations 10 --roots /mnt/d_drive/repos/loop-factory /mnt/d_drive/repos/podcast",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "The preserved receipts-vs-manifest-audit report passes the corrected citation gate: all sections, word floor, and resolvable cited files."
+    },
+    {
+      "key": "verify-floor-math-design",
+      "engine": "local-shell",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "spec": "cp /mnt/d_drive/ringer-work/loop-brain-reconcile/floor-math-design/report.md ./report.md",
+      "check": "PYTHONDONTWRITEBYTECODE=1 python3 /mnt/d_drive/repos/loop-factory/ringer/loop-brain-reconcile/checks/report_check.py report.md --sections 'CASCADE MATH;WORKED EXAMPLE;COLD START;CONTROL POLICY;FAILURE MODES' --min-words 900 --min-citations 4 --roots /mnt/d_drive/repos/podcast /mnt/d_drive/repos/loop-factory",
+      "expect_files": [
+        "report.md"
+      ],
+      "verified": "The preserved floor-math-design report passes the corrected citation gate: all sections, word floor, and resolvable cited files."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+# sales evaluator registry — F0/F2 template
+# Loaded and validated by factory/evalregistry.py (load_registry). Shape:
+# top-level mapping of node_class -> {tier1: [check ids], tier2: {...}}.
+# Tier 1 is deterministic and always runs before any model evaluator.
+default:
+  tier1:
+    - schema_valid
+    - required_fields_present
+    - duplicate_free
+    - dates_valid
+    - permissions_valid
+    - external_actions_taken_valid
+
+  # Tier 2 is optional and must use an independent engine lane (cross_model
+  # is mandatory). Uncomment and fill this block only for content quality or
+  # ambiguity that genuinely needs model judgment.
+  # tier2:
+  #   required: true
+  #   cross_model: true
+  #   golden_set: null   # TODO_F2: path to 5-10 cases (open + holdout splits)
+  #   verdict_thresholds:
+  #     block_critical: 1
+  #     block_major: 3
+  #     revise_major: 1
+
+# GOLDEN-SET ADVISORY RULE: until a Tier-2 evaluator has a golden set and scores
+# clean on it (100% open, >=80% holdout), its verdicts are advisory-only
+# (recorded, never gating). A model swap must beat the incumbent on the holdout
+# before its verdicts count.

@@ -46,6 +46,14 @@
      "impl": "runtime/hopper_sensor.py"
     },
     {
+     "id": "N11",
+     "impl": "runtime/funnel_floor_sensor.py"
+    },
+    {
+     "id": "N15",
+     "impl": "runtime/outreach_absence_sensor.py"
+    },
+    {
      "id": "N6",
      "impl": "runtime/comms_reconcile_sensor.py",
      "execution": "daily_shared_chain_before_compare_and_escalation"
@@ -57,8 +65,24 @@
     {
      "id": "N10",
      "impl": "runtime/expectation_reconcile.py"
+    },
+    {
+     "id": "N13",
+     "impl": "runtime/floor_compiler_run.py"
+    },
+    {
+     "id": "N14",
+     "impl": "runtime/conductor_tick.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every estate unit in the charter inventory was sensed this run (a missing unit is a silent-gap FAIL)",
+     "every non-ok observation classified through the finite transition table and deduplicated to one open thread per fingerprint",
+     "escalation cards carry the one question + evidence + fingerprint, delivered_count stays 0 in shadow"
+    ],
+    "receipt": "observations.jsonl rows + escalation outbox rows + run record"
+   }
   },
   {
    "id": "SG-DAG-SUPERVISION",
@@ -84,7 +108,14 @@
      "id": "N1",
      "impl": "runtime/dag_supervisor.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "the pipeline's hashed DAG projection validated fresh (stale or missing projection is an alarm, never a skip)",
+     "every silent skip, forged skip artifact, or hash mismatch became a dag_receipt_violation incident"
+    ],
+    "receipt": "dag-projection validation observation + run record"
+   }
   },
   {
    "id": "SG-PIPELINE",
@@ -113,7 +144,14 @@
      "impl": "runtime/pipeline_sensor.py",
      "execution": "daily_shared_chain_before_other_sensors_and_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "guest pipeline counts measured from FUNNEL-LEDGER evidence, never from stage labels",
+     "every floor breach or blind gauge became an observation the compare chain processed"
+    ],
+    "receipt": "pipeline/funnel observations + run record"
+   }
   },
   {
    "id": "SG-PUBLISHDAY",
@@ -139,7 +177,13 @@
      "impl": "runtime/publish_verifier.py",
      "execution": "daily_shared_chain_before_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "publish-day artifacts verified by 10:30 ET or an exact missing-proof block recorded"
+    ],
+    "receipt": "publish verification observation + run record"
+   }
   },
   {
    "id": "SG-MANIFEST",
@@ -168,7 +212,14 @@
      "impl": "runtime/manifest_sensor.py",
      "execution": "daily_shared_chain_before_hopper_sensor_and_one_shared_compare"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every guest/episode manifest checked for completeness against the declared expectation manifests",
+     "every gap became an expectation delta with its declared heal"
+    ],
+    "receipt": "expectation receipts + observations + run record"
+   }
   },
   {
    "id": "SG-HEAL",
@@ -205,7 +256,14 @@
      "id": "N9",
      "impl": "runtime/record.py"
     }
-   ]
+   ],
+   "done": {
+    "conditions": [
+     "every open incident offered exactly one allowlisted playbook or a recorded refusal (unknown classes refuse, never improvise)",
+     "every heal stayed propose-only in shadow with its receipt appended"
+    ],
+    "receipt": "heals.jsonl receipts + run record"
+   }
   }
  ],
  "untraced_allowed": {
@@ -215,6 +273,6 @@
   "runtime/podcast_daily.sh": "factory-standard daily trigger (department_daily.sh.template instance), shadow-only; invokes graph nodes, is not one",
   "runtime/rotate_observations.py": "daily post-consumer maintenance step for the observation store (dedup + rotation, receipt-emitting, dry-run honest); invoked after the heal phase and before board regeneration",
   "manifests/recording-intake.yaml": "expectation-manifest data consumed by SG-WATCHDOG N10 (expectation_reconcile.py); declared expectations, not behavior",
-  "manifests/prep-research.yaml": "expectation-manifest data consumed by SG-WATCHDOG N10 (expectation_reconcile.py); declared expectations, not behavior"
- }
+  "manifests/prep-research.yaml": "expectation-manifest data consumed by SG-WATCHDOG N10 (expectation_reconcile.py); declared expectations, not behavior",
+  "runtime/run-roster.json": "release-bound run-obligation roster consumed by kernel.run_manifest mint/verify (P1); owner-reviewed data, not behavior \u2014 the behavior lives in the kernel" }
 }

@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podcast Department · Process Map</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --ink:#16283a; --muted:#5b6b7d; --line:#dfe6ee;
+    --navy:#1b3a5b; --teal:#0e7490; --green:#177245; --amber:#b3610f; --red:#b42318; --grey:#8a97a5;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+  header h1{font-size:26px;font-weight:650;letter-spacing:-.02em;margin:0 0 6px}
+  .thesis{font-size:16px;color:var(--ink);max-width:860px;margin:0 0 6px}
+  .meta{font-size:12.5px;color:var(--muted);margin:0 0 22px}
+  .mapbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 6px 2px;overflow-x:auto;margin-bottom:14px}
+  svg{display:block;min-width:1150px}
+  .now{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 30px}
+  .chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;color:var(--ink)}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .g{background:var(--green)} .a{background:var(--amber)} .r{background:var(--red)} .n{background:var(--grey)}
+  h2{font-size:15px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);margin:34px 0 4px;display:flex;align-items:baseline;gap:10px}
+  h2 .sub{font-size:12.5px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted)}
+  details{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden}
+  summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:11px 16px;font-weight:600;font-size:14px}
+  summary::-webkit-details-marker{display:none}
+  summary .one{font-weight:400;color:var(--muted);font-size:13px;flex:1;text-align:right}
+  summary:hover{background:#f8fafc}
+  .fields{border-top:1px solid var(--line);padding:12px 16px 14px;display:grid;grid-template-columns:118px 1fr;gap:7px 14px;font-size:13.5px}
+  .k{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding-top:2px}
+  .v code{font-family:var(--mono);font-size:12px;background:#f1f5f9;border-radius:4px;padding:1px 5px;word-break:break-all}
+  .v.warn{color:var(--amber)} .v.bad{color:var(--red)}
+  table{border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px}
+  th,td{text-align:left;padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+  thead th{border-top:none;background:#f8fafc;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+  .tablewrap{overflow-x:auto;border-radius:10px}
+  ul.qs{margin:8px 0 0;padding-left:20px;font-size:13.5px}
+  ul.qs li{margin:4px 0}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;color:var(--muted);margin-top:10px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  footer{margin-top:36px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  @media (max-width:640px){ .fields{grid-template-columns:1fr} .k{padding-top:8px} summary .one{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>The podcast department, every 30 minutes</h1>
+  <p class="thesis"><strong>Nothing counts until its receipt exists, and every failure has exactly one road back to action:</strong> observation → incident → card to you → allowlisted heal → re-sense proves it cleared, or it re-escalates.</p>
+  <p class="meta">Cadence: <code>podcast-loop.timer</code> every 30 min · SHADOW (zero external sends, heals propose-only) · states judged from the 2026-08-10 11:30 ET run · click any stage or node for its output, what good looks like, the executed QA, and the correction path.</p>
+</header>
+
+<div class="mapbox">
+<svg viewBox="0 0 1180 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Podcast department process flow">
+  <defs>
+    <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#5b6b7d"/></marker>
+    <marker id="arrT" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#0e7490"/></marker>
+  </defs>
+
+  <!-- owner lane -->
+  <rect x="430" y="10" width="660" height="46" rx="10" fill="#eef3f8" stroke="#1b3a5b" stroke-width="1.2"/>
+  <text x="452" y="30" font-size="13" font-weight="650" fill="#1b3a5b">ANKIT · the owner</text>
+  <text x="452" y="46" font-size="11" fill="#5b6b7d">in: cards · manager brief · boards&#160;&#160;&#160;out: answers · approvals · promotion decisions</text>
+
+  <!-- arrows chain to owner -->
+  <path d="M576 108 L576 60" stroke="#5b6b7d" stroke-width="1.4" fill="none" marker-end="url(#arr)" stroke-dasharray="1 4" stroke-linecap="round"/>
+  <path d="M738 108 L738 60" stroke="#5b6b7d" stroke-width="1.4" fill="none" marker-end="url(#arr)" stroke-dasharray="1 4" stroke-linecap="round"/>
+  <path d="M1062 108 L1062 60" stroke="#5b6b7d" stroke-width="1.4" fill="none" marker-end="url(#arr)" stroke-dasharray="1 4" stroke-linecap="round"/>
+  <text x="582" y="86" font-size="10.5" fill="#5b6b7d">card</text>
+  <text x="744" y="86" font-size="10.5" fill="#5b6b7d">brief</text>
+  <text x="1068" y="86" font-size="10.5" fill="#5b6b7d">boards</text>
+
+  <!-- owner answers return -->
+  <path d="M448 56 C448 84, 414 84, 414 106" stroke="#0e7490" stroke-width="1.4" fill="none" marker-end="url(#arrT)" stroke-dasharray="5 4"/>
+  <text x="300" y="88" font-size="10.5" fill="#0e7490">answers return · 48h SLA</text>
+
+  <!-- stage boxes -->
+  <g font-family="inherit">
+    <a href="#s-gate"><rect x="20" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="146" cy="124" r="5" fill="#177245"/>
+      <text x="34" y="136" font-size="13" font-weight="650" fill="#16283a">GATE</text>
+      <text x="34" y="152" font-size="10.5" fill="#5b6b7d">declare the plan</text>
+      <text x="34" y="168" font-size="10" fill="#8a97a5">1 node · kernel</text></a>
+    <a href="#s-sense"><rect x="182" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="308" cy="124" r="5" fill="#b42318"/>
+      <text x="196" y="136" font-size="13" font-weight="650" fill="#16283a">SENSE</text>
+      <text x="196" y="152" font-size="10.5" fill="#5b6b7d">measure everything</text>
+      <text x="196" y="168" font-size="10" fill="#8a97a5">7 nodes · 2 blind</text></a>
+    <a href="#s-reconcile"><rect x="344" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="470" cy="124" r="5" fill="#b3610f"/>
+      <text x="358" y="136" font-size="13" font-weight="650" fill="#16283a">RECONCILE</text>
+      <text x="358" y="152" font-size="10.5" fill="#5b6b7d">are receipts honest?</text>
+      <text x="358" y="168" font-size="10" fill="#8a97a5">3 nodes · DAG alarming</text></a>
+    <a href="#s-judge"><rect x="506" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="632" cy="124" r="5" fill="#177245"/>
+      <text x="520" y="136" font-size="13" font-weight="650" fill="#16283a">JUDGE</text>
+      <text x="520" y="152" font-size="10.5" fill="#5b6b7d">classify · dedup · card</text>
+      <text x="520" y="168" font-size="10" fill="#8a97a5">3 nodes · state machine</text></a>
+    <a href="#s-prove"><rect x="668" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="794" cy="124" r="5" fill="#b3610f"/>
+      <text x="682" y="136" font-size="13" font-weight="650" fill="#16283a">PROVE</text>
+      <text x="682" y="152" font-size="10.5" fill="#5b6b7d">verify run · brief owner</text>
+      <text x="682" y="168" font-size="10" fill="#8a97a5">3 nodes · 1 red finding</text></a>
+    <a href="#s-heal"><rect x="830" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="956" cy="124" r="5" fill="#b3610f"/>
+      <text x="844" y="136" font-size="13" font-weight="650" fill="#16283a">HEAL</text>
+      <text x="844" y="152" font-size="10.5" fill="#5b6b7d">playbook or refuse</text>
+      <text x="844" y="168" font-size="10" fill="#8a97a5">3 nodes · 1 failing</text></a>
+    <a href="#s-show"><rect x="992" y="110" width="140" height="70" rx="10" fill="#ffffff" stroke="#dfe6ee"/><circle cx="1118" cy="124" r="5" fill="#177245"/>
+      <text x="1006" y="136" font-size="13" font-weight="650" fill="#16283a">SHOW</text>
+      <text x="1006" y="152" font-size="10.5" fill="#5b6b7d">boards · watch · queue</text>
+      <text x="1006" y="168" font-size="10" fill="#8a97a5">3 nodes · shadow</text></a>
+  </g>
+
+  <!-- chain arrows -->
+  <path d="M160 145 L180 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M322 145 L342 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M484 145 L504 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M646 145 L666 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M808 145 L828 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M970 145 L990 145" stroke="#5b6b7d" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- verify -> judge next-run arc -->
+  <path d="M700 182 C700 218, 610 218, 610 184" stroke="#5b6b7d" stroke-width="1.2" fill="none" marker-end="url(#arr)" stroke-dasharray="5 4"/>
+  <text x="596" y="230" font-size="10.5" fill="#5b6b7d">red run-verdict → judged next run</text>
+
+  <!-- correction loop: heal -> sense -->
+  <path d="M900 182 C900 292, 252 292, 252 184" stroke="#0e7490" stroke-width="2" fill="none" marker-end="url(#arrT)" stroke-dasharray="7 5"/>
+  <text x="400" y="278" font-size="12" font-weight="600" fill="#0e7490">THE CORRECTION LOOP · next run re-senses: incident cleared, or it re-escalates</text>
+
+  <!-- conductor re-escalation note -->
+  <text x="992" y="205" font-size="10.5" fill="#5b6b7d">conductor re-escalates stale cards ↩</text>
+
+  <!-- deadman -->
+  <rect x="965" y="318" width="200" height="44" rx="10" fill="none" stroke="#8a97a5" stroke-dasharray="5 4"/>
+  <text x="980" y="336" font-size="11.5" font-weight="600" fill="#5b6b7d">estate deadman · every hour</text>
+  <text x="980" y="352" font-size="10.5" fill="#8a97a5">no heartbeat for 26h → alarm</text>
+  <path d="M1090 316 L1118 186" stroke="#8a97a5" stroke-width="1.2" fill="none" stroke-dasharray="4 4" marker-end="url(#arr)"/>
+
+  <!-- legend -->
+  <g font-size="10.5" fill="#5b6b7d">
+    <circle cx="30" cy="340" r="5" fill="#177245"/><text x="40" y="344">working, proof seen</text>
+    <circle cx="165" cy="340" r="5" fill="#b3610f"/><text x="175" y="344">working, live alarm / unproven branch</text>
+    <circle cx="405" cy="340" r="5" fill="#b42318"/><text x="415" y="344">not delivering (blind or broken)</text>
+    <circle cx="600" cy="340" r="5" fill="#8a97a5"/><text x="610" y="344">legacy / outside the chain</text>
+    <path d="M25 362 L55 362" stroke="#0e7490" stroke-width="2" stroke-dasharray="7 5"/><text x="62" y="366">feedback that drives action</text>
+    <path d="M225 362 L255 362" stroke="#5b6b7d" stroke-width="1.4" stroke-dasharray="1 4" stroke-linecap="round"/><text x="262" y="366">human-mediated</text>
+  </g>
+</svg>
+</div>
+
+<div class="now">
+  <span class="chip"><span class="dot r"></span>pipeline sensor blind · no <code>calendar.json</code></span>
+  <span class="chip"><span class="dot r"></span>manifest sensor blind · no <code>guest_manifests.json</code></span>
+  <span class="chip"><span class="dot r"></span>DAG: 9 silent skips upstream</span>
+  <span class="chip"><span class="dot r"></span>budget telemetry producer missing</span>
+  <span class="chip"><span class="dot a"></span>production-publish heal failing (restart proposed → failed)</span>
+  <span class="chip"><span class="dot a"></span>funnel alarm: 0 outreach this week</span>
+</div>
+
+<!-- ======================= GATE ======================= -->
+<h2 id="s-gate">Gate <span class="sub">declare the plan before anything runs · refusal means no run</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>run-manifest MINT (kernel)<span class="one">the run declares its plan or does not exist</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/run-manifests/&lt;run_id&gt;.json</code> · the declared node roster for this run</div>
+    <div class="k">Good looks like</div><div class="v">roster hash matches the pinned release; a run_id is issued; every later record binds to it</div>
+    <div class="k">QA (executed)</div><div class="v">kernel checks the roster hash against the pinned release BEFORE the first node runs</div>
+    <div class="k">If it fails</div><div class="v">refusal = the whole run does not start (deny-by-default). A chain that never runs is caught by the estate deadman within 26h.</div>
+  </div>
+</details>
+
+<!-- ======================= SENSE ======================= -->
+<h2 id="s-sense">Sense <span class="sub">seven sensors, each measuring from evidence, never from a loop's self-report</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>sense_estate<span class="one">is every unit of the estate alive?</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">rows in <code>state/observations.jsonl</code> (timer / receipt / log / channel / vps) + <code>state/sources/estate.json</code></div>
+    <div class="k">Good looks like</div><div class="v">every unit in the charter inventory appears, status ok, receipts fresh, no error patterns in log tails</div>
+    <div class="k">QA (executed)</div><div class="v">silent-gap guard: a unit MISSING from the output fails the check by itself</div>
+    <div class="k">If it fails</div><div class="v">every non-ok row flows to JUDGE → incident → card. Nothing is dropped.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>pipeline_sensor<span class="one">independent guest count · BLIND today</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">guest-count observation from a calendar + HubSpot join (<code>sensor=pipeline</code>)</div>
+    <div class="k">Good looks like</div><div class="v">counts derived from evidence with source fields logged per counted guest, never loop self-reports</div>
+    <div class="k">QA (executed)</div><div class="v">independence assertion; a missing source makes every count UNKNOWN, never assumed ok</div>
+    <div class="k">If it fails</div><div class="v">unknown → <code>funnel_blind</code>, breach → <code>funnel_behind</code> → incident → card</div>
+    <div class="k">Now</div><div class="v bad">BLIND · <code>state/sources/calendar.json</code> does not exist; the only output is a missing-source row. The feedback mechanism fires, but the gauge measures nothing.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot a"></span>publish_verifier<span class="one">public proof at the provider, not internal state</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">publish-day observation (<code>sensor=publishday</code>) checked at RSS / YouTube / social</div>
+    <div class="k">Good looks like</div><div class="v">on a publish day, public receipts verified by 10:30 ET; otherwise an explicit "no publish due"</div>
+    <div class="k">QA (executed)</div><div class="v">provider-level liveness check; a missing public receipt is an incident, never a warning</div>
+    <div class="k">If it fails</div><div class="v">an exact missing-proof block is recorded → incident → card</div>
+    <div class="k">Now</div><div class="v warn">only the "no publish due" branch has been observed live; the real publish-day path is unproven in production</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>manifest_sensor<span class="one">per-guest completeness · BLIND today</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">per-guest completeness observation (<code>sensor=manifest</code>): missing field + chase status + fallback yes/no</div>
+    <div class="k">Good looks like</div><div class="v">every guest complete, or every gap named with its chase status</div>
+    <div class="k">QA (executed)</div><div class="v">computed from HubSpot (read) + episode state; unresolved guest identity = suppress + review</div>
+    <div class="k">If it fails</div><div class="v">gap → expectation delta → incident → card</div>
+    <div class="k">Now</div><div class="v bad">BLIND · <code>state/sources/guest_manifests.json</code> does not exist</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>hopper_sensor<span class="one">is there enough work queued?</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">hopper observation + <code>state/objectives_observed.json</code> (9 plain numbers: hopper depth, stale touches, recordings booked…)</div>
+    <div class="k">Good looks like</div><div class="v">hopper depth and interview readiness meet charter objectives; publish reliability on track</div>
+    <div class="k">QA (executed)</div><div class="v">scans the episodes hopper and publish-schedule evidence directly</div>
+    <div class="k">If it fails</div><div class="v">shortfall classifies <code>funnel_behind</code> → incident → card</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>funnel_floor_sensor<span class="one">six floors + weekly quota · alarming today, and that is it working</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">six funnel-floor observations + weekly outreach quota (<code>sensor=funnel</code>)</div>
+    <div class="k">Good looks like</div><div class="v">floors met, computed from FUNNEL-LEDGER evidence, never stage labels</div>
+    <div class="k">QA (executed)</div><div class="v">missing ledger ⇒ every floor UNKNOWN (never assumed ok)</div>
+    <div class="k">If it fails</div><div class="v">breach → <code>funnel_behind</code>; blind gauge → <code>funnel_blind</code> → incident → card</div>
+    <div class="k">Now</div><div class="v warn">alarming: <code>new_outreach_this_week</code> with hopper_depth 0. The alarm is the mechanism doing its job</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>floor_compiler_run (weekly)<span class="one">derives the floors; freezes on any doubt</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>floors.yaml</code> (machine snapshot heals never touch) + <code>state/floors-history.jsonl</code></div>
+    <div class="k">Good looks like</div><div class="v">floors derived from charter goals + matured cohort rates; <code>changes: []</code> or each change justified</div>
+    <div class="k">QA (executed)</div><div class="v">weekly gate; FREEZES (never raises) on state drift, unledgered inbound, a red run verdict, or a malformed ledger</div>
+    <div class="k">If it fails</div><div class="v">every move or freeze is itself an alarm observation → JUDGE. Goals stay human-only, forever.</div>
+  </div>
+</details>
+
+<!-- ======================= RECONCILE ======================= -->
+<h2 id="s-reconcile">Reconcile <span class="sub">are the receipts themselves honest? invalid receipts halt the chain</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>expectation_reconcile<span class="one">did each declared process do what it promised?</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/expectation-receipts/&lt;process&gt;-latest.json</code> · 4 processes today, all met</div>
+    <div class="k">Good looks like</div><div class="v">exit 0: expectations met, deltas 0, only receipted skips</div>
+    <div class="k">QA (executed)</div><div class="v">hard exit contract 0/2/1; the old <code>|| true</code> silent bypass is removed and pinned by <code>test_daily_failclosed</code></div>
+    <div class="k">If it fails</div><div class="v">exit 2 = findings become observations judged THIS run; exit 1 = node failure, chain stops</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>comms_reconcile_sensor<span class="one">did the owner's answer actually come back?</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">validated reconciliation receipt (stdout JSON) + observations</div>
+    <div class="k">Good looks like</div><div class="v">no open loop: upstream touches nonzero ⇒ downstream movement within the 48h SLA</div>
+    <div class="k">QA (executed)</div><div class="v">receipt-gated: a nonzero, empty, or non-JSON receipt HALTS the chain before any judging can advance</div>
+    <div class="k">If it fails</div><div class="v">findings → JUDGE; a broken tracker stops the run fail-closed (the deadman is the backstop)</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot a"></span>dag_supervisor<span class="one">pipeline's DAG projection · alarming: 9 silent skips</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">projection-integrity observation + incident candidates (reads <code>/mnt/d_drive/repos/podcast/state/receipts/dag-projection.json</code>)</div>
+    <div class="k">Good looks like</div><div class="v">fresh projection, hashes recompute clean, zero silent skips</div>
+    <div class="k">QA (executed)</div><div class="v">recomputes canonical DAG + skip-artifact hashes; stale or missing projection = fail-closed alarm, never a skip</div>
+    <div class="k">If it fails</div><div class="v"><code>dag_receipt_violation</code> incident → card. This lane only reads; scheduling anything here would be a split-brain defect.</div>
+    <div class="k">Now</div><div class="v warn">ALARMING: 9 silent skips found in the pipeline's projection. The card for this should be in the outbox</div>
+  </div>
+</details>
+
+<!-- ======================= JUDGE ======================= -->
+<h2 id="s-judge">Judge <span class="sub">a finite state machine turns bad evidence into exactly one open thread and one card</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>compare_charter<span class="one">classify every non-ok observation</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/incident_candidates.json</code></div>
+    <div class="k">Good looks like</div><div class="v">every non-ok observation classified, each citing its charter setpoint + raw evidence path</div>
+    <div class="k">QA (executed)</div><div class="v">finite transition table · enumerable classes, deterministic, no LLM judgment anywhere</div>
+    <div class="k">If it fails</div><div class="v">a crash stops the chain fail-closed; unknown patterns become their own defect class rather than being guessed</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>fingerprint_dedup<span class="one">one problem = one thread, never a flood</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/incidents.json</code> + <code>state/escalation_fingerprints.jsonl</code></div>
+    <div class="k">Good looks like</div><div class="v">exactly one open thread per fingerprint; a resolved fingerprint recurring is flagged <code>department_defect</code></div>
+    <div class="k">QA (executed)</div><div class="v">dedup test: the same fingerprint seen twice while open = ONE thread</div>
+    <div class="k">If it fails</div><div class="v">recurrence escalates as a department defect (a root-cause item), not another duplicate card</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>escalate_outbox<span class="one">the card: one question + evidence, in plain English</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">escalation card appended to <code>state/decisions_outbox.jsonl</code> · eli5, ONE question, evidence paths, fingerprint</div>
+    <div class="k">Good looks like</div><div class="v">card complete and deduplicated by content digest; in shadow, <code>delivered_count == 0</code> externally</div>
+    <div class="k">QA (executed)</div><div class="v">card content check; digest-keyed markers fail closed when the digest cannot be computed</div>
+    <div class="k">If it fails</div><div class="v">a card unanswered &gt;24h or an incident stale &gt;48h gets a <code>re_escalate</code> decision from the conductor; duplicates are suppressed by fingerprint</div>
+  </div>
+</details>
+
+<!-- ======================= PROVE ======================= -->
+<h2 id="s-prove">Prove <span class="sub">the run proves itself, then the manager rolls it up for the owner</span></h2>
+
+<details>
+  <summary><span class="dot a"></span>run-manifest VERIFY (kernel)<span class="one">did the run match its declared plan?</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/run-manifests/&lt;run_id&gt;.verdict.json</code> + a <code>runmanifest</code> observation</div>
+    <div class="k">Good looks like</div><div class="v">green: 0 missing, 0 duplicates, 0 reordered, 0 unexpected versus the minted roster</div>
+    <div class="k">QA (executed)</div><div class="v">diffs the roster against <code>runs-v2.jsonl</code> records bound by <code>LOOP_FACTORY_RUN_ID</code></div>
+    <div class="k">If it fails</div><div class="v">exit 2 advisory: the manager warns TODAY, the observation is judged on the NEXT run. Flipping advisory → blocking is an owner decision.</div>
+    <div class="k">Now</div><div class="v warn">verdicts read <code>ok,unsigned</code> · signatures exist in the schema but are not enforced yet</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot a"></span>manager tick (factory)<span class="one">the roll-up: numbers, findings, what went to you</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/MANAGER_BRIEF.md</code> + <code>heartbeats.jsonl</code> + <code>runs.jsonl</code> + owner sends via the outbox</div>
+    <div class="k">Good looks like</div><div class="v">findings empty or expected ramp states (<code>pace_under</code> in shadow); numbers inside ceilings</div>
+    <div class="k">QA (executed)</div><div class="v">deterministic Sense → Compare → Record against the charter; budget check against <code>state/budget_used.json</code></div>
+    <div class="k">If it fails</div><div class="v">every red finding escalates to the owner and repeats every cycle until cleared</div>
+    <div class="k">Now</div><div class="v bad"><code>budget_telemetry_missing</code> is red every cycle. The telemetry producer was wired for sales on 2026-08-07 but never for podcast, so spend is unverifiable</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>human_in_the_loop push<span class="one">approvals reach the owner's queue</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">approval cards moved from <code>state/approval_queue.jsonl</code> into the outbox</div>
+    <div class="k">Good looks like</div><div class="v">queue drained; approvals sitting in front of the owner, none aging</div>
+    <div class="k">QA (executed)</div><div class="v">queue/outbox row accounting; the brief counts approvals aged &gt;1 day</div>
+    <div class="k">If it fails</div><div class="v">aging approvals resurface in the brief every cycle until acted on</div>
+  </div>
+</details>
+
+<!-- ======================= HEAL ======================= -->
+<h2 id="s-heal">Heal <span class="sub">known patterns get a playbook; unknown patterns get a refusal, never improvisation</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>heal_select<span class="one">match the incident to a versioned playbook, or refuse</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">a playbook selection object, or a recorded refusal (empty stdout is the contract) → <code>state/heals.jsonl</code></div>
+    <div class="k">Good looks like</div><div class="v">fingerprint matches a versioned playbook entry, or a clean refusal that escalates</div>
+    <div class="k">QA (executed)</div><div class="v">allowlist match only; an unknown class refuses; it never invents a fix</div>
+    <div class="k">If it fails</div><div class="v">selector crash → row in <code>heal_failures.jsonl</code>; the incident stays open and keeps its card</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot a"></span>heal_apply<span class="one">propose the fix · failing right now on production-publish</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">proposed-heal receipt in <code>state/heals.jsonl</code> (shadow: propose-only, nothing executed)</div>
+    <div class="k">Good looks like</div><div class="v">only allowlisted commands (restart unit, recreate tracker, re-run step); immutable invariants untouched</div>
+    <div class="k">QA (executed)</div><div class="v">allowlist enforcement; anything touching an immutable safety invariant refuses</div>
+    <div class="k">If it fails</div><div class="v">failure row in <code>heal_failures.jsonl</code>; the chain continues; the MANAGER senses the failed heal and drives the ladder or the human outbox</div>
+    <div class="k">Now</div><div class="v warn"><code>podcast-loop-production-publish.service</code> is inactive; the restart heal is proposed and FAILING repeatedly. The ladder's next rung is the card in your outbox</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>heal_verify<span class="one">a heal only counts when a re-sense proves it</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">verify receipt in <code>state/heals.jsonl</code></div>
+    <div class="k">Good looks like</div><div class="v">a re-sense proves the incident cleared (consecutive healthy observations)</div>
+    <div class="k">QA (executed)</div><div class="v">heal without verified clearance = FAILED heal, full stop</div>
+    <div class="k">If it fails</div><div class="v">FAILED heal escalates; recurrence feeds the root-cause item: the same fix failing twice is a department defect, not a retry</div>
+  </div>
+</details>
+
+<!-- ======================= SHOW ======================= -->
+<h2 id="s-show">Show &amp; watch <span class="sub">the human surfaces get rebuilt, then the observer queues what it WOULD do</span></h2>
+
+<details>
+  <summary><span class="dot g"></span>rotate_observations<span class="one">bound the evidence after everyone has read it</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>state/observations.jsonl</code> bounded to 5,000 lines; older evidence archived</div>
+    <div class="k">Good looks like</div><div class="v">retention bounded only AFTER all daily consumers have read</div>
+    <div class="k">QA (executed)</div><div class="v">hard line cap; ordered after judging, never before</div>
+    <div class="k">If it fails</div><div class="v">nonzero stops the chain tail → the missing conductor heartbeat trips the deadman</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>board render (estate)<span class="one">your view: the boards, fresh every run</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v"><code>estate/state/boards/podcast.html</code> + <code>index.html</code> (from the estate board feed)</div>
+    <div class="k">Good looks like</div><div class="v">boards rebuilt on every run · mtime matches the last chain run</div>
+    <div class="k">QA (executed)</div><div class="v">render exit code inside the chain</div>
+    <div class="k">If it fails</div><div class="v">a stale board means the run tail failed → deadman. The board is a projection; the records stay canonical.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot g"></span>conductor_tick (observer)<span class="one">what the department WOULD do next, in priority order</span></summary>
+  <div class="fields">
+    <div class="k">Output</div><div class="v">ordered would-dispatch ledger <code>state/conductor-shadow.jsonl</code> + heartbeat + exclusive <code>driver.lease</code></div>
+    <div class="k">Good looks like</div><div class="v">exactly one driver (a second claimant gets a durable refusal receipt); decisions ordered unblock &gt; floor_gap &gt; routine, 3-tick aging promotes</div>
+    <div class="k">QA (executed)</div><div class="v">exclusive lease; liveness guarded by the estate deadman's 26h heartbeat check</div>
+    <div class="k">If it fails</div><div class="v">it dispatches NOTHING in shadow. Stale incidents (&gt;48h) and unanswered cards (&gt;24h) become <code>re_escalate</code> decisions. Cutover to live driving is your promotion decision.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot n"></span>record.py (legacy)<span class="one">in the graph, not in the chain</span></summary>
+  <div class="fields">
+    <div class="k">Reality</div><div class="v">listed as N9 in the procedural graph but never invoked by the orchestrator · sensors emit their own records. Deletion candidate; keeping it is drift.</div>
+  </div>
+</details>
+
+<!-- ======================= DRIFT ======================= -->
+<h2>Spec vs reality <span class="sub">where the map and the territory disagree today</span></h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Where</th><th>Spec says</th><th>Reality is</th><th>Severity</th></tr></thead>
+  <tbody>
+    <tr><td>pipeline_sensor</td><td>guest counts from calendar + HubSpot join</td><td>blind · <code>sources/calendar.json</code> absent, unknown every run</td><td><span class="dot r" style="display:inline-block"></span> high</td></tr>
+    <tr><td>manifest_sensor</td><td>per-guest completeness from HubSpot + episode state</td><td>blind · <code>sources/guest_manifests.json</code> absent</td><td><span class="dot r" style="display:inline-block"></span> high</td></tr>
+    <tr><td>manager budget check</td><td>ceilings verified against usage telemetry</td><td><code>budget_used.json</code> producer never wired for podcast; red every cycle</td><td><span class="dot a" style="display:inline-block"></span> medium</td></tr>
+    <tr><td>dag_supervisor</td><td>zero silent skips</td><td>9 silent skips alarmed in the pipeline projection</td><td><span class="dot a" style="display:inline-block"></span> medium</td></tr>
+    <tr><td>heal ladder</td><td>allowlisted restart clears timer incidents</td><td>production-publish restart heal failing repeatedly</td><td><span class="dot a" style="display:inline-block"></span> medium</td></tr>
+    <tr><td>run verdicts</td><td>signed verdicts</td><td>signature null · <code>ok,unsigned</code></td><td><span class="dot n" style="display:inline-block"></span> low</td></tr>
+    <tr><td>timer</td><td>repo timer file: daily 07:00</td><td><code>podcast-loop.timer</code> runs the same script every 30 min</td><td><span class="dot n" style="display:inline-block"></span> low</td></tr>
+    <tr><td>record.py</td><td>N9 in the procedural graph</td><td>never invoked by the orchestrator</td><td><span class="dot n" style="display:inline-block"></span> low</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Open questions <span class="sub">owner decisions the machine is waiting on</span></h2>
+<ul class="qs">
+  <li>The 48h comms-return SLA is a provisional default, pending your review.</li>
+  <li>Run-manifest verify is advisory; flipping it to blocking is your call at P1 exit.</li>
+  <li>Conductor cutover from shadow ledger to live driving is a promotion-ladder decision.</li>
+  <li>Escalation delivery (Telegram) is an unpromoted ladder step; cards stay local today.</li>
+</ul>
+
+<footer>
+  <strong>Assumptions:</strong> states judged from the 2026-08-10 11:30 ET run artifacts; a green node can still carry a live business alarm · color is the node's health, not the funnel's. External touchpoints are read-only in shadow (HubSpot via exported snapshots, RSS/YouTube provider checks, Telegram/Linear config-liveness only, VPS probe disabled). Zero external actions taken in every sampled run record.<br>
+  Canonical model: <code>podcast-process-map.seeit.json</code> · sources: <code>podcast_daily.sh</code>, <code>procedural-graph.md</code>, systemd user units, live <code>state/</code> artifacts.
+</footer>
+
+</div>
+</body>
+</html>

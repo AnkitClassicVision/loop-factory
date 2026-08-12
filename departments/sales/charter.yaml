@@ -1,0 +1,180 @@
+# sales department charter — v1.0 (F2, from the locked intent interview)
+#
+# GOVERNANCE FILE: human-owned, READ-ONLY to the department at every autonomy
+# level. Heals and managers may never edit it. Derives ONLY from
+# interview/intent-interview.md (INTENT LOCKED by Ankit, 2026-08-06, Claude Code session
+# loop-brain-reconcile — readback r1 clean, gap fills as recommended).
+department: sales
+version: v1.0
+status: intent_locked
+intent_lock:
+  decided_by: ankit
+  date: "2026-08-06"
+  surface: claude-code-askuserquestion-readback-r1
+owner: ankit
+mission: >-
+  Produce 10 discovery calls per week actually HELD with a qualified
+  decision-maker, source-attributed, blended across six lanes (Q1/Q5/Q6):
+  received lanes iCareGrow (priority 1), podcast handoffs via S01 (2), inbound
+  hand-raisers + website forms (4); owned lanes practices-for-sale prospecting
+  (3), re-engagement of stale/parked contacts (5), cold services outreach
+  (6, deprioritized). The owner is shifting toward BUYING practices: iCareGrow,
+  podcast, and practices-for-sale outrank everything else. Held means >=20
+  minutes with the decision-maker present; qualified has two bars — services
+  (owner/decision-maker at an ICP-fit optometry practice) and seller (owner
+  signaling exit interest within ~24 months). Context is king: no draft
+  without its full relationship context, no double-touch across lanes, no
+  stage label that lies about staleness, no copy that fails the owner's voice.
+
+autonomy_state: shadow   # every department starts in shadow (earned-autonomy ladder)
+
+setpoints:
+  operational:
+    metric: escalation_pings_per_day
+    target: 5
+    sense_cycle_minutes: 30
+  outcome:
+    metric: held_qualified_calls_per_week
+    target: 10                              # blended across lanes; no per-lane quotas v1
+  objectives:                               # owner-locked (Ankit, 2026-08-06)
+    held_calls_week:
+      label: "Qualified discovery calls HELD this week"
+      setpoint: 10
+      minimum: 10
+      target: 10
+      unit: " calls"
+    attribution_drift:
+      label: "Held calls without a verified source attribution"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " calls"
+    unledgered_received:
+      label: "Received leads missing from the cohort ledger"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " people"
+    stale_conversations_mislabeled:
+      label: "conversation_live rows without two-way evidence in 7 days"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " people"
+    cross_lane_double_touch:
+      label: "Contacts touched by two lanes inside the cadence window"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " contacts"
+    context_packet_completeness:
+      label: "Drafts produced from a complete context packet"
+      setpoint: 100
+      minimum: 100
+      target: 100
+      unit: "%"
+  # Stage stock floors are DERIVED (floors.yaml, machine-written) from the
+  # funnel section below — the charter states goals and priors, never copies
+  # compiled numbers (two copies guarantees one stale).
+
+thresholds:
+  weekly_touch_ceiling: 150                 # month-one: half the podcast ceiling (Q9)
+  pace_ceiling_near_frac: 0.9
+  faux_work_touch_floor: 25
+  backlog_aging_min: 1
+  budget_near_frac: 0.8
+
+# Funnel goals + transition priors (Q4/Q5, gap fills locked at readback).
+# ORDER CONTRACT: upstream-first — each `to` is the next line's `from`; the
+# last `to` is the end_goal stage; the loader rejects breaks. nervous_parked
+# is a first-class STAGE (parking pool with exit rules), not a cascade link.
+funnel:
+  end_goal: {stage: held, per_week: 10}
+  transitions:
+    - {from: received, to: qualified, prior_rate: 0.5, buffer: 0.1, lead_days: 1, maturity_days: 7, stock_buffer: 0.1}
+    - {from: qualified, to: conversation_live, prior_rate: 0.6, buffer: 0.15, lead_days: 3, maturity_days: 7, stock_buffer: 0.2}
+    - {from: conversation_live, to: booked, prior_rate: 0.4, buffer: 0.15, lead_days: 7, maturity_days: 14, stock_buffer: 0.3}
+    - {from: booked, to: held, prior_rate: 0.7, buffer: 0.1, lead_days: 5, maturity_days: 14, stock_buffer: 0.2}
+
+execution:  # factory-wide process discipline (owner addendum 2026-07-23)
+  headless: true
+  step_receipts: required
+
+budget:   # Q9: "Tighter than podcast" — half ceilings for the first month, then review
+  engine_policy: subscription_oauth_only
+  api_spend_rule: forbidden_escalate_instead
+  review_after: "2026-09-06"
+  weekly_ceilings:
+    model_calls: 450
+    dollars: 0
+    worker_minutes: 840
+  estate_send_caps:
+    outbound_per_day: 6
+    new_contacts_per_day: 2
+    per_contact_cadence_floor_days: 4
+  read_caps:
+    broker_scrape_sweeps_per_week: 4        # kernel read-broker lane only (Q8)
+
+immutable_safety_invariants:
+  heal_may_not_modify:
+    - delivery_floor
+    - send_authorization
+    - eligibility_allowlist
+    - frequency_policy
+    - privacy_floor
+    - kill_controller
+    - circuit_breaker
+    - promotion_contract
+    - budget_ceilings
+    - identity_resolution
+    - metric_definitions
+    - gateway_mode
+    - autonomy_state
+    - escalation_dedup_policy
+    - qualification_bars                    # Q12: changing the bar is the owner's, forever
+    - funnel_goals_and_priors               # floors derive; goals are human-only
+
+never:  # department hard floors (Q10/Q11/Q12; human-only, forever)
+  - no_outbound_send_at_any_autonomy_level_v1__drafts_land_in_the_approval_queue_only
+  - no_touch_of_a_contact_owned_by_another_lane_inside_its_cadence_window__suppression_is_cross_process
+  - no_draft_without_a_verified_complete_context_packet__context_is_king
+  - no_draft_reaches_the_approval_queue_without_passing_the_owner_voice_check
+  - no_held_call_counted_without_a_verifiable_held_receipt__20min_decision_maker_present
+  - no_recording_content_in_department_records__fathom_contributes_intent_flags_and_opaque_ids_only
+  - no_raw_crm_ids_phi_credentials_or_message_bodies_in_records_cards_or_memory
+  - governance_files_human_only
+
+kill_if:  # Q10 — kill = non-restartable without a new human charter decision
+  - attribution_untrustworthy: ledger drift != 0 for 7+ consecutive days — a funnel that cannot prove sources is worse than none
+  - held_receipt_fabricated: one forged or unverifiable held-call receipt kills the department, not the incident
+  - cap_breach_by_automation: any automation BREACHES (not approaches) a budget or send cap
+  - cross_process_poaching: sales touches a contact the podcast funnel owns inside its cadence window outside the S01 contract
+  - owner_says_stop: no machine argues
+
+pause_if:  # Q10 — heals allowed, not death
+  - received_lanes_starving_2_weeks
+  - show_rate_below_40_pct
+  - verdicts_red_3_consecutive_runs
+
+escalation:
+  default: fully_automated_with_escalation
+  dedup: incident_fingerprint_one_thread
+  recurrence_rule: every_escalation_spawns_root_cause_item__repeat_of_resolved_fingerprint_is_department_defect
+  channels: [telegram_ping, linear_card]
+  no_reply_ttl_hours: 48                    # Q12: 48h SLA; unanswered self-parks dependents
+  no_reply_action: self_park_dependents_daily_digest_never_auto_approve
+  human_gates:                              # Q12 — every card carries make-sense + the
+    - external_send                         # exact approvable action (owner directive)
+    - crm_write
+    - broker_scrape_target_change
+    - cap_or_floor_formula_change
+    - qualification_bar_change
+
+memory:   # Q13 — podcast pattern
+  local: departments/sales/state
+  backends: []            # HubSpot is the ESTATE's business truth, not a department memory backend
+  never_recorded: [credentials, phi, raw_message_bodies, raw_recordings]

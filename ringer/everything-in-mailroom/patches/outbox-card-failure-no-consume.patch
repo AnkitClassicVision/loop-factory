@@ -1,0 +1,183 @@
+diff --git a/factory/outbox_push.py b/factory/outbox_push.py
+index 439bc56..a240b29 100644
+--- a/factory/outbox_push.py
++++ b/factory/outbox_push.py
+@@ -30,7 +30,7 @@ Sender values are argv templates, never shell commands. Ping templates may use
+ ``{title}``, ``{body}``, ``{department}``, and ``{kind}``; optional buzz
+ templates may use ``{card}``, ``{text}``, ``{department}``, and ``{kind}``.
+ 
+-Exit codes: 2 for invalid configuration, 3 when every attempted ping fails,
++Exit codes: 2 for invalid configuration, 3 for a sender delivery failure,
+ and 4 when every configured watch path is missing during a non-dry-run tick.
+ """
+ from __future__ import annotations
+@@ -299,6 +299,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+     cursor = _load_cursor(cursor_path)
+     attempts = 0
+     ping_successes = 0
++    card_failures = 0
+     changed = False
+     missing_watch_paths: list[str] = []
+ 
+@@ -357,19 +358,25 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+             attempts += 1
+             if not _send(ping_argv):
+                 LOGGER.error("ping sender failed for %s line %d", source, line_index + 1)
++                # Ping failures stop before cursor mutation, so the row retries in order.
+                 break
+             ping_successes += 1
+             if card_argv:
+                 ledger_file = config.get("ledger_file")
+                 card_success, card_stdout = _send_captured(card_argv)
+                 if not card_success:
+-                    LOGGER.warning(
++                    card_failures += 1
++                    LOGGER.error(
+                         "card sender failed for %s line %d", source, line_index + 1
+                     )
++                    # Do not consume an undelivered card. The repeated plain ping is the
++                    # deliberate loud outage signal until this in-order retry succeeds.
++                    break
+                 else:
+                     card = _last_json_object(card_stdout)
+                     identifier = card.get("identifier") if isinstance(card, dict) else None
+                     if ledger_file:
++                        # Ledger append behavior is unchanged once card delivery succeeds.
+                         _append_ledger(
+                             ledger_file,
+                             digest=digest,
+@@ -389,6 +396,8 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+                         buzz_values = {**values, "card": identifier}
+                         buzz_argv = _render(config["buzz"], buzz_values)
+                         if not _send(buzz_argv):
++                            # Card plus ledger already make this re-armable, so a lost
++                            # buzz remains a delay and the row is consumed as before.
+                             LOGGER.warning(
+                                 "buzz sender failed for %s line %d",
+                                 source,
+@@ -410,7 +419,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
+             ", ".join(missing_watch_paths),
+         )
+         return 4
+-    return 3 if attempts and ping_successes == 0 else 0
++    return 3 if card_failures or (attempts and ping_successes == 0) else 0
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_outbox_push.py b/tests/test_outbox_push.py
+index 9c37667..561834c 100644
+--- a/tests/test_outbox_push.py
++++ b/tests/test_outbox_push.py
+@@ -114,15 +114,75 @@ def test_ping_failure_leaves_failed_row_and_retries_without_earlier_duplicate(tm
+     assert sum("second" in text for text in texts) == 1
+ 
+ 
+-def test_card_failure_does_not_block_cursor(tmp_path):
++def test_card_failure_leaves_row_unconsumed(tmp_path):
+     watch = tmp_path / "outbox.jsonl"
+     watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
++    ledger = tmp_path / "ledger.jsonl"
+     ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
+-    config = _config(tmp_path, watch, ping, card)
+-    assert _run(config).returncode == 0
+-    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)]["offset_lines"] == 1
++    cursor = tmp_path / "cursor.json"
++    cursor.write_text(
++        json.dumps({str(watch): {"offset_lines": 0, "last_hashes": []}}) + "\n"
++    )
++    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
++
++    assert _run(config).returncode == 3
++    assert json.loads(cursor.read_text())[str(watch)] == {
++        "offset_lines": 0,
++        "last_hashes": [],
++    }
++    assert not ledger.exists()
++
++
++def test_card_failure_retries_successfully_on_next_tick(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(json.dumps({"eli5": "hello"}) + "\n")
++    ledger = tmp_path / "ledger.jsonl"
++    ping, card = _sender(tmp_path, "ping"), _sender(tmp_path, "bad_card", 1)
++    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
++
++    assert _run(config).returncode == 3
++
++    working_card = _card_sender_output(
++        tmp_path,
++        "working_card",
++        '{"identifier":"ANK-456","url":"https://example.test/ANK-456"}\n',
++    )
++    data = yaml.safe_load(config.read_text())
++    data["senders"]["card"][1] = str(working_card)
++    config.write_text(yaml.safe_dump(data))
++
+     assert _run(config).returncode == 0
+-    assert len(_calls(tmp_path / "ping.jsonl")) == 1
++    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
++    assert state["offset_lines"] == 1
++    assert len(state["last_hashes"]) == 1
++    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-456"
++    assert len(_calls(tmp_path / "ping.jsonl")) == 2
++
++
++def test_buzz_failure_after_card_and_ledger_consumes_row(tmp_path):
++    watch = tmp_path / "outbox.jsonl"
++    watch.write_text(json.dumps({"eli5": "buzz later"}) + "\n")
++    ledger = tmp_path / "ledger.jsonl"
++    ping = _sender(tmp_path, "ping")
++    card = _card_sender_output(
++        tmp_path,
++        "card_for_buzz",
++        '{"identifier":"ANK-789","url":"https://example.test/ANK-789"}\n',
++    )
++    buzz = _sender(tmp_path, "bad_buzz", 1)
++    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
++    data = yaml.safe_load(config.read_text())
++    data["senders"]["buzz"] = [sys.executable, str(buzz), "{card}"]
++    config.write_text(yaml.safe_dump(data))
++
++    result = _run(config)
++
++    assert result.returncode == 0
++    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
++    assert state["offset_lines"] == 1
++    assert len(state["last_hashes"]) == 1
++    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-789"
++    assert "buzz sender failed" in result.stderr
+ 
+ 
+ def test_sensitive_fields_excluded_and_text_truncated(tmp_path):
+diff --git a/tests/test_outbox_push_buzz.py b/tests/test_outbox_push_buzz.py
+index 0c37d90..761d2b0 100644
+--- a/tests/test_outbox_push_buzz.py
++++ b/tests/test_outbox_push_buzz.py
+@@ -150,11 +150,23 @@ def test_buzz_does_not_run_without_a_successful_durable_card(tmp_path, case):
+         )
+     )
+ 
+-    assert result.returncode == 0
+     assert _calls(tmp_path / "buzz.jsonl") == []
+-    assert json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))[
+-        str(watch)
+-    ]["offset_lines"] == 1
++    if case == "card-failed":
++        # 2026-08-05 contract: an undelivered card is never consumed — the row
++        # stays for the next tick's in-order retry and the run exits 3 loudly.
++        assert result.returncode == 3
++        cursor = tmp_path / "cursor.json"
++        state = (
++            json.loads(cursor.read_text(encoding="utf-8")).get(str(watch))
++            if cursor.exists()
++            else None
++        )
++        assert not state or state["offset_lines"] == 0
++    else:
++        assert result.returncode == 0
++        assert json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))[
++            str(watch)
++        ]["offset_lines"] == 1
+ 
+ 
+ def test_buzz_failure_warns_but_does_not_fail_or_stop_tick(tmp_path):

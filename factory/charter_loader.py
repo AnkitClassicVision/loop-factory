@@ -89,6 +89,60 @@ def thresholds(charter: dict) -> dict:
     return out
 
 
+def funnel_config(charter: dict) -> dict | None:
+    """Return the optional, strictly validated machine-readable funnel config."""
+    if "funnel" not in charter:
+        return None
+    funnel = charter["funnel"]
+    if not isinstance(funnel, dict) or set(funnel) != {"end_goal", "transitions"}:
+        raise CharterError("charter funnel keys must be exactly end_goal and transitions")
+    end_goal = funnel["end_goal"]
+    if not isinstance(end_goal, dict) or set(end_goal) != {"stage", "per_week"}:
+        raise CharterError("charter funnel.end_goal keys must be exactly stage and per_week")
+    if not isinstance(end_goal["stage"], str) or not end_goal["stage"].strip():
+        raise CharterError("charter funnel.end_goal.stage must be a non-empty string")
+    per_week = end_goal["per_week"]
+    if isinstance(per_week, bool) or not isinstance(per_week, int) or per_week < 0:
+        raise CharterError("charter funnel.end_goal.per_week must be a non-negative integer")
+    transitions = funnel["transitions"]
+    if not isinstance(transitions, list) or not transitions:
+        raise CharterError("charter funnel.transitions must be a non-empty list")
+    expected = {"from", "to", "prior_rate", "buffer", "lead_days", "maturity_days", "stock_buffer"}
+    for index, row in enumerate(transitions):
+        if not isinstance(row, dict) or set(row) != expected:
+            raise CharterError(f"charter funnel.transitions[{index}] has unknown or missing keys")
+        for key in ("from", "to"):
+            if not isinstance(row[key], str) or not row[key].strip():
+                raise CharterError(f"charter funnel.transitions[{index}].{key} must be a non-empty string")
+        rate = row["prior_rate"]
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 < rate <= 1:
+            raise CharterError(f"charter funnel.transitions[{index}].prior_rate must be in (0, 1]")
+        for key in ("buffer", "stock_buffer"):
+            value = row[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise CharterError(f"charter funnel.transitions[{index}].{key} must be non-negative")
+        for key in ("lead_days", "maturity_days"):
+            value = row[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise CharterError(f"charter funnel.transitions[{index}].{key} must be a non-negative integer")
+    # ORDER CONTRACT (fail-closed): the list is upstream-first — each `to`
+    # must be the next transition's `from`, and the last `to` must be the
+    # end_goal stage. A broken chain would compile silently WRONG floors
+    # (caught live 2026-08-06: a downstream-first list inverted the cascade).
+    for index in range(len(transitions) - 1):
+        if transitions[index]["to"] != transitions[index + 1]["from"]:
+            raise CharterError(
+                f"charter funnel.transitions[{index}].to "
+                f"({transitions[index]['to']!r}) must equal "
+                f"transitions[{index + 1}].from ({transitions[index + 1]['from']!r}) "
+                "— the list is upstream-first and must chain without breaks")
+    if transitions[-1]["to"] != end_goal["stage"]:
+        raise CharterError(
+            f"charter funnel.transitions[-1].to ({transitions[-1]['to']!r}) "
+            f"must equal end_goal.stage ({end_goal['stage']!r})")
+    return funnel
+
+
 def immutable_invariants(charter: dict) -> frozenset[str]:
     return frozenset(charter["immutable_safety_invariants"]["heal_may_not_modify"])
 

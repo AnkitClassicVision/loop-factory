@@ -1,0 +1,73 @@
+diff --git a/departments/podcast/runtime/compare_charter.py b/departments/podcast/runtime/compare_charter.py
+index 8085e48..982f58b 100644
+--- a/departments/podcast/runtime/compare_charter.py
++++ b/departments/podcast/runtime/compare_charter.py
+@@ -40,6 +40,9 @@ FAILURE_CLASSES = {
+     # surfaced 2026-07-31 when the first full daily run hit an unmapped
+     # ("ledger", "unknown") observation and correctly refused to continue.
+     ("ledger", "unknown"): ("ledger_blind", "high"),
++    # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
++    # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
++    ("hopper", "unknown"): ("hopper_blind", "high"),
+     ("ledger", "fail"): ("ledger_failed", "high"),
+     ("receipt", "unknown"): ("receipt_unknown", "med"),
+     ("log", "unknown"): ("log_unknown", "med"),
+@@ -67,6 +70,7 @@ FAILURE_HINT_CLASSES = {
+ QUESTIONS = {
+     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
+     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
++    "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
+     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
+     "receipt": "What blocked this unit from producing a fresh execution receipt?",
+     "log": "Which versioned repair playbook should handle this logged failure?",
+diff --git a/departments/podcast/tests/test_compare_charter.py b/departments/podcast/tests/test_compare_charter.py
+new file mode 100644
+index 0000000..b5506a6
+--- /dev/null
++++ b/departments/podcast/tests/test_compare_charter.py
+@@ -0,0 +1,45 @@
++import pytest
++
++from departments.podcast.runtime import compare_charter
++
++
++def _observation(sensor, status):
++    return {
++        "ts": "2026-08-05T00:00:00+00:00",
++        "sensor": sensor,
++        "subject": "test-subject",
++        "status": status,
++        "evidence": "test-evidence",
++    }
++
++
++def test_hopper_unknown_classifies_as_high_severity_candidate():
++    candidate = compare_charter.compare_observations(
++        [_observation("hopper", "unknown")], {}
++    )[0]
++
++    assert candidate["failure_class"] == "hopper_blind"
++    assert candidate["severity"] == "high"
++    assert candidate["one_question"] == (
++        "Hopper/publish-reliability evidence is unavailable — what broke the "
++        "publish schedule source or the publish-day verifier?"
++    )
++
++
++def test_truly_unknown_sensor_status_pair_still_raises():
++    with pytest.raises(
++        ValueError,
++        match="no charter comparison transition for sensor='unmapped', status='broken'",
++    ):
++        compare_charter.compare_observations(
++            [_observation("unmapped", "broken")], {}
++        )
++
++
++@pytest.mark.parametrize(("sensor", "status"), compare_charter.FAILURE_CLASSES)
++def test_every_declared_failure_transition_classifies(sensor, status):
++    candidates = compare_charter.compare_observations(
++        [_observation(sensor, status)], {}
++    )
++
++    assert len(candidates) == 1

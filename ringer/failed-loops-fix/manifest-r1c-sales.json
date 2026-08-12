@@ -1,0 +1,19 @@
+{
+ "run_name": "failed-loops-fix",
+ "workdir": "/home/ankit114/ringer-work/failed-loops-fix-r1c",
+ "max_parallel": 1,
+ "tasks": [
+  {
+   "key": "sales-repin2",
+   "engine": "codex",
+   "task_type": "code-fix",
+   "timeout_s": 2400,
+   "spec": "You are clearing ONE diagnosed release-drift block on this machine. Live paths. No MCP, no skills. NEVER read credential-pattern files. BOUNDARY (refined by the coordinator after your predecessor's correct-but-over-broad stop): the lane's hermes_notify/Telegram relay of decision packets TO THE OWNER is the sanctioned human-in-the-loop notification bridge and is IN POLICY \u2014 it is not the external-send you must fear. The prohibition is: no CRM writes, no messages to anyone other than the owner's own Telegram, no email. Your drift fix (inspect + re-pin/revert content_catalog.json) does not touch the notify path; proceed with it. If you find a path that sends to THIRD PARTIES (contacts, customers) un-gated, THEN stop and report.\n\nDIAGNOSIS (full row under sales-reactivation in /mnt/d_drive/repos/loop-factory/estate/state/failed-loops-triage-2026-08-02.md): the unit escalates 'release drift (1 mismatched artifacts)' \u2014 exactly one of 45 pinned artifacts drifted: departments/sales/runtime/content_catalog.json (edited 2026-07-26 08:26, release 7eb4b8754e7ebbee pinned 2026-07-24).\n\nSTEPS: (1) locate the repo via systemctl --user cat sales-reactivation.service. (2) SHOW THE DRIFT: diff the live content_catalog.json against the pinned release copy \u2014 include the full diff in evidence (it is a content catalog; if it unexpectedly contains anything person-identifying, summarize shape instead of quoting). (3) Decide by inspection: if the diff is additive/benign catalog content (new entries, copy edits), ACCEPT it by re-pinning with the repo's own release tooling (find how releases/ pins are cut there \u2014 mirror the existing release layout; do not invent a new format). If the diff looks like corruption or accidental damage, REVERT to pinned instead and say so. (4) Re-run: systemctl --user start sales-reactivation.service; verify via its receipt/journal that the drift escalation is GONE and the run is ok (quote the receipt line). (5) Commit any repo changes (same footer), no push. (6) ./evidence.md: repo, the diff, your accept-vs-revert decision + reasoning, re-pin evidence, post-fix receipt line.",
+   "check": "python3 -c \"import sys,re;from pathlib import Path;p=Path('evidence.md');t=p.read_text(errors='replace').lower() if p.exists() else sys.exit(print('FAIL: evidence.md missing') or 1);need=[('drift diff shown','diff'),('decision stated','accept|revert'),('re-pin or revert evidence','pin|revert'),('post-fix run evidence','ok|success|drift')];fails=[n for n,pat in need if not re.search(pat,t)];print('SALES CHECK:','PASS' if not fails else 'FAIL');[print(' - missing',f) for f in fails];sys.exit(1 if fails else 0)\"",
+   "expect_files": [
+    "evidence.md"
+   ],
+   "verified": "the sales lane's single drifted artifact was inspected, deliberately accepted or reverted, re-pinned, and the drift escalation cleared on a live run"
+  }
+ ]
+}

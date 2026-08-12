@@ -1,0 +1,86 @@
+diff --git a/scripts/run_podcast_loop.sh b/scripts/run_podcast_loop.sh
+index ca882b3..68f67d5 100755
+--- a/scripts/run_podcast_loop.sh
++++ b/scripts/run_podcast_loop.sh
+@@ -170,11 +170,11 @@ deliver_escalation_once() {
+   local marker="${ESCALATE_FILE}.delivered"
+   [ -f "$ESCALATE_FILE" ] || return 0
+   [ ! -f "$marker" ] || return 0
+-  # Owner decision (Ankit 2026-08-04): top-escalating loops deliver as a bare
+-  # Linear card + Ack/Respond phone buttons. The plain text path below stays
++  # Owner decision (Ankit 2026-08-05): all loops deliver as a bare Linear card
++  # + Ack/Respond phone buttons. The plain text path below stays
+   # as the fallback so an alert is never lost to a Linear or button outage.
+   case "$LOOP" in
+-    health|referral-flywheel|guest-acquisition)
++    health|referral-flywheel|guest-acquisition|booking-readiness|production-publish|sales-handoff|proof-improvement)
+       if "$PYTHON_BIN" "$REPO/scripts/obe_escalation_card.py" --loop "$LOOP" \
+            --escalate-file "$ESCALATE_FILE" >> "$LOG" 2>&1; then
+         if : > "$marker"; then
+diff --git a/tests/test_run_podcast_loop_card_lane.py b/tests/test_run_podcast_loop_card_lane.py
+new file mode 100644
+index 0000000..a6364f7
+--- /dev/null
++++ b/tests/test_run_podcast_loop_card_lane.py
+@@ -0,0 +1,61 @@
++"""Source-contract tests for the podcast loop escalation card lane."""
++import re
++from pathlib import Path
++
++import pytest
++
++
++SCRIPT = (
++    Path(__file__).resolve().parents[1] / "scripts" / "run_podcast_loop.sh"
++).read_text()
++CARD_LOOPS = {
++    "health",
++    "referral-flywheel",
++    "guest-acquisition",
++    "booking-readiness",
++    "production-publish",
++    "sales-handoff",
++    "proof-improvement",
++}
++
++
++def deliver_escalation_once_body(script=SCRIPT):
++    return re.search(
++        r"deliver_escalation_once\(\) \{(?P<body>.*?)\n\}", script, re.DOTALL
++    ).group("body")
++
++
++def assert_all_loops_use_card_lane(script):
++    body = deliver_escalation_once_body(script)
++    pattern = re.search(r'case "\$LOOP" in\s+(?P<pattern>[^)]+)\)', body).group(
++        "pattern"
++    )
++    assert set(pattern.split("|")) == CARD_LOOPS
++
++
++def test_all_loops_use_card_lane():
++    assert_all_loops_use_card_lane(SCRIPT)
++
++
++def test_card_lane_guard_rejects_missing_loop():
++    poisoned_script = SCRIPT.replace(
++        '  case "$LOOP" in\n'
++        "    health|referral-flywheel|guest-acquisition|booking-readiness|"
++        "production-publish|sales-handoff|proof-improvement)",
++        '  case "$LOOP" in\n'
++        "    health|referral-flywheel|guest-acquisition|booking-readiness|"
++        "production-publish|sales-handoff)",
++        1,
++    )
++    with pytest.raises(AssertionError):
++        assert_all_loops_use_card_lane(poisoned_script)
++
++
++def test_card_lane_invocation_is_present():
++    body = deliver_escalation_once_body()
++    assert '"$REPO/scripts/obe_escalation_card.py"' in body
++
++
++def test_plain_telegram_fallback_is_present():
++    body = deliver_escalation_once_body()
++    assert "falling back to plain telegram" in body

@@ -1,0 +1,22 @@
+{
+  "run_name": "mailroom-rebuild",
+  "workdir": "/home/ankit114/ringer-work/mailroom-rebuild-r5b",
+  "repo": "/mnt/d_drive/repos/loop-factory",
+  "worktrees": true,
+  "max_parallel": 1,
+  "tasks": [
+    {
+      "key": "reescalate-timer",
+      "engine": "codex",
+      "task_type": "code-feature",
+      "timeout_s": 2400,
+      "engine_args": [
+        "-c",
+        "model_reasoning_effort=high"
+      ],
+      "spec": "You are a repo feature worker. Your current working directory IS a git worktree of the loop-factory repository, detached at HEAD. Edit files here directly.\n\nOWNERSHIP: you own exactly two paths, factory/reescalate.py (existing) and tests/test_reescalate_timer.py (new). Do NOT modify, create, delete, or reformat anything else under factory/, tests/, kernel/, runbooks/, departments/, or loopfactory.py. Do NOT git commit or push, do NOT run git add -A. Leave changes uncommitted; the check exports them.\n\nCONTEXT. factory/reescalate.py re-pings the owner about a card he has not answered. It exists and its cadence is already tested. It is not yet wired to a systemd timer, and two small things block that. The owner may take days to answer, and the Telegram buttons carry a nonce that dies after 72 hours, so the re-ping is what keeps his buttons alive. If it never runs, 'answer whenever' is a lie.\n\nREAD FIRST, READ-ONLY: factory/reescalate.py in full, factory/outbox_push.py for the sender-template convention, and tests/test_reescalate.py for the existing test style.\n\nCHANGE 1. --now must become OPTIONAL, defaulting to the real current UTC time. A systemd service should be able to call this with no shell computing a date. Keep --now working exactly as it does now when supplied, because every existing cadence test depends on injecting a fixed instant.\n\nDO NOT CHANGE THE COUNT SEMANTICS. tests/test_reescalate.py already pins that {reescalation_count} renders the count AFTER the increment, so the FIRST re-ping renders 1, not 0. That is deliberate and humane: the owner's phone should read 're-escalation #1', and '#0' would be nonsense. Leave that exactly as it is; a previous attempt at this task changed it to 0 and broke that test.\n\nCHANGE 2. The sender template must also be able to render {department} and {first_raised}, alongside the existing {card_identifier}, {issue}, {reescalation_count}, {reason}, {text} and {now}. The phone notifier needs the department to label the buzz, and the owner needs to see how long an item has been waiting. Take both from the card's latest ledger row; render an empty string when a row genuinely lacks them rather than crashing.\n\nDO NOT CHANGE: the cadence maths, the eligibility rule (only open and fix_requested), the one-ping-per-card rule, the ledger row it appends after a ping (which must keep status unchanged and advance reescalation_count and last_ping_at), or the fail-closed behaviour when the sender config is missing or unusable.\n\nWRITE tests/test_reescalate_timer.py covering: --now omitted works; --now supplied still works; {department} and {first_raised} render; a ping advances reescalation_count and last_ping_at without changing status; and an immediate second run does not double-ping. Your tests are not the acceptance gate; an independent oracle drives the CLI through fixtures you have not seen.\n\nVERIFY from the worktree root: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests -q -p no:cacheprovider. The whole suite must stay green.\n\nOUTPUT CONTRACT: leave the two owned files edited and uncommitted, and write ./notes.md at the ROOT of your worktree recording what you read, what you changed, the exact verification command and its result, and any assumption.\n\nHARD RULES: no new dependencies, no network, no allow-on-failure paths. Do not load skills or call MCP/Apps. Do not capture anything to any memory or brain service.",
+      "check": "python3 '/mnt/d_drive/repos/loop-factory/ringer/mailroom-rebuild/checks/r5_check.py' --task reescalate-timer --export '/home/ankit114/ringer-work/mailroom-rebuild-r5b/patches' --notes '/home/ankit114/ringer-work/mailroom-rebuild-r5b/notes/reescalate-timer-notes.md'",
+      "verified": "an independent oracle drove the reescalate-timer CLI through fixtures the worker never saw and the full repo suite still passes; only owned files changed; patch exported outside the worktree."
+    }
+  ]
+}

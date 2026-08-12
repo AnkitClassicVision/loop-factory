@@ -89,6 +89,50 @@ setpoints:
       target: 0
       maximum: 0
       unit: " people"
+    # Funnel floors — owner-dictated (Ankit, 2026-08-05, "lets start with those
+    # recommended floors and driving to that via loop"). Worked backwards from
+    # 6-in-hopper at 1 publish/week with ~2-day production lag; conversion
+    # guesses (warm lane): outreach->reply 60%, reply->prep 70%, prep->booked
+    # 60% => ~4 outreaches per recording. Floors are alarm lines the drive
+    # check measures daily from FUNNEL-LEDGER.json evidence.
+    active_warm_threads:
+      label: "Warm threads touched within 7 days"
+      setpoint: 10
+      minimum: 10
+      target: 10
+      unit: " people"
+    live_replies:
+      label: "Replies in live conversation"
+      setpoint: 4
+      minimum: 4
+      target: 4
+      unit: " conversations"
+    prep_done_awaiting_recording:
+      label: "Prep done, recording not yet booked"
+      setpoint: 3
+      minimum: 3
+      target: 3
+      unit: " people"
+    recordings_booked_future:
+      label: "Recordings booked in the future"
+      setpoint: 2
+      minimum: 2
+      target: 2
+      unit: " recordings"
+    stale_touches:
+      label: "Active people untouched over 7 days"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " people"
+    expired_holds_unactioned:
+      label: "Expired holds without same-day action"
+      setpoint: 0
+      minimum: 0
+      target: 0
+      maximum: 0
+      unit: " holds"
   # Owner decisions 2026-08-03 (Ankit): HubSpot is the system of record for people and
   # touches; the repo FUNNEL-LEDGER.json is the operational state machine, rebuilt by
   # reconciling against evidence every run. CRM stage writes are approved PHASED: week 1
@@ -102,6 +146,17 @@ thresholds:
   faux_work_touch_floor: 50
   backlog_aging_min: 1
   budget_near_frac: 0.8
+  # Funnel drive quotas — owner-dictated (Ankit, 2026-08-05), measured by the
+  # daily drive check against FUNNEL-LEDGER.json evidence; a quota miss is a
+  # plain-language card within detection latency, never a silent day.
+  funnel_drive:
+    new_outreach_per_week_steady: 4     # ~1/day; 4 warm outreaches per recording
+    new_outreach_per_week_rebuild: 8    # ~2/day while hopper_depth < 6
+    rebuild_while: "hopper_depth < 6"
+    touch_cadence_max_days: 7           # every active person touched at least weekly
+    touch_cadence_floor_days: 4         # existing per-contact cadence floor (no spam)
+    expired_hold_action_same_day: true
+    detection_latency_hours: 26
 
 comms_loop_invariant:  # owner-ratified (Ankit, 2026-08-03) from ringer/comms-loop-invariant/charter-proposal.md
   applies_to: every outbound ask class
@@ -221,3 +276,18 @@ memory:
   local: departments/podcast/state
   backends: []            # HubSpot is the ESTATE's business truth, not a department memory backend
   never_recorded: [credentials, phi, raw_message_bodies]
+
+# Funnel goals + transition priors — OWNER AMENDMENT (Ankit, 2026-08-06, via Claude Code
+# session loop-brain-reconcile: "Signed — apply it"). Priors from the charter 60/70/60
+# planning assumptions + r62 measured physics; the compiler replaces priors with matured
+# measured rates (30/10 minimums) and alarms every floor move. Humans-only file, forever.
+funnel:
+  end_goal: {stage: published, per_week: 1}
+  # ORDER CONTRACT: upstream-first — each transition's `to` is the next line's
+  # `from`, and the last `to` is the end_goal stage. The loader rejects breaks.
+  transitions:
+    - {from: invited, to: replied, prior_rate: 0.6, buffer: 0.15, lead_days: 5, maturity_days: 14, stock_buffer: 0.2}
+    - {from: replied, to: prep_done, prior_rate: 0.7, buffer: 0.15, lead_days: 7, maturity_days: 14, stock_buffer: 0.2}
+    - {from: prep_done, to: booked, prior_rate: 0.6, buffer: 0.15, lead_days: 7, maturity_days: 21, stock_buffer: 0.3}
+    - {from: booked, to: recorded, prior_rate: 0.85, buffer: 0.1, lead_days: 14, maturity_days: 28, stock_buffer: 0.5}
+    - {from: recorded, to: published, prior_rate: 0.9, buffer: 0.1, lead_days: 14, maturity_days: 21, stock_buffer: 0.5}

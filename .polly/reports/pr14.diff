@@ -1,0 +1,1446 @@
+diff --git a/factory/manager.py b/factory/manager.py
+index dac8689..b875b2a 100644
+--- a/factory/manager.py
++++ b/factory/manager.py
+@@ -214,6 +214,50 @@ def sense(
+     }
+ 
+ 
++def sense_graph_escalations(state_dir) -> dict[str, Any]:
++    """Read-only, model-free replay of the runner->manager escalation bridge.
++
++    factory/runner.py appends one row per terminal escalated/killed graph run
++    to state/graph_escalations.jsonl. Rows are replayed keyed by run_id: an
++    'open' row (re)raises the escalation, a 'resolved' marker clears it, so
++    duplicate bridge rows from a crash-resume window collapse to one. A
++    stream that exists but cannot be parsed, or a row without a run_id, is
++    unverifiable and surfaces as its own breach (deny-by-default) — an
++    escalation must never vanish because its record is broken.
++    """
++    path = Path(state_dir) / "graph_escalations.jsonl"
++    active: dict[str, dict[str, Any]] = {}
++    unreadable = False
++    if path.exists():
++        try:
++            rows = _load_jsonl(path)
++        except (ValueError, OSError):
++            rows = []
++            unreadable = True
++        for row in rows:
++            run_id = row.get("run_id")
++            if not isinstance(run_id, str) or not run_id:
++                unreadable = True
++                continue
++            marker = row.get("marker") or row.get("status")
++            if marker == "resolved" or row.get("resolved") is True:
++                active.pop(run_id, None)
++            else:
++                active[run_id] = {
++                    "run_id": run_id,
++                    "loop_id": row.get("loop_id"),
++                    "state": row.get("state"),
++                    "termination_reason": row.get("termination_reason"),
++                }
++    escalations = sorted(active.values(), key=lambda row: row["run_id"])
++    return {
++        "graph_escalations": escalations[:20],  # bounded for STATE.json
++        "graph_escalation_count": len(escalations),
++        "graph_escalations_truncated": len(escalations) > 20,
++        "graph_escalations_unreadable": unreadable,
++    }
++
++
+ def sense_drift(dept_dir, release_root=None) -> dict[str, Any]:
+     """Read-only, model-free release-drift snapshot (graphs.check_drift).
+ 
+@@ -402,6 +446,29 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
+                      observed=None, setpoint=None)
+         )
+ 
++    # breach: a graph run terminated escalated/killed — the runner bridged it
++    # here and it stays open until a human resolves it. subject=run_id keeps
++    # the outbox delivery fingerprint unique per run.
++    for escalation in sensed.get("graph_escalations") or []:
++        finding = _finding(
++            "graph_run_escalated", "breach",
++            f"graph run {escalation.get('run_id')} "
++            f"({escalation.get('loop_id')}) terminated "
++            f"{escalation.get('state')}: "
++            f"{escalation.get('termination_reason')} — awaiting a human",
++            observed=1, setpoint=0)
++        finding["subject"] = escalation.get("run_id")
++        findings.append(finding)
++
++    # breach: the escalation bridge stream is unverifiable (fail-closed)
++    if sensed.get("graph_escalations_unreadable"):
++        findings.append(
++            _finding("graph_escalations_unreadable", "breach",
++                     "graph escalation records exist but could not be parsed "
++                     "— runner escalations are unverifiable (deny-by-default)",
++                     observed=None, setpoint=None)
++        )
++
+     # breach: last worker run errored
+     if sensed.get("last_run_ok") is False:
+         findings.append(
+@@ -797,6 +864,11 @@ def run_manager_cycle(
+     sensed = (sense_fn or sense)(state_dir, now=now, **telemetry_paths)
+     if dept_dir is not None:
+         sensed.update(sense_drift(dept_dir, release_root))
++    # Like drift, the runner->manager escalation bridge is watched on every
++    # tick regardless of a department's custom sense_fn shape — a terminal
++    # escalated/killed graph run must never depend on the worker's telemetry
++    # contract to reach a human.
++    sensed.update(sense_graph_escalations(state_dir))
+     findings = compare(sensed, thresholds or DEFAULT_THRESHOLDS)
+     actions = decide(findings, autonomy_state=autonomy_state)
+     report = act(
+diff --git a/factory/rollup.py b/factory/rollup.py
+index b85c3be..24c3719 100644
+--- a/factory/rollup.py
++++ b/factory/rollup.py
+@@ -43,11 +43,12 @@ CREATE TABLE department (
+ );
+ CREATE TABLE run (
+   id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT NOT NULL,
+-  current_step TEXT, status TEXT, ts TEXT, epoch INTEGER, source_ref TEXT,
+-  schema_version TEXT NOT NULL
++  graph_run_id TEXT, current_step TEXT, status TEXT, ts TEXT, epoch INTEGER,
++  source_ref TEXT, schema_version TEXT NOT NULL
+ );
+ CREATE TABLE step_telemetry (
+-  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, step_id TEXT, node TEXT,
++  id TEXT PRIMARY KEY, department TEXT, run_id TEXT, graph_run_id TEXT,
++  step_id TEXT, node TEXT,
+   ts TEXT, operation_name TEXT, provider_name TEXT, request_model TEXT,
+   response_model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+   finish_reasons_json TEXT, duration_ms INTEGER, error_type TEXT,
+@@ -61,7 +62,8 @@ CREATE TABLE receipt (
+   schema_version TEXT NOT NULL
+ );
+ CREATE TABLE score (
+-  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, step_id TEXT,
++  id TEXT PRIMARY KEY, department TEXT NOT NULL, run_id TEXT, graph_run_id TEXT,
++  step_id TEXT,
+   node TEXT NOT NULL, name TEXT NOT NULL, value REAL NOT NULL, label TEXT NOT NULL,
+   explanation TEXT NOT NULL, source TEXT NOT NULL, judge_model TEXT,
+   config_version TEXT NOT NULL, ts TEXT NOT NULL, source_ref TEXT,
+@@ -76,8 +78,11 @@ CREATE TABLE approval (
+   queued_at TEXT, card_ref TEXT, source_ref TEXT, schema_version TEXT NOT NULL
+ );
+ CREATE INDEX run_by_status_ts ON run(status, ts);
++CREATE INDEX run_by_graph_run ON run(graph_run_id);
+ CREATE INDEX telemetry_by_department_ts ON step_telemetry(department, ts);
++CREATE INDEX telemetry_by_graph_run ON step_telemetry(graph_run_id);
+ CREATE INDEX score_by_department_label ON score(department, label);
++CREATE INDEX score_by_graph_run ON score(graph_run_id);
+ CREATE INDEX incident_by_status ON incident(status);
+ CREATE INDEX approval_by_status_age ON approval(status, queued_at);
+ """
+@@ -278,6 +283,7 @@ def _run_rows(
+             status = "active" if node and node != "manager_tick" else "unknown"
+         try:
+             run_id = _identifier(run_id, "run_id", nullable=False)
++            graph_run_id = _identifier(row.get("graph_run_id"), "graph_run_id")
+             node = _identifier(node, "node")
+             ts = _identifier(ts, "timestamp")
+             status = _identifier(status, "status", nullable=False)
+@@ -294,6 +300,7 @@ def _run_rows(
+             "id": _stable_id("run", department, run_id),
+             "department": department,
+             "run_id": run_id,
++            "graph_run_id": graph_run_id,
+             "current_step": node,
+             "status": status,
+             "ts": ts,
+@@ -338,6 +345,9 @@ def _telemetry_rows(root, path, department, incidents):
+                     nullable=False,
+                 ),
+                 "run_id": _identifier(row.get("loopfactory.run_id"), "run_id"),
++                "graph_run_id": _identifier(
++                    row.get("loopfactory.graph_run_id"), "graph_run_id"
++                ),
+                 "step_id": _identifier(row.get("loopfactory.step_id"), "step_id"),
+                 "node": _identifier(row.get("loopfactory.node"), "node"),
+                 "operation_name": _identifier(row.get("gen_ai.operation.name"), "operation_name"),
+@@ -381,6 +391,7 @@ def _telemetry_rows(root, path, department, incidents):
+                 "id": _stable_id("telemetry", department, source_ref, line_number),
+                 "department": safe_values["department"],
+                 "run_id": safe_values["run_id"],
++                "graph_run_id": safe_values["graph_run_id"],
+                 "step_id": safe_values["step_id"],
+                 "node": safe_values["node"],
+                 "ts": safe_values["ts"],
+@@ -413,6 +424,9 @@ def _score_rows(root, path, department, incidents):
+     for line_number, row in _read_jsonl(root, path, department, incidents):
+         try:
+             row = score_records.validate_score(row)
++            graph_run_id = _identifier(
++                row["target_ref"].get("graph_run_id"), "graph_run_id"
++            )
+         except ValueError as exc:
+             incidents.append(
+                 _incident(
+@@ -429,6 +443,7 @@ def _score_rows(root, path, department, incidents):
+                 "id": _stable_id("score", department, source_ref, line_number),
+                 "department": target.get("department") or department,
+                 "run_id": target.get("run_id"),
++                "graph_run_id": graph_run_id,
+                 "step_id": target.get("step_id"),
+                 "node": target.get("node") or "unknown",
+                 "name": row.get("gen_ai.evaluation.name") or "unknown",
+@@ -735,6 +750,40 @@ def rebuild(root: str | Path, db_path: str | Path | None = None) -> dict[str, An
+     }
+ 
+ 
++def graph_run_bundle(db_path: str | Path, graph_run_id: str) -> dict[str, list]:
++    """Return every rollup row correlated to ONE graph execution.
++
++    The graph runner's run_id is the correlation key: its own runs.jsonl rows
++    carry it as run_id (and graph_run_id), while runs-v2 wrapper summaries,
++    step telemetry, and scores reference it as graph_run_id.
++    """
++    graph_run_id = _identifier(graph_run_id, "graph_run_id", nullable=False)
++    connection = sqlite3.connect(db_path)
++    connection.row_factory = sqlite3.Row
++    try:
++        bundle = {
++            "run": [
++                dict(row)
++                for row in connection.execute(
++                    "SELECT * FROM run WHERE run_id = ? OR graph_run_id = ? "
++                    "ORDER BY id",
++                    (graph_run_id, graph_run_id),
++                )
++            ],
++        }
++        for entity in ("step_telemetry", "score"):
++            bundle[entity] = [
++                dict(row)
++                for row in connection.execute(
++                    f"SELECT * FROM {entity} WHERE graph_run_id = ? ORDER BY id",
++                    (graph_run_id,),
++                )
++            ]
++    finally:
++        connection.close()
++    return bundle
++
++
+ def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]:
+     db_path = Path(db_path)
+     if db_path.name.endswith(".incomplete"):
+@@ -749,7 +798,8 @@ def export_ndjson(db_path: str | Path, export_dir: str | Path) -> dict[str, int]
+             columns = "*"
+             if entity == "score":
+                 columns = (
+-                    "id,department,run_id,step_id,node,name,value,label,source,"
++                    "id,department,run_id,graph_run_id,step_id,node,name,value,"
++                    "label,source,"
+                     "judge_model,config_version,ts,source_ref,schema_version"
+                 )
+             records = [
+diff --git a/factory/runner.py b/factory/runner.py
+index 1636884..01f017f 100644
+--- a/factory/runner.py
++++ b/factory/runner.py
+@@ -84,8 +84,14 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+-RUNNER_VERSION = "2.4.0"
++RUNNER_VERSION = "2.5.0"
+ RUN_STATE_SCHEMA = "graph-run-v1"
++# Correlation identity injected into every node process AFTER the capability
++# scrub (same pattern as OE_DEPARTMENT in factory/launch.py; canonical names
++# in kernel/capabilities.py). Every record stream an emitter writes inside a
++# runner-executed node — runs-v2, telemetry, scores — carries this run_id.
++GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
++GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
+ DEFAULT_LOCK_TIMEOUT_S = 10.0
+ TERMINAL_RUN_STATES = ("done", "failed", "escalated", "killed")
+ 
+@@ -372,7 +378,8 @@ class _Run:
+ 
+     def log(self, event: str, **fields) -> None:
+         row = {"ts": _now_iso(self.now_fn), "event": event,
+-               "run_id": self.run_id, "loop_id": self.loop_id, **fields}
++               "run_id": self.run_id, "graph_run_id": self.run_id,
++               "loop_id": self.loop_id, **fields}
+         with records_lock(self.state_dir):
+             _append_jsonl(self.state_dir / "runs.jsonl", row)
+ 
+@@ -389,11 +396,17 @@ class _Run:
+             self.log(event, state=new_state, **fields)
+ 
+ 
+-def _launch_node(dept_name: str, script: Path, *, root: Path, env_base) -> tuple:
++def _launch_node(dept_name: str, script: Path, *, root: Path, env_base,
++                 graph_run_id: str, node_id: str) -> tuple:
+     launch = _load("launch", "factory/launch.py")
+     captured: dict = {}
+ 
+     def _capture(command, env):
++        # Identity markers are injected AFTER the capability scrub, exactly
++        # like OE_DEPARTMENT — they are correlation keys, never credentials.
++        env = dict(env)
++        env[GRAPH_RUN_ID_ENV] = graph_run_id
++        env[GRAPH_NODE_ID_ENV] = node_id
+         proc = subprocess.run(command, env=env, capture_output=True, text=True)
+         captured["proc"] = proc
+         return proc
+@@ -424,7 +437,8 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
+         if attempt > 1:
+             sleep_fn(float(policy["backoff_s"]))
+         returncode, stdout, stderr = _launch_node(
+-            dept_name, script, root=root, env_base=env_base)
++            dept_name, script, root=root, env_base=env_base,
++            graph_run_id=run.run_id, node_id=node["id"])
+         run.log("node_attempt", node_id=node["id"], attempt=attempt,
+                 exit_code=returncode)
+         if returncode != 0:
+@@ -650,6 +664,9 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
+             env_base=env_base, now_fn=now_fn, sleep_fn=sleep_fn,
+             receipt_ttl_s=receipt_ttl_s, crash_hook=crash_hook)
+ 
++        if final_state in ("escalated", "killed"):
++            _bridge_escalation(run, final_state)
++
+         try:
+             _export_projection(dept_dir, state_dir, subgraph, loaded, signer,
+                                now_fn=now_fn)
+@@ -680,6 +697,33 @@ def run_graph(dept_dir, *, trigger_fingerprint: str, signer=None,
+         run_lock.close()
+ 
+ 
++def _bridge_escalation(run: _Run, final_state: str) -> None:
++    """Runner->manager escalation bridge (report + escalate only, no new
++    authority). A terminal escalated/killed run appends one durable,
++    manager-readable record to department state; factory/manager.py senses it
++    on the next cycle, raises a breach finding, and delivers it to the
++    human-in-the-loop outbox. A record failure here propagates — records are
++    hard rule 5; an escalation that cannot be recorded must never look
++    handled. Duplicate rows from a crash-resume window are harmless: the
++    manager replays them keyed by run_id and the outbox delivery is
++    fingerprint-deduplicated."""
++    row = {
++        "ts": _now_iso(run.now_fn),
++        "event": "graph_run_escalation",
++        "department": run.dept_dir.name,
++        "loop_id": run.loop_id,
++        "run_id": run.run_id,
++        "graph_run_id": run.run_id,
++        "state": final_state,
++        "termination_reason": run.record.get("termination_reason"),
++        "marker": "open",
++    }
++    with records_lock(run.state_dir):
++        _append_jsonl(run.state_dir / "graph_escalations.jsonl", row)
++    run.log("escalation_bridged", state=final_state,
++            termination_reason=row["termination_reason"])
++
++
+ def _execute_run(run: _Run, subgraph: dict, nodes: dict, edges: list, *,
+                  loaded: dict, signer, step_receipts, rungraph, root,
+                  env_base, now_fn, sleep_fn, receipt_ttl_s,
+diff --git a/factory/runrecord.py b/factory/runrecord.py
+index 9a1e348..f2030e1 100644
+--- a/factory/runrecord.py
++++ b/factory/runrecord.py
+@@ -10,6 +10,7 @@ import copy
+ import fcntl
+ import json
+ import os
++import re
+ import time
+ from contextlib import contextmanager
+ from datetime import datetime, timezone
+@@ -19,6 +20,12 @@ from typing import Any, Iterator
+ 
+ SCHEMA = "run-record/v2"
+ 
++# Runner-injected correlation key (canonical name: kernel/capabilities.py).
++# When this env var is present the emitter is running inside a graph-runner
++# node process and every appended record MUST carry the matching graph_run_id.
++GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
++_GRAPH_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}\Z")
++
+ _REQUIRED_FIELDS = frozenset(
+     {
+         "schema",
+@@ -48,6 +55,9 @@ _REQUIRED_FIELDS = frozenset(
+     }
+ )
+ _DERIVED_FIELDS = frozenset({"metered_violation"})
++# Additive, backward-compatible fields: absent in pre-existing records and in
++# emitters that run outside the graph runner.
++_OPTIONAL_FIELDS = frozenset({"graph_run_id"})
+ _AUTH_CLASSES = frozenset(
+     {"oauth_cli", "service_oauth", "local_model", "blocked", None}
+ )
+@@ -136,15 +146,22 @@ def _validate_cost(value: Any) -> bool:
+     return value["lane"] == "metered_forbidden"
+ 
+ 
++def _validate_graph_run_id(value: Any) -> None:
++    if not isinstance(value, str) or _GRAPH_RUN_ID.fullmatch(value) is None:
++        _fail("graph_run_id", "must be a safe identifier string")
++
++
+ def build_record(**fields: Any) -> dict[str, Any]:
+     """Validate fields against the locked v2 contract and return a copy."""
+     actual = set(fields)
+     missing = _REQUIRED_FIELDS - actual
+     if missing:
+         _fail(sorted(missing)[0], "is required")
+-    unknown = actual - _REQUIRED_FIELDS
++    unknown = actual - _REQUIRED_FIELDS - _OPTIONAL_FIELDS
+     if unknown:
+         _fail(sorted(unknown)[0], "is not allowed")
++    if "graph_run_id" in fields:
++        _validate_graph_run_id(fields["graph_run_id"])
+ 
+     if fields["schema"] != SCHEMA:
+         _fail("schema", f"must equal {SCHEMA!r}")
+@@ -193,12 +210,16 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
+     """Validate a complete record, including its derived violation marker."""
+     if not isinstance(record, dict):
+         _fail("record", "must be dict")
+-    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS
++    unknown = set(record) - _REQUIRED_FIELDS - _DERIVED_FIELDS - _OPTIONAL_FIELDS
+     if unknown:
+         _fail(sorted(unknown)[0], "is not allowed")
+ 
+     supplied_violation = record.get("metered_violation")
+-    base_fields = {key: record[key] for key in record if key in _REQUIRED_FIELDS}
++    base_fields = {
++        key: record[key]
++        for key in record
++        if key in _REQUIRED_FIELDS or key in _OPTIONAL_FIELDS
++    }
+     validated = build_record(**base_fields)
+     expected_violation = validated.get("metered_violation")
+     if "metered_violation" in record:
+@@ -212,8 +233,24 @@ def validate_record(record: dict[str, Any]) -> dict[str, Any]:
+ 
+ 
+ def append_record(state_dir: Path, record: dict[str, Any]) -> Path:
+-    """Validate and append one fsynced JSON line under an exclusive lock."""
++    """Validate and append one fsynced JSON line under an exclusive lock.
++
++    Fail-closed identity gate: inside a graph-runner node process (the runner
++    injects GRAPH_RUN_ID_ENV) a record without the matching graph_run_id would
++    fragment the execution's identity, so it is refused, never silently
++    appended.
++    """
+     validated = validate_record(record)
++    required = os.environ.get(GRAPH_RUN_ID_ENV)
++    if required:
++        supplied = validated.get("graph_run_id")
++        if supplied is None:
++            _fail("graph_run_id",
++                  "is required when running under the graph runner "
++                  f"({GRAPH_RUN_ID_ENV} is set)")
++        if supplied != required:
++            _fail("graph_run_id",
++                  f"does not match the runner-injected {GRAPH_RUN_ID_ENV}")
+     state_dir = Path(state_dir)
+     state_dir.mkdir(parents=True, exist_ok=True)
+     path = state_dir / "runs-v2.jsonl"
+@@ -276,8 +313,12 @@ def emit_record(
+     evaluator: dict[str, Any] | None = None,
+     approval: dict[str, Any] | None = None,
+     external_actions_taken: int = 0,
++    graph_run_id: str | None = None,
+ ) -> Path:
+     """Build and append one v2 record with generated identity and timestamp."""
++    if graph_run_id is None:
++        graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
++    optional = {} if graph_run_id is None else {"graph_run_id": graph_run_id}
+     record = build_record(
+         schema=SCHEMA,
+         rev=2,
+@@ -303,6 +344,7 @@ def emit_record(
+         evaluator=evaluator,
+         approval=approval,
+         external_actions_taken=external_actions_taken,
++        **optional,
+     )
+     return append_record(state_dir, record)
+ 
+diff --git a/factory/scores.py b/factory/scores.py
+index 18b9d0c..2789670 100644
+--- a/factory/scores.py
++++ b/factory/scores.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ 
+ import copy
+ import json
++import os
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
+@@ -11,6 +12,8 @@ from kernel.jsonl_store import append_jsonl
+ 
+ 
+ SCHEMA_VERSION = "score-record/v1"
++# Runner-injected correlation key (canonical name: kernel/capabilities.py).
++GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
+ SOURCES = frozenset({"script", "judge", "human"})
+ FIELDS = frozenset(
+     {
+@@ -27,6 +30,8 @@ FIELDS = frozenset(
+     }
+ )
+ TARGET_FIELDS = frozenset({"run_id", "step_id", "node", "department"})
++# Additive, backward-compatible: pre-existing emitters omit it entirely.
++OPTIONAL_TARGET_FIELDS = frozenset({"graph_run_id"})
+ 
+ 
+ def _require_text(field: str, value: Any, *, nullable: bool = False) -> None:
+@@ -67,12 +72,22 @@ def validate_score(record: dict[str, Any]) -> dict[str, Any]:
+     if record["source"] == "judge" and record["judge_model"] is None:
+         raise ValueError("judge_model is required when source is judge")
+     target = record["target_ref"]
+-    if not isinstance(target, dict) or set(target) != TARGET_FIELDS:
+-        raise ValueError("target_ref must contain run_id, step_id, node, department")
++    if (
++        not isinstance(target, dict)
++        or not TARGET_FIELDS <= set(target)
++        or set(target) - TARGET_FIELDS - OPTIONAL_TARGET_FIELDS
++    ):
++        raise ValueError(
++            "target_ref must contain run_id, step_id, node, department "
++            "(graph_run_id optional)"
++        )
+     for field in ("node", "department"):
+         _require_text(f"target_ref.{field}", target[field])
+     for field in ("run_id", "step_id"):
+         _require_text(f"target_ref.{field}", target[field], nullable=True)
++    if "graph_run_id" in target:
++        _require_text("target_ref.graph_run_id", target["graph_run_id"],
++                      nullable=True)
+     try:
+         json.dumps(record, allow_nan=False)
+     except (TypeError, ValueError) as exc:
+@@ -92,6 +107,15 @@ def build_score(
+     target_ref: dict[str, Any],
+     ts: str | None = None,
+ ) -> dict[str, Any]:
++    # Inside a graph-runner node process the injected identity is the default;
++    # an explicitly supplied graph_run_id is left for append_score to gate.
++    env_graph_run_id = os.environ.get(GRAPH_RUN_ID_ENV) or None
++    if (
++        isinstance(target_ref, dict)
++        and "graph_run_id" not in target_ref
++        and env_graph_run_id is not None
++    ):
++        target_ref = {**target_ref, "graph_run_id": env_graph_run_id}
+     return validate_score(
+         {
+             "gen_ai.evaluation.name": name,
+@@ -109,5 +133,19 @@ def build_score(
+ 
+ 
+ def append_score(state_dir: str | Path, record: dict[str, Any]) -> Path:
+-    """Validate and append one score to ``state/scores.jsonl``."""
+-    return append_jsonl(Path(state_dir) / "scores.jsonl", validate_score(record))
++    """Validate and append one score to ``state/scores.jsonl``.
++
++    Fail-closed identity gate: inside a graph-runner node process (the runner
++    injects GRAPH_RUN_ID_ENV) a score whose target_ref is missing or carries a
++    different graph_run_id is refused, never silently appended.
++    """
++    validated = validate_score(record)
++    required = os.environ.get(GRAPH_RUN_ID_ENV) or None
++    if required is not None:
++        supplied = validated["target_ref"].get("graph_run_id")
++        if supplied != required:
++            raise ValueError(
++                "target_ref.graph_run_id must match the runner-injected "
++                + GRAPH_RUN_ID_ENV
++            )
++    return append_jsonl(Path(state_dir) / "scores.jsonl", validated)
+diff --git a/kernel/capabilities.py b/kernel/capabilities.py
+index 0636820..7234598 100644
+--- a/kernel/capabilities.py
++++ b/kernel/capabilities.py
+@@ -30,6 +30,14 @@ _ALLOWED_ENV = frozenset(
+     }
+ )
+ 
++# Kernel marker names injected AFTER the scrub (like OE_DEPARTMENT in
++# factory/launch.py): the graph runner stamps its run identity into every node
++# process so every record stream emitted inside that process carries the same
++# correlation key. These are markers, not credentials, and are deliberately
++# NOT in _ALLOWED_ENV — an ambient value from outside the runner is dropped.
++GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
++GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
++
+ # Capability env widens the strict global allowlist only for a department whose
+ # human-owned charter declares the capability. XDG_RUNTIME_DIR exposes the user
+ # session bus, so it must never become ambient for every confined department.
+diff --git a/kernel/gateways/model.py b/kernel/gateways/model.py
+index 766e7b4..92acc24 100644
+--- a/kernel/gateways/model.py
++++ b/kernel/gateways/model.py
+@@ -7,6 +7,7 @@ from kernel.jsonl_store import append_jsonl
+ import hashlib
+ import json
+ import logging
++import os
+ import re
+ import time
+ from datetime import datetime, timezone
+@@ -31,6 +32,10 @@ def model_binding(prompt, sanitized=True) -> dict:
+ 
+ 
+ SCHEMA_VERSION = "step-telemetry/v1"
++# Runner-injected correlation identity (canonical names:
++# kernel/capabilities.py). Present only inside a graph-runner node process.
++GRAPH_RUN_ID_ENV = "OE_GRAPH_RUN_ID"
++GRAPH_NODE_ID_ENV = "OE_GRAPH_NODE_ID"
+ AUTH_ROUTES = frozenset(
+     {"oauth_cli", "service_oauth", "local_model", "vault_api_key", "blocked"}
+ )
+@@ -185,6 +190,7 @@ def call_model(
+     telemetry_path=None,
+     department=None,
+     run_id=None,
++    graph_run_id=None,
+     step_id=None,
+     node=None,
+     operation_name="chat",
+@@ -215,6 +221,7 @@ def call_model(
+     safe_engine = None
+     safe_department = None
+     safe_run_id = None
++    safe_graph_run_id = None
+     safe_step_id = None
+     safe_node = None
+     safe_auth_route = "blocked"
+@@ -233,6 +240,25 @@ def call_model(
+         safe_run_id = _optional_identifier(run_id, "run_id")
+         safe_step_id = _optional_identifier(step_id, "step_id")
+         safe_node = _optional_identifier(node, "node")
++        # Graph-runner identity: inside a runner-executed node the injected
++        # env value is authoritative — a caller-supplied mismatch refuses the
++        # call BEFORE the provider is invoked (fail-closed, never silent null).
++        safe_graph_run_id = _optional_identifier(graph_run_id, "graph_run_id")
++        env_graph_run_id = _optional_identifier(
++            os.environ.get(GRAPH_RUN_ID_ENV) or None, GRAPH_RUN_ID_ENV
++        )
++        if env_graph_run_id is not None:
++            if safe_graph_run_id is not None and safe_graph_run_id != env_graph_run_id:
++                safe_graph_run_id = env_graph_run_id
++                raise ValueError(
++                    "graph_run_id does not match the runner-injected "
++                    + GRAPH_RUN_ID_ENV
++                )
++            safe_graph_run_id = env_graph_run_id
++        if safe_node is None:
++            safe_node = _optional_identifier(
++                os.environ.get(GRAPH_NODE_ID_ENV) or None, GRAPH_NODE_ID_ENV
++            )
+         safe_auth_route = _optional_identifier(auth_route, "auth_route")
+         if safe_auth_route not in AUTH_ROUTES:
+             safe_auth_route = "blocked"
+@@ -352,6 +378,7 @@ def call_model(
+         "loopfactory.price.effective_date": price_effective_date,
+         "loopfactory.department": safe_department,
+         "loopfactory.run_id": safe_run_id,
++        "loopfactory.graph_run_id": safe_graph_run_id,
+         "loopfactory.step_id": safe_step_id,
+         "loopfactory.node": safe_node,
+         "loopfactory.telemetry.source": (
+diff --git a/kernel/lock_service.py b/kernel/lock_service.py
+index 661db85..26beac8 100644
+--- a/kernel/lock_service.py
++++ b/kernel/lock_service.py
+@@ -194,6 +194,7 @@ class LockService:
+         *,
+         runner,
+         run_id=None,
++        graph_run_id=None,
+         step_id=None,
+         node=None,
+         operation_name="chat",
+@@ -211,6 +212,7 @@ class LockService:
+                 telemetry_path=self.telemetry_path,
+                 department=self.department,
+                 run_id=run_id,
++                graph_run_id=graph_run_id,
+                 step_id=step_id,
+                 node=node,
+                 operation_name=operation_name,
+diff --git a/tests/test_escalation_bridge.py b/tests/test_escalation_bridge.py
+new file mode 100644
+index 0000000..d02a936
+--- /dev/null
++++ b/tests/test_escalation_bridge.py
+@@ -0,0 +1,291 @@
++"""R2 — runner-to-manager escalation bridge.
++
++A terminal graph `escalated` (or `killed`) state must never vanish into the
++void: the runner appends a durable, manager-readable escalation record to
++department state; the manager's next cycle senses it, raises a breach
++finding, and delivers exactly one human-in-the-loop outbox item. Report +
++escalate only — the bridge grants no new authority and no graph transition
++advances past the failure.
++"""
++import importlib.util
++import json
++from pathlib import Path
++
++from factory import human_in_the_loop as hil
++from factory import manager
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("bridge_kernel_receipts", "kernel/receipts.py")
++REL = _load("bridge_release", "factory/release.py")
++RUN = _load("bridge_runner", "factory/runner.py")
++
++SIGNER = R.LocalSigner(key="test-key")
++
++ESCALATING_NODE = """\
++import json
++print(json.dumps({"status": "broken"}))
++"""
++
++VIOLATOR_NODE = """\
++import json
++print(json.dumps({"status": "ok", "external_actions_taken": 1}))
++"""
++
++OK_NODE = """\
++import json
++print(json.dumps({"status": "ok"}))
++"""
++
++RECORD_NODE = """\
++import json, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++with (state / "markers.txt").open("a", encoding="utf-8") as fh:
++    fh.write("record\\n")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def _node(node_id, impl, on_fail="escalate", max_retries=0):
++    return {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": max_retries, "backoff_s": 0,
++                           "on_fail": on_fail},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++
++
++def _two_node_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/sense.py"),
++                      _node("N2", "runtime/record.py")],
++            "edges": [
++                {"from": "N1", "to": "N2", "kind": "normal",
++                 "when": "receipt.status == 'ok'"},
++                {"from": "N1", "kind": "escalation",
++                 "when": "receipt.status != 'ok'"},
++                {"from": "N2", "kind": "terminal", "when": "true"},
++            ],
++        }],
++    }
++
++
++def _make_dept(tmp_path, scripts, manifest):
++    dept = tmp_path / "departments" / "demo"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "charter.yaml").write_text(
++        "department: demo\nowner: test-owner\nautonomy_state: shadow\n"
++        "immutable_safety_invariants:\n  heal_may_not_modify: [x]\n",
++        encoding="utf-8")
++    for name, src in scripts.items():
++        (dept / "runtime" / name).write_text(src, encoding="utf-8")
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    h = REL.pin_release(dept, dept / "releases", source_ref="testsha")
++    REL.flip_current(dept / "releases", h)
++    return dept
++
++
++def _run(dept, tmp_path, fingerprint="trigger-1"):
++    return RUN.run_graph(dept, trigger_fingerprint=fingerprint, signer=SIGNER,
++                         root=tmp_path, sleep_fn=lambda s: None)
++
++
++def _read_jsonl(path):
++    path = Path(path)
++    if not path.exists():
++        return []
++    return [json.loads(line)
++            for line in path.read_text(encoding="utf-8").splitlines()
++            if line.strip()]
++
++
++# --------------------------------------------------------------------------- #
++# The runner writes the bridge record on terminal escalated/killed only
++# --------------------------------------------------------------------------- #
++
++def test_escalated_run_writes_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    rows = _read_jsonl(dept / "state" / "graph_escalations.jsonl")
++    assert len(rows) == 1
++    row = rows[0]
++    assert row["run_id"] == result["run_id"]
++    assert row["graph_run_id"] == result["run_id"]
++    assert row["state"] == "escalated"
++    assert row["department"] == "demo"
++    assert row["loop_id"] == "SG-RUN"
++    assert row["termination_reason"] == "escalation_edge"
++
++
++def test_killed_run_writes_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": VIOLATOR_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "killed"
++    rows = _read_jsonl(dept / "state" / "graph_escalations.jsonl")
++    assert len(rows) == 1
++    assert rows[0]["state"] == "killed"
++    assert rows[0]["termination_reason"] == "shadow_violation"
++
++
++def test_done_run_writes_no_bridge_record(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": OK_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "done"
++    assert not (dept / "state" / "graph_escalations.jsonl").exists()
++
++
++# --------------------------------------------------------------------------- #
++# The manager senses the bridge record and raises a breach finding
++# --------------------------------------------------------------------------- #
++
++def test_sense_graph_escalations_replays_open_and_resolved(tmp_path):
++    state = tmp_path / "state"
++    state.mkdir()
++    path = state / "graph_escalations.jsonl"
++    rows = [
++        {"run_id": "run-a", "state": "escalated", "loop_id": "SG",
++         "termination_reason": "no_edge_satisfied", "marker": "open"},
++        {"run_id": "run-b", "state": "killed", "loop_id": "SG",
++         "termination_reason": "shadow_violation", "marker": "open"},
++        {"run_id": "run-b", "marker": "resolved"},
++    ]
++    path.write_text("".join(json.dumps(r) + "\n" for r in rows),
++                    encoding="utf-8")
++    sensed = manager.sense_graph_escalations(state)
++    assert sensed["graph_escalation_count"] == 1
++    assert sensed["graph_escalations"][0]["run_id"] == "run-a"
++    assert sensed["graph_escalations_unreadable"] is False
++
++
++def test_sense_graph_escalations_unreadable_is_flagged(tmp_path):
++    state = tmp_path / "state"
++    state.mkdir()
++    (state / "graph_escalations.jsonl").write_text(
++        "{not json\n", encoding="utf-8")
++    sensed = manager.sense_graph_escalations(state)
++    assert sensed["graph_escalations_unreadable"] is True
++
++
++def test_compare_raises_breach_per_open_graph_escalation():
++    sensed = {
++        "graph_escalations": [
++            {"run_id": "run-a", "state": "escalated", "loop_id": "SG",
++             "termination_reason": "no_edge_satisfied"},
++        ],
++    }
++    findings = manager.compare(sensed)
++    breaches = [f for f in findings if f["code"] == "graph_run_escalated"]
++    assert len(breaches) == 1
++    assert breaches[0]["severity"] == "breach"
++    assert breaches[0]["subject"] == "run-a"
++    assert "run-a" in breaches[0]["detail"]
++
++
++def test_compare_raises_breach_when_escalation_stream_unreadable():
++    findings = manager.compare({"graph_escalations_unreadable": True})
++    assert any(f["code"] == "graph_escalations_unreadable"
++               and f["severity"] == "breach" for f in findings)
++
++
++# --------------------------------------------------------------------------- #
++# ACCEPTANCE: force a predicate failure -> exactly one terminal graph
++# escalation + one manager breach finding on the next cycle + one outbox
++# item; no graph transition advances.
++# --------------------------------------------------------------------------- #
++
++def test_predicate_failure_reaches_manager_and_outbox_exactly_once(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    assert result["state"] == "escalated"
++    state_dir = dept / "state"
++
++    # exactly one terminal graph escalation, and NO transition advanced:
++    # the only receipt-bearing row is the escalation exit — N2 never ran.
++    run_state = json.loads(
++        (state_dir / "graph_runs" / result["run_id"] / "run_state.json")
++        .read_text(encoding="utf-8"))
++    assert run_state["state"] == "escalated"
++    assert [(t["from"], t["to"], t["kind"]) for t in run_state["transitions"]] \
++        == [("N1", None, "escalation")]
++    assert "N2" not in run_state["nodes"]
++    assert not (state_dir / "markers.txt").exists()
++    assert len(_read_jsonl(state_dir / "graph_escalations.jsonl")) == 1
++
++    # next manager cycle: one breach finding + one outbox item
++    outbox = tmp_path / "outbox.jsonl"
++
++    def escalate_fn(issue, context=None):
++        hil.escalate("demo", issue, outbox, context=context)
++
++    report = manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    breaches = [f for f in report["findings"]
++                if f["code"] == "graph_run_escalated"]
++    assert len(breaches) == 1
++    state_json = json.loads(
++        (state_dir / "STATE.json").read_text(encoding="utf-8"))
++    assert any(f["code"] == "graph_run_escalated"
++               for f in state_json["open_findings"])
++    packets = [row for row in _read_jsonl(outbox)
++               if row.get("kind") == "escalation"
++               and "graph_run_escalated" in row.get("issue", "")]
++    assert len(packets) == 1
++    assert result["run_id"] in packets[0]["issue"]
++
++    # a second cycle must NOT deliver a duplicate outbox item
++    manager.run_manager_cycle(
++        state_dir, escalate_fn=escalate_fn, department="demo", dept_dir=dept)
++    packets = [row for row in _read_jsonl(outbox)
++               if row.get("kind") == "escalation"
++               and "graph_run_escalated" in row.get("issue", "")]
++    assert len(packets) == 1
++
++
++def test_resolved_escalation_clears_the_finding(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": ESCALATING_NODE, "record.py": RECORD_NODE},
++        _two_node_manifest())
++    result = _run(dept, tmp_path)
++    state_dir = dept / "state"
++    with (state_dir / "graph_escalations.jsonl").open(
++            "a", encoding="utf-8") as fh:
++        fh.write(json.dumps({"run_id": result["run_id"],
++                             "marker": "resolved"}) + "\n")
++    report = manager.run_manager_cycle(
++        state_dir, department="demo", dept_dir=dept)
++    assert not any(f["code"] == "graph_run_escalated"
++                   for f in report["findings"])
+diff --git a/tests/test_run_identity.py b/tests/test_run_identity.py
+new file mode 100644
+index 0000000..b4d530b
+--- /dev/null
++++ b/tests/test_run_identity.py
+@@ -0,0 +1,468 @@
++"""R1 — unified execution identity across the four record streams.
++
++One logical graph execution must be joinable by a single correlation key: the
++graph runner's run_id. The runner injects it into every node process as
++OE_GRAPH_RUN_ID (plus OE_GRAPH_NODE_ID); runrecord/scores/model-telemetry
++emitters pick it up (explicitly or from the env) and rollup joins on it.
++Missing or mismatched identity where required is a fail-closed ValueError,
++never a silent null.
++"""
++import importlib.util
++import json
++import os
++import sqlite3
++import sys
++from pathlib import Path
++
++import pytest
++
++from factory import rollup, runrecord, scores
++from kernel import capabilities, lock_service, receipts
++from kernel.gateways import model as model_gateway
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _load(name, rel):
++    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++R = _load("identity_kernel_receipts", "kernel/receipts.py")
++REL = _load("identity_release", "factory/release.py")
++RUN = _load("identity_runner", "factory/runner.py")
++
++SIGNER = R.LocalSigner(key="test-key")
++GRAPH_ENV = "OE_GRAPH_RUN_ID"
++NODE_ENV = "OE_GRAPH_NODE_ID"
++
++
++def _read_jsonl(path):
++    return [
++        json.loads(line)
++        for line in Path(path).read_text(encoding="utf-8").splitlines()
++        if line.strip()
++    ]
++
++
++# --------------------------------------------------------------------------- #
++# The env-name contract is shared across modules; drift would silently break
++# the identity chain, so the constants must agree everywhere they exist.
++# --------------------------------------------------------------------------- #
++
++def test_graph_env_names_agree_across_modules():
++    assert capabilities.GRAPH_RUN_ID_ENV == GRAPH_ENV
++    assert capabilities.GRAPH_NODE_ID_ENV == NODE_ENV
++    assert runrecord.GRAPH_RUN_ID_ENV == GRAPH_ENV
++    assert scores.GRAPH_RUN_ID_ENV == GRAPH_ENV
++    assert model_gateway.GRAPH_RUN_ID_ENV == GRAPH_ENV
++    assert model_gateway.GRAPH_NODE_ID_ENV == NODE_ENV
++    assert RUN.GRAPH_RUN_ID_ENV == GRAPH_ENV
++    assert RUN.GRAPH_NODE_ID_ENV == NODE_ENV
++
++
++# --------------------------------------------------------------------------- #
++# runrecord (#13 stream): optional graph_run_id, required under the runner
++# --------------------------------------------------------------------------- #
++
++def test_runrecord_graph_run_id_round_trips(tmp_path):
++    runrecord.emit_record(
++        tmp_path, department="demo", node="n1", status="ok",
++        graph_run_id="SG-RUN-abc123")
++    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
++    assert rows[0]["graph_run_id"] == "SG-RUN-abc123"
++    runrecord.validate_record(rows[0])  # derived field re-validates
++
++
++def test_runrecord_without_graph_run_id_stays_backward_compatible(tmp_path):
++    """Existing podcast emitters keep working: no env, no field, no change."""
++    runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
++    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
++    assert "graph_run_id" not in rows[0]
++    runrecord.validate_record(rows[0])
++
++
++def test_runrecord_rejects_unsafe_graph_run_id(tmp_path):
++    with pytest.raises(ValueError):
++        runrecord.emit_record(
++            tmp_path, department="demo", node="n1", status="ok",
++            graph_run_id="bad value with spaces")
++    with pytest.raises(ValueError):
++        runrecord.emit_record(
++            tmp_path, department="demo", node="n1", status="ok",
++            graph_run_id=7)
++    assert not (tmp_path / "runs-v2.jsonl").exists()
++
++
++def test_runrecord_under_runner_requires_graph_run_id(tmp_path, monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-required")
++    record = runrecord.build_record(
++        schema=runrecord.SCHEMA, rev=2, run_id="wrapper-1", department="demo",
++        node="n1", epoch=0, ts="2026-08-02T00:00:00+00:00", attempt=1,
++        round=None, release=None, trigger=None, engine=None, model=None,
++        auth_class=None, usage=None, cost=None, duration_ms=None, status="ok",
++        errors=[], artifacts=[], receipts=[], evaluator=None, approval=None,
++        external_actions_taken=0)
++    with pytest.raises(ValueError, match="graph_run_id"):
++        runrecord.append_record(tmp_path, record)
++    assert not (tmp_path / "runs-v2.jsonl").exists()
++
++
++def test_runrecord_under_runner_rejects_mismatched_graph_run_id(
++        tmp_path, monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-truth")
++    with pytest.raises(ValueError, match="graph_run_id"):
++        runrecord.emit_record(
++            tmp_path, department="demo", node="n1", status="ok",
++            graph_run_id="SG-RUN-forged")
++    assert not (tmp_path / "runs-v2.jsonl").exists()
++
++
++def test_emit_record_defaults_graph_run_id_from_runner_env(
++        tmp_path, monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-env")
++    runrecord.emit_record(tmp_path, department="demo", node="n1", status="ok")
++    rows = _read_jsonl(tmp_path / "runs-v2.jsonl")
++    assert rows[0]["graph_run_id"] == "SG-RUN-env"
++
++
++# --------------------------------------------------------------------------- #
++# kernel telemetry (#12 stream): rows gain graph_run_id + node under a runner
++# --------------------------------------------------------------------------- #
++
++def _service(tmp_path):
++    return lock_service.LockService(
++        receipts.LocalSigner(key="test"),
++        budget_ledger=tmp_path / "state" / "kernel" / "budget.jsonl",
++        freq_ledger=tmp_path / "state" / "kernel" / "frequency.jsonl",
++        nonce_ledger=tmp_path / "state" / "kernel" / "nonces.jsonl",
++        telemetry_path=tmp_path / "state" / "telemetry.jsonl",
++    )
++
++
++def test_model_telemetry_row_carries_explicit_graph_run_id(tmp_path):
++    service = _service(tmp_path)
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model(
++        "sanitized", issued["receipt"], runner=lambda _p: "ok",
++        node="n1", graph_run_id="SG-RUN-explicit")
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
++    assert row["loopfactory.graph_run_id"] == "SG-RUN-explicit"
++    assert row["loopfactory.node"] == "n1"
++
++
++def test_model_telemetry_defaults_identity_from_runner_env(
++        tmp_path, monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-env")
++    monkeypatch.setenv(NODE_ENV, "n-env")
++    service = _service(tmp_path)
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
++    assert row["loopfactory.graph_run_id"] == "SG-RUN-env"
++    assert row["loopfactory.node"] == "n-env"
++
++
++def test_model_telemetry_mismatched_graph_run_id_fails_closed(
++        tmp_path, monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-truth")
++    service = _service(tmp_path)
++    issued = service.request_model("sanitized", sanitized=True)
++    invoked = []
++
++    def runner(_prompt):
++        invoked.append(True)
++        return "never"
++
++    with pytest.raises(lock_service.LockServiceDown):
++        service.call_model(
++            "sanitized", issued["receipt"], runner=runner,
++            graph_run_id="SG-RUN-forged")
++    assert invoked == []  # refused BEFORE provider invocation
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
++    assert row["error.type"] == "ValueError"
++    # the runner-injected identity is authoritative in the recorded row
++    assert row["loopfactory.graph_run_id"] == "SG-RUN-truth"
++
++
++def test_model_telemetry_without_runner_env_stays_null(tmp_path):
++    service = _service(tmp_path)
++    issued = service.request_model("sanitized", sanitized=True)
++    service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++    row = _read_jsonl(tmp_path / "state" / "telemetry.jsonl")[0]
++    assert row["loopfactory.graph_run_id"] is None
++
++
++# --------------------------------------------------------------------------- #
++# scores (#12 stream): target_ref gains graph_run_id
++# --------------------------------------------------------------------------- #
++
++def _score_kwargs(target_ref):
++    return dict(
++        name="qa", value=1.0, label="pass", explanation="ok", source="script",
++        judge_model=None, config_version="v1", target_ref=target_ref)
++
++
++def test_score_target_ref_accepts_graph_run_id(tmp_path):
++    record = scores.build_score(**_score_kwargs({
++        "run_id": None, "step_id": None, "node": "n1", "department": "demo",
++        "graph_run_id": "SG-RUN-abc"}))
++    scores.append_score(tmp_path, record)
++    row = _read_jsonl(tmp_path / "scores.jsonl")[0]
++    assert row["target_ref"]["graph_run_id"] == "SG-RUN-abc"
++
++
++def test_score_target_ref_without_graph_run_id_stays_backward_compatible(
++        tmp_path):
++    record = scores.build_score(**_score_kwargs({
++        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}))
++    scores.append_score(tmp_path, record)
++    assert "graph_run_id" not in _read_jsonl(tmp_path / "scores.jsonl")[0]["target_ref"]
++
++
++def test_build_score_defaults_graph_run_id_from_runner_env(monkeypatch):
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-env")
++    record = scores.build_score(**_score_kwargs({
++        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}))
++    assert record["target_ref"]["graph_run_id"] == "SG-RUN-env"
++
++
++def test_append_score_under_runner_requires_matching_graph_run_id(
++        tmp_path, monkeypatch):
++    record = scores.build_score(**_score_kwargs({
++        "run_id": None, "step_id": None, "node": "n1", "department": "demo",
++        "graph_run_id": "SG-RUN-forged"}))
++    monkeypatch.setenv(GRAPH_ENV, "SG-RUN-truth")
++    with pytest.raises(ValueError, match="graph_run_id"):
++        scores.append_score(tmp_path, record)
++    bare = scores.validate_score({**record, "target_ref": {
++        "run_id": None, "step_id": None, "node": "n1", "department": "demo"}})
++    with pytest.raises(ValueError, match="graph_run_id"):
++        scores.append_score(tmp_path, bare)
++    assert not (tmp_path / "scores.jsonl").exists()
++
++
++# --------------------------------------------------------------------------- #
++# rollup (#12 store): the join key lands in run/step_telemetry/score tables
++# --------------------------------------------------------------------------- #
++
++def test_rollup_carries_graph_run_id_columns(tmp_path):
++    state = tmp_path / "departments" / "demo" / "state"
++    state.mkdir(parents=True)
++    (state / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    gid = "SG-RUN-" + "a" * 8
++    (state / "runs.jsonl").write_text(json.dumps({
++        "ts": "2026-08-02T00:00:00+00:00", "event": "run_done",
++        "run_id": gid, "graph_run_id": gid, "loop_id": "SG-RUN",
++    }) + "\n", encoding="utf-8")
++    (state / "runs-v2.jsonl").write_text(json.dumps({
++        "schema": "run-record/v2", "rev": 2, "run_id": "wrapper-1",
++        "graph_run_id": gid, "department": "demo", "node": "n1", "epoch": 0,
++        "ts": "2026-08-02T00:00:01+00:00", "attempt": 1, "round": None,
++        "release": None, "trigger": None, "engine": None, "model": None,
++        "auth_class": None, "usage": None, "cost": None, "duration_ms": None,
++        "status": "ok", "errors": [], "artifacts": [], "receipts": [],
++        "evaluator": None, "approval": None, "external_actions_taken": 0,
++    }) + "\n", encoding="utf-8")
++    (state / "telemetry.jsonl").write_text(json.dumps({
++        "schema_version": "step-telemetry/v1",
++        "ts": "2026-08-02T00:00:02+00:00", "gen_ai.operation.name": "chat",
++        "gen_ai.provider.name": None, "gen_ai.request.model": None,
++        "gen_ai.response.model": None, "gen_ai.usage.input_tokens": None,
++        "gen_ai.usage.output_tokens": None,
++        "gen_ai.response.finish_reasons": None, "duration_ms": 1,
++        "error.type": None, "loopfactory.cost_usd": None,
++        "loopfactory.auth.route": "blocked", "loopfactory.engine": None,
++        "loopfactory.price.schema_version": None,
++        "loopfactory.price.effective_date": None,
++        "loopfactory.department": "demo", "loopfactory.run_id": None,
++        "loopfactory.graph_run_id": gid, "loopfactory.step_id": None,
++        "loopfactory.node": "n1", "loopfactory.telemetry.source": "legacy_null",
++        "estimated": False,
++    }) + "\n", encoding="utf-8")
++    (state / "scores.jsonl").write_text(json.dumps({
++        "gen_ai.evaluation.name": "qa", "gen_ai.evaluation.score.value": 1.0,
++        "gen_ai.evaluation.score.label": "pass",
++        "gen_ai.evaluation.explanation": "ok", "source": "script",
++        "judge_model": None, "config_version": "v1",
++        "target_ref": {"run_id": None, "step_id": None, "node": "n1",
++                       "department": "demo", "graph_run_id": gid},
++        "ts": "2026-08-02T00:00:03+00:00",
++        "schema_version": "score-record/v1",
++    }) + "\n", encoding="utf-8")
++
++    result = rollup.rebuild(tmp_path)
++    assert result["complete"], result
++    bundle = rollup.graph_run_bundle(result["database"], gid)
++    assert {row["run_id"] for row in bundle["run"]} == {gid, "wrapper-1"}
++    assert len(bundle["step_telemetry"]) == 1
++    assert bundle["step_telemetry"][0]["graph_run_id"] == gid
++    assert len(bundle["score"]) == 1
++    assert bundle["score"][0]["graph_run_id"] == gid
++
++
++# --------------------------------------------------------------------------- #
++# runner: identity is injected into every node process env
++# --------------------------------------------------------------------------- #
++
++def _node(node_id, impl, on_fail="escalate", max_retries=0):
++    return {
++        "id": node_id,
++        "impl": impl,
++        "runtime_mode": "script",
++        "action_class": "observe",
++        "inputs": {"type": "object"},
++        "outputs": {"type": "object", "required": ["status"],
++                    "properties": {"status": {"type": "string"}}},
++        "receipt_schema": {"type": "object", "required": ["status"],
++                           "properties": {"status": {"type": "string"}}},
++        "failure_policy": {"max_retries": max_retries, "backoff_s": 0,
++                           "on_fail": on_fail},
++        "concept_ref": "C1",
++        "interview_ref": "Q1",
++    }
++
++
++def _one_node_manifest():
++    return {
++        "schema_version": 2,
++        "subgraphs": [{
++            "id": "SG-RUN",
++            "concept_refs": ["C1"],
++            "entry": "N1",
++            "nodes": [_node("N1", "runtime/sense.py")],
++            "edges": [{"from": "N1", "kind": "terminal",
++                       "when": "receipt.status == 'ok'"}],
++        }],
++    }
++
++
++def _make_dept(tmp_path, scripts, manifest):
++    dept = tmp_path / "departments" / "demo"
++    (dept / "runtime").mkdir(parents=True)
++    (dept / "charter.yaml").write_text(
++        "department: demo\nowner: test-owner\nautonomy_state: shadow\n"
++        "immutable_safety_invariants:\n  heal_may_not_modify: [x]\n",
++        encoding="utf-8")
++    for name, src in scripts.items():
++        (dept / "runtime" / name).write_text(src, encoding="utf-8")
++    (dept / "subgraphs.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    h = REL.pin_release(dept, dept / "releases", source_ref="testsha")
++    REL.flip_current(dept / "releases", h)
++    return dept
++
++
++ENV_CAPTURE = """\
++import json, os, pathlib
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++(state / "envcap.json").write_text(json.dumps({
++    "graph_run_id": os.environ.get("OE_GRAPH_RUN_ID"),
++    "node_id": os.environ.get("OE_GRAPH_NODE_ID"),
++}), encoding="utf-8")
++print(json.dumps({"status": "ok"}))
++"""
++
++
++def test_runner_injects_graph_identity_into_node_env(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    captured = json.loads(
++        (dept / "state" / "envcap.json").read_text(encoding="utf-8"))
++    assert captured == {"graph_run_id": result["run_id"], "node_id": "N1"}
++
++
++def test_runner_records_carry_graph_run_id(tmp_path):
++    dept = _make_dept(tmp_path, {"sense.py": ENV_CAPTURE}, _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    rows = _read_jsonl(dept / "state" / "runs.jsonl")
++    stamped = [r for r in rows if r.get("run_id") == result["run_id"]]
++    assert stamped and all(
++        r.get("graph_run_id") == result["run_id"] for r in stamped)
++
++
++# --------------------------------------------------------------------------- #
++# ACCEPTANCE: one synthetic graph execution -> one joined record set across
++# runs.jsonl, runs-v2.jsonl, telemetry.jsonl, scores.jsonl, queryable by the
++# single graph run_id in rollup.sqlite3.
++# --------------------------------------------------------------------------- #
++
++EMITTER_NODE = """\
++import json, pathlib, sys
++sys.path.insert(0, {root!r})
++from factory import runrecord, scores
++from kernel import lock_service, receipts
++
++state = pathlib.Path(__file__).resolve().parents[1] / "state"
++state.mkdir(parents=True, exist_ok=True)
++
++# 1) #13 wrapper summary — identity comes from the runner-injected env
++runrecord.emit_record(state, department="demo", node="N1", status="ok")
++
++# 2) #12 telemetry — identity comes from the runner-injected env
++service = lock_service.LockService(
++    receipts.LocalSigner(key="node-key"),
++    budget_ledger=state / "kernel" / "budget.jsonl",
++    freq_ledger=state / "kernel" / "frequency.jsonl",
++    nonce_ledger=state / "kernel" / "nonces.jsonl",
++    telemetry_path=state / "telemetry.jsonl",
++)
++issued = service.request_model("sanitized", sanitized=True)
++service.call_model("sanitized", issued["receipt"], runner=lambda _p: "ok")
++
++# 3) #12 score — identity comes from the runner-injected env
++scores.append_score(state, scores.build_score(
++    name="qa", value=1.0, label="pass", explanation="ok", source="script",
++    judge_model=None, config_version="v1",
++    target_ref={{"run_id": None, "step_id": None, "node": "N1",
++                 "department": "demo"}}))
++
++print(json.dumps({{"status": "ok"}}))
++"""
++
++
++def test_one_graph_execution_yields_single_joined_record_set(tmp_path):
++    dept = _make_dept(
++        tmp_path, {"sense.py": EMITTER_NODE.format(root=str(ROOT))},
++        _one_node_manifest())
++    result = RUN.run_graph(dept, trigger_fingerprint="t1", signer=SIGNER,
++                           root=tmp_path, sleep_fn=lambda s: None)
++    assert result["state"] == "done"
++    gid = result["run_id"]
++    state = dept / "state"
++
++    # every stream carries the SAME graph run id
++    v2 = _read_jsonl(state / "runs-v2.jsonl")
++    assert len(v2) == 1 and v2[0]["graph_run_id"] == gid
++    telemetry = _read_jsonl(state / "telemetry.jsonl")
++    assert len(telemetry) == 1
++    assert telemetry[0]["loopfactory.graph_run_id"] == gid
++    assert telemetry[0]["loopfactory.node"] == "N1"
++    score_rows = _read_jsonl(state / "scores.jsonl")
++    assert len(score_rows) == 1
++    assert score_rows[0]["target_ref"]["graph_run_id"] == gid
++    graph_rows = [r for r in _read_jsonl(state / "runs.jsonl")
++                  if r.get("graph_run_id") == gid]
++    assert graph_rows
++
++    # the rollup joins all four streams on that one key
++    (state / "STATE.json").write_text(
++        json.dumps({"epoch": 0, "status": "ok", "ok": True}), encoding="utf-8")
++    built = rollup.rebuild(tmp_path)
++    assert built["complete"], built
++    bundle = rollup.graph_run_bundle(built["database"], gid)
++    run_ids = {row["run_id"] for row in bundle["run"]}
++    assert gid in run_ids  # the graph run itself (runs.jsonl)
++    assert v2[0]["run_id"] in run_ids  # the wrapper summary (runs-v2.jsonl)
++    assert all(row["graph_run_id"] == gid or row["run_id"] == gid
++               for row in bundle["run"])
++    assert [row["graph_run_id"] for row in bundle["step_telemetry"]] == [gid]
++    assert [row["graph_run_id"] for row in bundle["score"]] == [gid]

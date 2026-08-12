@@ -1,0 +1,83 @@
+diff --git a/scripts/run_podcast_loop.sh b/scripts/run_podcast_loop.sh
+index 6897e2a..a408cd1 100755
+--- a/scripts/run_podcast_loop.sh
++++ b/scripts/run_podcast_loop.sh
+@@ -119,18 +119,30 @@ fi
+ # the worker drives the funnel in priority order (production unstick > overdue
+ # bookings > expired holds > nudges > new outreach). A failed chain DEGRADES —
+ # the duty says so and the lane still runs — it never blocks guest acquisition.
++# funnel_status.py report_exit_code contract: 0 = green, 2 = findings, else =
++# failure. Codes 0 and 2 are usable only when the snapshot is non-empty.
+ FOCUS_RC=0
+ FOCUS_DUTY=""
+ if [ "$LOOP" = "guest-acquisition" ] && [ -f "$REPO/scripts/funnel_evidence.py" ]; then
+   FUNNEL_SNAPSHOT="$REPO/episodes/receipts/funnel-status-latest.json"
+   "$PYTHON_BIN" "$REPO/scripts/funnel_status.py" --json --output "$FUNNEL_SNAPSHOT" >> "$LOG" 2>&1 || FOCUS_RC=$?
+-  if [ "$FOCUS_RC" -eq 0 ]; then
++  FOCUS_STATUS_FINDINGS=0
++  if [ -s "$FUNNEL_SNAPSHOT" ] && { [ "$FOCUS_RC" -eq 0 ] || [ "$FOCUS_RC" -eq 2 ]; }; then
++    if [ "$FOCUS_RC" -eq 2 ]; then
++      FOCUS_STATUS_FINDINGS=1
++    fi
++    FOCUS_RC=0
+     "$PYTHON_BIN" "$REPO/scripts/funnel_evidence.py" focus \
+       --state-dir "$REPO/episodes" \
+       --funnel-json "$FUNNEL_SNAPSHOT" >> "$LOG" 2>&1 || FOCUS_RC=$?
++  elif [ "$FOCUS_RC" -eq 0 ]; then
++    FOCUS_RC=1
+   fi
+   if [ "$FOCUS_RC" -eq 0 ] && [ -f "$REPO/episodes/FOCUS-LIST.json" ]; then
+     FOCUS_DUTY="PRIORITY DUTY (funnel focus list, owner-wired 2026-08-03): read ${REPO}/episodes/FOCUS-LIST.json FIRST and work its items strictly in priority order before any other runbook ordering; it encodes the charter goals (hopper 6 with >=1 finished interview always) and the current mode's clocks. Respect every hold context exactly as written. Cite each focus item you acted on (or why you could not) in the receipt. "
++    if [ "$FOCUS_STATUS_FINDINGS" -eq 1 ]; then
++      FOCUS_DUTY="${FOCUS_DUTY}(Funnel red findings present — the focus list is the repair order.) "
++    fi
+   else
+     FOCUS_DUTY="NOTE: the funnel focus chain FAILED this run (rc=${FOCUS_RC}); no FOCUS-LIST.json. Fall back to runbook ordering, say so in the receipt, and file it in the escalation file so the manager heals the chain. "
+   fi
+diff --git a/tests/test_run_podcast_loop_card_lane.py b/tests/test_run_podcast_loop_card_lane.py
+index a6364f7..29a03ad 100644
+--- a/tests/test_run_podcast_loop_card_lane.py
++++ b/tests/test_run_podcast_loop_card_lane.py
+@@ -33,10 +33,42 @@ def assert_all_loops_use_card_lane(script):
+     assert set(pattern.split("|")) == CARD_LOOPS
+ 
+ 
++def guest_acquisition_preflight(script=SCRIPT):
++    return script.split("# Guest-acquisition preflight:", 1)[1].split(
++        "\nTG_FAILED=0", 1
++    )[0]
++
++
++def assert_findings_tolerant_preflight(script):
++    preflight = guest_acquisition_preflight(script)
++    assert (
++        'if [ -s "$FUNNEL_SNAPSHOT" ] && { [ "$FOCUS_RC" -eq 0 ] || '
++        '[ "$FOCUS_RC" -eq 2 ]; }; then'
++    ) in preflight
++    assert 'FOCUS_STATUS_FINDINGS=1' in preflight
++    assert 'FOCUS_RC=0\n    "$PYTHON_BIN" "$REPO/scripts/funnel_evidence.py" focus' in preflight
++    assert 'elif [ "$FOCUS_RC" -eq 0 ]; then\n    FOCUS_RC=1' in preflight
++
++
+ def test_all_loops_use_card_lane():
+     assert_all_loops_use_card_lane(SCRIPT)
+ 
+ 
++def test_guest_acquisition_preflight_accepts_findings_snapshot():
++    assert_findings_tolerant_preflight(SCRIPT)
++
++
++def test_guest_acquisition_preflight_guard_rejects_strict_rc_zero_gate():
++    poisoned_script = SCRIPT.replace(
++        'if [ -s "$FUNNEL_SNAPSHOT" ] && { [ "$FOCUS_RC" -eq 0 ] || '
++        '[ "$FOCUS_RC" -eq 2 ]; }; then',
++        'if [ "$FOCUS_RC" -eq 0 ]; then',
++        1,
++    )
++    with pytest.raises(AssertionError):
++        assert_findings_tolerant_preflight(poisoned_script)
++
++
+ def test_card_lane_guard_rejects_missing_loop():
+     poisoned_script = SCRIPT.replace(
+         '  case "$LOOP" in\n'

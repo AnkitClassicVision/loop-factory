@@ -1,0 +1,126 @@
+diff --git a/scripts/obe_escalation_card.py b/scripts/obe_escalation_card.py
+index e80d941..be073b0 100644
+--- a/scripts/obe_escalation_card.py
++++ b/scripts/obe_escalation_card.py
+@@ -18,6 +18,7 @@ import argparse
+ import hashlib
+ import json
+ import os
++import re
+ import subprocess
+ import sys
+ from datetime import datetime, timezone
+@@ -27,6 +28,18 @@ REPO = Path(__file__).resolve().parent.parent
+ TICKET = Path("/home/ankit114/scripts/linear_control_ticket.py")
+ DEFAULT_CARD_LEDGER = Path("/home/ankit114/.config/loop-factory/card_ledger.jsonl")
+ 
++# Owner rule 2026-08-05, after "Approve = PAUSE" inverted a wanted launch.
++POLARITY_STOP_VERBS = (
++    "pause", "stop", "halt", "hold", "cancel", "delete", "remove", "kill",
++    "unschedule", "abort", "revoke", "suspend", "disable", "block", "retract",
++    "withdraw",
++)
++APPROVE_STOP_RE = re.compile(
++    rf"\bapprove\s*(?:=|means\b|:|->|—|–|-|to\b)\s*(?:the\s+)?"
++    rf"(?P<verb>{'|'.join(POLARITY_STOP_VERBS)})\b",
++    re.IGNORECASE,
++)
++
+ sys.path.insert(0, str(REPO / "scripts"))
+ import obe_tg_notify  # noqa: E402
+ 
+@@ -41,6 +54,17 @@ def create_card(loop: str, text: str, date_tag: str, dry_run: bool) -> dict:
+     )
+     if len(paragraphs) > 1 and paragraphs[1].strip():
+         body += f"\n\nDetail\n{text.strip()}"
++    violation = APPROVE_STOP_RE.search(f"{body}\n{text}")
++    if violation:
++        verb = violation.group("verb").lower()
++        return {
++            "created": False,
++            "error": (
++                f"card polarity violation: Approve must never mean '{verb}' — "
++                "rephrase so Approve is the safe-forward action and the stop rides "
++                "Respond with a typed word (owner rule 2026-08-05)"
++            ),
++        }
+     cmd = [
+         sys.executable, str(TICKET),
+         "--title", f"[loop-escalation] {loop} — {date_tag}",
+diff --git a/tests/test_obe_escalation_card.py b/tests/test_obe_escalation_card.py
+index df2d021..8787c5c 100644
+--- a/tests/test_obe_escalation_card.py
++++ b/tests/test_obe_escalation_card.py
+@@ -57,6 +57,72 @@ def test_create_card_passes_minimal_decision_body(monkeypatch):
+     assert "Detail\nNeeds owner decision\n\nFull escalation detail" in body
+ 
+ 
++def test_approve_mapped_to_pause_blocks_card_ledger_and_buzz(monkeypatch, tmp_path, capsys):
++    escalate_file = tmp_path / "ESCALATE.md"
++    escalate_file.write_text("Approve = pause the 10am publish", encoding="utf-8")
++    ledger = tmp_path / "card_ledger.jsonl"
++    monkeypatch.setenv("OBE_CARD_LEDGER", str(ledger))
++    ticket_calls = []
++    monkeypatch.setattr(
++        escalation.subprocess, "run", lambda *args, **kwargs: ticket_calls.append((args, kwargs)),
++    )
++    buzzes = []
++    monkeypatch.setattr(
++        escalation.obe_tg_notify, "notify_escalation",
++        lambda *args: buzzes.append(args),
++    )
++    monkeypatch.setattr(
++        sys, "argv",
++        ["obe_escalation_card.py", "--loop", "health",
++         "--escalate-file", str(escalate_file)],
++    )
++
++    rc = escalation.main()
++
++    result = json.loads(capsys.readouterr().out)
++    assert rc == 1
++    assert "polarity" in result["error"]
++    assert ticket_calls == []
++    assert not ledger.exists()
++    assert buzzes == []
++
++
++def test_default_approve_wording_passes_polarity_lint(monkeypatch):
++    calls = []
++    monkeypatch.setattr(
++        escalation.subprocess, "run",
++        lambda argv, **kwargs: calls.append((argv, kwargs)) or type(
++            "Result", (), {"stdout": '{"created": true}', "stderr": ""}
++        )(),
++    )
++
++    result = escalation.create_card(
++        "health", "Needs owner decision", "20260805", False,
++    )
++
++    assert result["created"] is True
++    assert len(calls) == 1
++    body = calls[0][0][calls[0][0].index("--body") + 1]
++    assert "YOUR MOVE: Approve = approve the health loop escalation" in body
++
++
++def test_unmapped_stop_verb_passes_polarity_lint(monkeypatch):
++    calls = []
++    monkeypatch.setattr(
++        escalation.subprocess, "run",
++        lambda argv, **kwargs: calls.append((argv, kwargs)) or type(
++            "Result", (), {"stdout": '{"created": true}', "stderr": ""}
++        )(),
++    )
++
++    result = escalation.create_card(
++        "health", "ops will pause the old timer after you approve", "20260805", False,
++    )
++
++    assert result["created"] is True
++    assert len(calls) == 1
++
++
+ def _run(monkeypatch, tmp_path, *, buzzed=True, ledger=None, card=None):
+     escalate_file = tmp_path / "ESCALATE.md"
+     escalate_file.write_text("Needs owner decision\nFull escalation detail", encoding="utf-8")

@@ -1,0 +1,646 @@
+diff --git a/departments/podcast/procedural-graph.md b/departments/podcast/procedural-graph.md
+index 78c170f..3aedaa4 100644
+--- a/departments/podcast/procedural-graph.md
++++ b/departments/podcast/procedural-graph.md
+@@ -26,7 +26,7 @@ targeting; no model calls; no cost-incurring nodes under subscription-only C8).
+ ## SG-WATCHDOG — estate health sensing (proving slice, C3)
+ 
+ ```
+-[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper sensors
++[T daily] → N1 sense_estate → pipeline/publish/manifest/hopper/funnel-floor sensors
+           → DAG supervision → N2 compare_charter → N3 fingerprint_dedup
+           → N4 escalate_outbox (shadow: local outbox only)
+ ```
+@@ -42,6 +42,7 @@ default until the owner reviews it.
+ | N2 | compare_charter | Score | SCRIPT | internal_read / shadow | every incident cites setpoint + raw evidence path; classification is enumerable (state machine, C14) | C4, Q4 |
+ | N3 | fingerprint_dedup | Transform | SCRIPT | internal_read / shadow | same fingerprint twice in open state = ONE thread (dedup test); resolved fingerprint recurring = flagged department_defect | C12 |
+ | N4 | escalate_outbox | Act(internal) | SCRIPT | escalation / shadow | card contains the ONE question + evidence + fingerprint; shadow asserts delivered_count==0 externally; ask returns through N6 within the provisional 48-hour SLA | C12, C13, Q11 |
++| N11 | funnel_floor_sensor | Sense | SCRIPT | internal_read / shadow | six charter funnel floors + weekly outreach quota computed from FUNNEL-LEDGER evidence; missing ledger => every floor UNKNOWN (never assumed ok); breach classifies funnel_behind, blind gauge funnel_blind (owner amendment 2026-08-05) | C3, C4, Q3 |
+ | N6 | comms_reconcile_sensor | Sense | SCRIPT | internal_read / shadow | daily receipt-gated reconciliation runs before compare/dedup/escalation; missing or invalid receipt halts the chain | C3, Q3 |
+ | N9 | record | Record | SCRIPT | internal_write / shadow | legacy standalone recorder; not invoked by the current daily orchestrator because invoked sensors emit their own records | C18, Q15 |
+ 
+diff --git a/departments/podcast/runtime/compare_charter.py b/departments/podcast/runtime/compare_charter.py
+index 1fb9ed6..26bce48 100644
+--- a/departments/podcast/runtime/compare_charter.py
++++ b/departments/podcast/runtime/compare_charter.py
+@@ -43,6 +43,8 @@ FAILURE_CLASSES = {
+     # Recurred 2026-08-05 when unavailable publish-reliability evidence emitted
+     # an unmapped ("hopper", "unknown") observation and stopped the daily chain.
+     ("hopper", "unknown"): ("hopper_blind", "high"),
++    ("funnel", "alarm"): ("funnel_behind", "high"),
++    ("funnel", "unknown"): ("funnel_blind", "med"),
+     ("ledger", "fail"): ("ledger_failed", "high"),
+     ("receipt", "unknown"): ("receipt_unknown", "med"),
+     ("log", "unknown"): ("log_unknown", "med"),
+@@ -104,6 +106,14 @@ MEANINGS = {
+         "what_it_means": "The watchdog gauge that checks episodes are publishing on time has no data to read; the podcast itself may be fine, but this gauge is blind.",
+         "what_it_needs": "An ops repair of the publish-schedule data file; nothing needed from you unless you want it handled differently.",
+     },
++    "funnel_behind": {
++        "what_it_means": "The guest pipeline fell behind its daily numbers, so future episodes are at risk of running dry.",
++        "what_it_needs": "Approve the catch-up actions the loops propose, or tell them to pause the pace; the daily work order has the exact items.",
++    },
++    "funnel_blind": {
++        "what_it_means": "The daily guest pipeline count has no trustworthy information to read, so it cannot tell whether future episodes are on track.",
++        "what_it_needs": "Ops must restore the guest and booking records; nothing needed from you unless the tracking process should change.",
++    },
+     "ledger_failed": {
+         "what_it_means": "The record of podcast message sends shows a failure.",
+         "what_it_needs": "Ops must repair the failed send path and confirm the affected message status; nothing needed from you unless a resend needs approval.",
+@@ -186,6 +196,7 @@ QUESTIONS = {
+     "dag_supervisor": "Which episode step skipped without an authorized skip artifact, and who authorizes or repairs it?",
+     "ledger": "Which send-lane ledger is missing or unreadable, and what restores watchdog visibility into it?",
+     "hopper": "Hopper/publish-reliability evidence is unavailable — what broke the publish schedule source or the publish-day verifier?",
++    "funnel": "Which guest pipeline number missed its line, and what catch-up action will restore it?",
+     "timer": "Should the owner repair this timer or retire it from the estate inventory?",
+     "receipt": "What blocked this unit from producing a fresh execution receipt?",
+     "log": "Which versioned repair playbook should handle this logged failure?",
+diff --git a/departments/podcast/runtime/funnel_floor_sensor.py b/departments/podcast/runtime/funnel_floor_sensor.py
+new file mode 100644
+index 0000000..4db7151
+--- /dev/null
++++ b/departments/podcast/runtime/funnel_floor_sensor.py
+@@ -0,0 +1,365 @@
++"""Measure the podcast funnel floors from deterministic local evidence."""
++from __future__ import annotations
++
++import argparse
++import json
++import logging
++import os
++import sys
++import tempfile
++import time
++from collections.abc import Mapping
++from datetime import date, datetime, timedelta, timezone
++from pathlib import Path
++from typing import Any
++
++
++REPO_ROOT = Path(__file__).resolve().parents[3]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++from factory import runrecord
++from factory.charter_loader import load_charter
++
++
++DEFAULT_PIPELINE_REPO = Path("/mnt/d_drive/repos/podcast")
++DEFAULT_CHARTER_PATH = REPO_ROOT / "departments" / "podcast" / "charter.yaml"
++FLOORS = (
++    "active_warm_threads",
++    "live_replies",
++    "prep_done_awaiting_recording",
++    "recordings_booked_future",
++    "stale_touches",
++    "expired_holds_unactioned",
++)
++FINAL_STAGES = frozenset({"published", "closed", "rejected"})
++LIVE_REPLY_STAGES = frozenset({"responded", "in-conversation"})
++PREP_DONE_STAGES = frozenset({"prep-call-done", "prep-done", "prep-done-awaiting-recording"})
++LOGGER = logging.getLogger(__name__)
++
++
++def _normalise(value: Any) -> str:
++    return str(value or "").strip().casefold().replace("_", "-")
++
++
++def _parse_datetime(value: Any) -> datetime | None:
++    if not isinstance(value, str) or not value.strip():
++        return None
++    try:
++        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
++    except ValueError:
++        return None
++    if parsed.tzinfo is None:
++        parsed = parsed.replace(tzinfo=timezone.utc)
++    return parsed.astimezone(timezone.utc)
++
++
++def _parse_date(value: Any) -> date | None:
++    parsed = _parse_datetime(value)
++    if parsed is not None:
++        return parsed.date()
++    if isinstance(value, str):
++        try:
++            return date.fromisoformat(value.strip())
++        except ValueError:
++            return None
++    return None
++
++
++def _last_touch(person: Mapping[str, Any]) -> tuple[datetime | None, str]:
++    touch = person.get("last_touch")
++    if not isinstance(touch, Mapping):
++        return None, ""
++    return _parse_datetime(touch.get("at")), _normalise(touch.get("direction"))
++
++
++def _recording_date(episode: Mapping[str, Any]) -> date | None:
++    for key in ("recording_date", "recording_at", "scheduled_recording_at", "publish_date"):
++        value = episode.get(key)
++        if isinstance(value, Mapping):
++            value = value.get("at") or value.get("date")
++        parsed = _parse_date(value)
++        if parsed is not None:
++            return parsed
++    recording = episode.get("recording")
++    if isinstance(recording, Mapping):
++        for key in ("at", "date", "scheduled_at"):
++            parsed = _parse_date(recording.get(key))
++            if parsed is not None:
++                return parsed
++    return None
++
++
++def _read_ledger(path: Path) -> list[dict[str, Any]]:
++    ledger = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(ledger, dict) or ledger.get("schema") != "funnel-ledger/v1":
++        raise ValueError("expected schema funnel-ledger/v1")
++    people = ledger.get("people")
++    if not isinstance(people, list) or not all(isinstance(row, dict) for row in people):
++        raise ValueError("people must be a list of objects")
++    return people
++
++
++def _future_recordings(pipeline_repo: Path, today: date) -> tuple[int | None, str]:
++    episodes_dir = pipeline_repo / "episodes"
++    try:
++        paths = sorted(episodes_dir.glob("*/episode.json"))
++    except OSError as exc:
++        return None, f"unreadable recordings source: {episodes_dir}: {exc}"
++    booked = 0
++    dated = 0
++    for path in paths:
++        try:
++            episode = json.loads(path.read_text(encoding="utf-8"))
++            if not isinstance(episode, dict):
++                raise ValueError("episode.json must contain an object")
++        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
++            return None, f"unreadable recordings source: {path}: {exc}"
++        if _normalise(episode.get("stage")) != "recording-booked":
++            continue
++        scheduled = _recording_date(episode)
++        if scheduled is None:
++            continue
++        dated += 1
++        if scheduled >= today:
++            booked += 1
++    if dated == 0:
++        return None, "no recording-booked episode has usable date evidence"
++    return booked, f"read {dated} dated recording-booked episode records"
++
++
++def _measure(
++    people: list[dict[str, Any]], pipeline_repo: Path, now: datetime
++) -> tuple[dict[str, int | None], dict[str, str]]:
++    today = now.date()
++    warm_cutoff = now - timedelta(days=7)
++    reply_cutoff = now - timedelta(days=14)
++    active = [
++        person
++        for person in people
++        if person.get("stage") is not None and _normalise(person.get("stage")) not in FINAL_STAGES
++    ]
++    values: dict[str, int | None] = {
++        "active_warm_threads": sum(
++            (touched := _last_touch(person)[0]) is not None and touched >= warm_cutoff
++            for person in active
++        ),
++        "live_replies": sum(
++            _normalise(person.get("stage")) in LIVE_REPLY_STAGES
++            or (
++                (touch := _last_touch(person))[1] == "inbound"
++                and touch[0] is not None
++                and touch[0] >= reply_cutoff
++            )
++            for person in active
++        ),
++        "prep_done_awaiting_recording": sum(
++            _normalise(person.get("stage")) in PREP_DONE_STAGES for person in people
++        ),
++        "stale_touches": sum(
++            (touched := _last_touch(person)[0]) is None or touched < warm_cutoff
++            for person in active
++        ),
++        "expired_holds_unactioned": sum(
++            (expiry := _parse_date((person.get("hold") or {}).get("next_action_on"))) is not None
++            and expiry < today
++            and ((touched := _last_touch(person)[0]) is None or touched.date() < expiry)
++            for person in people
++            if isinstance(person.get("hold"), Mapping)
++        ),
++    }
++    future, future_detail = _future_recordings(pipeline_repo, today)
++    values["recordings_booked_future"] = future
++    return values, {"recordings_booked_future": future_detail}
++
++
++def _thresholds(charter: dict[str, Any]) -> tuple[dict[str, int], int, int, int]:
++    objectives = ((charter.get("setpoints") or {}).get("objectives") or {})
++    floors: dict[str, int] = {}
++    for name in FLOORS:
++        row = objectives.get(name)
++        if not isinstance(row, dict) or not isinstance(row.get("setpoint"), int):
++            raise ValueError(f"missing integer setpoint for {name}")
++        floors[name] = row["setpoint"]
++    drive = (charter.get("thresholds") or {}).get("funnel_drive") or {}
++    steady = drive.get("new_outreach_per_week_steady")
++    rebuild = drive.get("new_outreach_per_week_rebuild")
++    hopper = objectives.get("hopper_depth") or {}
++    rebuild_below = hopper.get("target")
++    if not all(
++        isinstance(value, int) and not isinstance(value, bool)
++        for value in (steady, rebuild, rebuild_below)
++    ):
++        raise ValueError("funnel drive quotas and hopper target must be integers")
++    return floors, steady, rebuild, rebuild_below
++
++
++def _existing_hopper_depth(state_dir: Path) -> int | float | None:
++    try:
++        observed = json.loads((state_dir / "objectives_observed.json").read_text(encoding="utf-8"))
++        value = observed["values"].get("hopper_depth")
++        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
++    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
++        return None
++
++
++def _atomic_write_objectives(state_dir: Path, ts: str, measured: dict[str, int]) -> None:
++    state_dir.mkdir(parents=True, exist_ok=True)
++    path = state_dir / "objectives_observed.json"
++    if path.exists():
++        document = json.loads(path.read_text(encoding="utf-8"))
++        if not isinstance(document, dict) or document.get("schema") != "objectives-observed/v1" or not isinstance(document.get("values"), dict):
++            raise ValueError("existing objectives_observed.json has an invalid schema")
++        values = {key: value for key, value in document["values"].items() if key not in FLOORS}
++    else:
++        values = {}
++    values.update(measured)
++    output = {"schema": "objectives-observed/v1", "ts": ts, "values": values}
++    temporary: Path | None = None
++    try:
++        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=state_dir, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
++            temporary = Path(handle.name)
++            json.dump(output, handle, sort_keys=True)
++            handle.write("\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++        temporary = None
++    finally:
++        if temporary is not None:
++            temporary.unlink(missing_ok=True)
++
++
++def _append(state_dir: Path, observation: dict[str, Any]) -> None:
++    state_dir.mkdir(parents=True, exist_ok=True)
++    with (state_dir / "observations.jsonl").open("a", encoding="utf-8") as handle:
++        handle.write(json.dumps(observation, sort_keys=True) + "\n")
++
++
++def _status(name: str, count: int, floor: int) -> str:
++    if name in {"stale_touches", "expired_holds_unactioned"}:
++        return "ok" if count <= floor else "alarm"
++    return "ok" if count >= floor else "alarm"
++
++
++def run(
++    state_dir: Path,
++    sources: Path,
++    pipeline_repo: Path = DEFAULT_PIPELINE_REPO,
++    *,
++    now: datetime | None = None,
++    charter_path: Path = DEFAULT_CHARTER_PATH,
++) -> list[dict[str, Any]]:
++    del sources
++    state_dir = Path(state_dir)
++    pipeline_repo = Path(pipeline_repo)
++    started = time.perf_counter()
++    current = now or datetime.now(timezone.utc)
++    if current.tzinfo is None:
++        current = current.replace(tzinfo=timezone.utc)
++    current = current.astimezone(timezone.utc)
++    ts = current.isoformat()
++    ledger_path = pipeline_repo / "episodes" / "FUNNEL-LEDGER.json"
++    values: dict[str, int | None] = {name: None for name in FLOORS}
++    details: dict[str, str] = {}
++    floor_lines: dict[str, int] = {}
++    steady = rebuild = rebuild_below = None
++    try:
++        people = _read_ledger(ledger_path)
++        values, details = _measure(people, pipeline_repo, current)
++        floor_lines, steady, rebuild, rebuild_below = _thresholds(
++            load_charter(charter_path, expect_department="podcast")
++        )
++        ledger_error = None
++    except (OSError, UnicodeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
++        ledger_error = f"unreadable source: {ledger_path}: {exc}"
++        people = []
++
++    measured = {name: value for name, value in values.items() if value is not None}
++    try:
++        _atomic_write_objectives(state_dir, ts, measured)
++    except Exception as exc:
++        LOGGER.exception("funnel sensor could not update objectives")
++        ledger_error = f"objectives update failed: {type(exc).__name__}"
++        values = {name: None for name in FLOORS}
++
++    observations: list[dict[str, Any]] = []
++    for name in FLOORS:
++        value = values[name]
++        floor = floor_lines.get(name)
++        detail = ledger_error or details.get(name, f"read {ledger_path}")
++        observation = {
++            "ts": ts,
++            "sensor": "funnel",
++            "subject": name,
++            "status": "unknown" if value is None or floor is None else _status(name, value, floor),
++            "evidence": str(ledger_path),
++            "detail": detail,
++            "metrics": {"count": value, "floor": floor},
++        }
++        _append(state_dir, observation)
++        observations.append(observation)
++
++    hopper_depth = _existing_hopper_depth(state_dir)
++    quota = (
++        rebuild
++        if hopper_depth is not None
++        and rebuild_below is not None
++        and hopper_depth < rebuild_below
++        else steady
++    )
++    monday = (current - timedelta(days=current.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
++    outbound = sum(
++        (touch := _last_touch(person))[1] == "outbound"
++        and touch[0] is not None
++        and touch[0] >= monday
++        for person in people
++    )
++    quota_unknown = ledger_error is not None or quota is None or hopper_depth is None
++    quota_observation = {
++        "ts": ts,
++        "sensor": "funnel",
++        "subject": "new_outreach_this_week",
++        "status": "unknown" if quota_unknown else ("ok" if outbound >= quota else "alarm"),
++        "evidence": str(ledger_path),
++        "detail": ledger_error or f"hopper_depth={hopper_depth}; week starts {monday.isoformat()}",
++        "metrics": {"count": None if ledger_error else outbound, "floor": quota},
++    }
++    _append(state_dir, quota_observation)
++    observations.append(quota_observation)
++
++    errors = [f"{row['subject']}:{row['status']}" for row in observations if row["status"] != "ok"]
++    try:
++        runrecord.emit_record(
++            state_dir,
++            department="podcast",
++            node="funnel_floor_sensor",
++            status="error" if errors else "ok",
++            release=runrecord.read_release(state_dir.parent),
++            trigger={"kind": "time", "id": "podcast-daily", "dedupe_key": f"{current.date().isoformat()}-funnel_floor_sensor"},
++            duration_ms=int((time.perf_counter() - started) * 1000),
++            errors=errors,
++            artifacts=[str(path) for path in (state_dir / "objectives_observed.json", state_dir / "observations.jsonl") if path.exists()],
++            external_actions_taken=0,
++        )
++    except Exception:
++        LOGGER.exception("funnel_floor_sensor failed to append its runs-v2 record")
++    return observations
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--state-dir", type=Path, default=REPO_ROOT / "departments/podcast/state")
++    parser.add_argument("--sources", type=Path, required=True)
++    parser.add_argument("--pipeline-repo", type=Path, default=DEFAULT_PIPELINE_REPO)
++    parser.add_argument("--shadow", action=argparse.BooleanOptionalAction, default=True)
++    args = parser.parse_args(argv)
++    try:
++        run(args.state_dir, args.sources, args.pipeline_repo)
++    except Exception:
++        LOGGER.exception("funnel_floor_sensor refused to crash the daily chain")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/departments/podcast/runtime/podcast_daily.sh b/departments/podcast/runtime/podcast_daily.sh
+index 3686f05..11c1db3 100644
+--- a/departments/podcast/runtime/podcast_daily.sh
++++ b/departments/podcast/runtime/podcast_daily.sh
+@@ -123,6 +123,7 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
+ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/publish_verifier.py" --shadow --sources "${SOURCES}"
+ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/manifest_sensor.py" --shadow --sources "${SOURCES}"
+ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/hopper_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
++python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/funnel_floor_sensor.py" --shadow --sources "${SOURCES}" --pipeline-repo "/mnt/d_drive/repos/podcast"
+ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/expectation_reconcile.py" --shadow --sources "${SOURCES}" || true
+ # The escalation answer-return reader is receipt-gated: nonzero, empty, or
+ # non-object stdout stops the chain before compare/dedup can advance.
+diff --git a/departments/podcast/subgraphs.json b/departments/podcast/subgraphs.json
+index fb8b481..6f8af6b 100644
+--- a/departments/podcast/subgraphs.json
++++ b/departments/podcast/subgraphs.json
+@@ -45,6 +45,10 @@
+      "id": "N5",
+      "impl": "runtime/hopper_sensor.py"
+     },
++    {
++     "id": "N11",
++     "impl": "runtime/funnel_floor_sensor.py"
++    },
+     {
+      "id": "N6",
+      "impl": "runtime/comms_reconcile_sensor.py",
+diff --git a/departments/podcast/tests/test_compare_charter.py b/departments/podcast/tests/test_compare_charter.py
+index dfd482c..6132c09 100644
+--- a/departments/podcast/tests/test_compare_charter.py
++++ b/departments/podcast/tests/test_compare_charter.py
+@@ -26,6 +26,19 @@ def test_hopper_unknown_classifies_as_high_severity_candidate():
+     )
+ 
+ 
++def test_funnel_alarm_classifies_as_high_severity_candidate():
++    candidate = compare_charter.compare_observations(
++        [_observation("funnel", "alarm")], {}
++    )[0]
++
++    assert candidate["failure_class"] == "funnel_behind"
++    assert candidate["severity"] == "high"
++    assert candidate["what_it_means"] == (
++        "The guest pipeline fell behind its daily numbers, so future episodes "
++        "are at risk of running dry."
++    )
++
++
+ def test_truly_unknown_sensor_status_pair_still_raises():
+     with pytest.raises(
+         ValueError,
+diff --git a/departments/podcast/tests/test_funnel_floor_sensor.py b/departments/podcast/tests/test_funnel_floor_sensor.py
+new file mode 100644
+index 0000000..85ee707
+--- /dev/null
++++ b/departments/podcast/tests/test_funnel_floor_sensor.py
+@@ -0,0 +1,161 @@
++from __future__ import annotations
++
++import json
++from datetime import datetime, timezone
++from pathlib import Path
++
++import pytest
++
++from departments.podcast.runtime import funnel_floor_sensor
++
++
++NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
++LINES = {
++    "active_warm_threads": 10,
++    "live_replies": 4,
++    "prep_done_awaiting_recording": 3,
++    "recordings_booked_future": 2,
++    "stale_touches": 0,
++    "expired_holds_unactioned": 0,
++}
++
++
++def _write(path: Path, value: object) -> Path:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(value), encoding="utf-8")
++    return path
++
++
++def _ledger(pipeline: Path, people: list[dict] | None = None) -> Path:
++    return _write(
++        pipeline / "episodes" / "FUNNEL-LEDGER.json",
++        {"schema": "funnel-ledger/v1", "people": people or []},
++    )
++
++
++def _episode(pipeline: Path, number: int, *, dated: bool = True) -> None:
++    value = {"stage": "recording-booked"}
++    if dated:
++        value["recording_date"] = "2026-08-06"
++    _write(pipeline / "episodes" / f"ep-{number}" / "episode.json", value)
++
++
++def _person_for(subject: str, number: int) -> dict:
++    person = {"id": str(number), "name": f"Person {number}", "stage": "closed"}
++    if subject == "active_warm_threads":
++        person.update(stage="contacted", last_touch={"at": "2026-08-04T12:00:00Z", "direction": "outbound"})
++    elif subject == "live_replies":
++        person.update(stage="contacted", last_touch={"at": "2026-08-04T12:00:00Z", "direction": "inbound"})
++    elif subject == "prep_done_awaiting_recording":
++        person.update(stage="prep_call_done")
++    elif subject == "stale_touches":
++        person.update(stage="contacted", last_touch={"at": "2026-07-20T12:00:00Z", "direction": "outbound"})
++    elif subject == "expired_holds_unactioned":
++        person.update(stage="contacted", hold={"next_action_on": "2026-08-01"})
++    return person
++
++
++@pytest.mark.parametrize("subject", LINES)
++@pytest.mark.parametrize("delta", [-1, 0, 1])
++def test_each_floor_computes_at_above_and_below_its_line(tmp_path, subject, delta):
++    line = LINES[subject]
++    count = max(0, line + delta)
++    pipeline = tmp_path / "pipeline"
++    people = [] if subject == "recordings_booked_future" else [
++        _person_for(subject, number) for number in range(count)
++    ]
++    _ledger(pipeline, people)
++    episode_count = count if subject == "recordings_booked_future" else 1
++    for number in range(episode_count):
++        _episode(pipeline, number)
++
++    values, _details = funnel_floor_sensor._measure(people, pipeline, NOW)
++
++    assert values[subject] == count
++    expected = (
++        "ok"
++        if (count <= line if subject in {"stale_touches", "expired_holds_unactioned"} else count >= line)
++        else "alarm"
++    )
++    assert funnel_floor_sensor._status(subject, count, line) == expected
++
++
++def test_missing_ledger_makes_every_floor_and_quota_unknown(tmp_path):
++    observations = funnel_floor_sensor.run(
++        tmp_path / "state", tmp_path / "sources", tmp_path / "pipeline", now=NOW
++    )
++
++    assert len(observations) == 7
++    assert {row["status"] for row in observations} == {"unknown"}
++    assert all("unreadable source" in row["detail"] for row in observations)
++
++
++def test_undatable_recording_is_unknown_without_guessing_zero(tmp_path):
++    pipeline = tmp_path / "pipeline"
++    _ledger(pipeline)
++    _episode(pipeline, 1, dated=False)
++
++    observations = funnel_floor_sensor.run(
++        tmp_path / "state", tmp_path / "sources", pipeline, now=NOW
++    )
++    recording = next(row for row in observations if row["subject"] == "recordings_booked_future")
++
++    assert recording["status"] == "unknown"
++    assert recording["metrics"]["count"] is None
++    assert "no recording-booked episode has usable date evidence" in recording["detail"]
++
++
++@pytest.mark.parametrize(
++    ("hopper_depth", "expected_status", "expected_quota"),
++    [(5, "alarm", 8), (6, "ok", 4)],
++)
++def test_quota_switches_between_rebuild_and_steady(tmp_path, hopper_depth, expected_status, expected_quota):
++    pipeline = tmp_path / "pipeline"
++    people = [
++        {
++            "id": str(number),
++            "name": f"Person {number}",
++            "stage": "contacted",
++            "last_touch": {"at": "2026-08-04T12:00:00Z", "direction": "outbound"},
++        }
++        for number in range(5)
++    ]
++    _ledger(pipeline, people)
++    _episode(pipeline, 1)
++    state = tmp_path / "state"
++    _write(
++        state / "objectives_observed.json",
++        {"schema": "objectives-observed/v1", "ts": "old", "values": {"hopper_depth": hopper_depth}},
++    )
++
++    observations = funnel_floor_sensor.run(state, tmp_path / "sources", pipeline, now=NOW)
++    quota = next(row for row in observations if row["subject"] == "new_outreach_this_week")
++
++    assert quota["status"] == expected_status
++    assert quota["metrics"] == {"count": 5, "floor": expected_quota}
++
++
++def test_expired_hold_with_post_expiry_touch_is_actioned(tmp_path):
++    pipeline = tmp_path / "pipeline"
++    people = [
++        {
++            "id": "actioned",
++            "name": "Actioned",
++            "stage": "contacted",
++            "hold": {"next_action_on": "2026-08-01"},
++            "last_touch": {"at": "2026-08-02T12:00:00Z", "direction": "outbound"},
++        },
++        {
++            "id": "missed",
++            "name": "Missed",
++            "stage": "contacted",
++            "hold": {"next_action_on": "2026-08-01"},
++            "last_touch": {"at": "2026-07-31T12:00:00Z", "direction": "outbound"},
++        },
++    ]
++    _ledger(pipeline, people)
++    _episode(pipeline, 1)
++
++    values, _details = funnel_floor_sensor._measure(people, pipeline, NOW)
++
++    assert values["expired_holds_unactioned"] == 1

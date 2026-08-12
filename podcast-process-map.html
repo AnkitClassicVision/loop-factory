@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OBE Podcast · Guest Funnel</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --ink:#16283a; --muted:#5b6b7d; --line:#dfe6ee;
+    --navy:#1b3a5b; --teal:#0e7490; --green:#177245; --amber:#b3610f; --red:#b42318; --grey:#8a97a5;
+    --redbg:#fdf2f1; --amberbg:#fdf6ec; --greenbg:#f0f7f2; --greybg:#f4f6f8;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:26px;font-weight:650;letter-spacing:-.02em;margin:0 0 6px}
+  .thesis{font-size:16px;max-width:900px;margin:0 0 6px}
+  .meta{font-size:12.5px;color:var(--muted);margin:0 0 24px}
+  code{font-family:var(--mono);font-size:12px;background:#eef2f6;border-radius:4px;padding:1px 5px}
+
+  /* funnel */
+  .funnel{display:flex;gap:0;align-items:stretch;overflow-x:auto;padding:4px 0 14px}
+  .stagewrap{display:flex;align-items:stretch;flex:none}
+  .stage{width:124px;border-radius:12px;border:1px solid var(--line);background:var(--surface);padding:10px 10px 9px;display:flex;flex-direction:column;flex:none}
+  .stage.red{background:var(--redbg);border-color:#eecfcb}
+  .stage.amber{background:var(--amberbg);border-color:#eedec2}
+  .stage.green{background:var(--greenbg);border-color:#cfe3d6}
+  .stage.grey{background:var(--greybg)}
+  .sname{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--navy)}
+  .snum{font-size:30px;font-weight:700;line-height:1.15;margin:2px 0 0}
+  .red .snum{color:var(--red)} .amber .snum{color:var(--amber)} .green .snum{color:var(--green)} .grey .snum{color:var(--muted)}
+  .smin{font-size:12px;color:var(--muted)}
+  .sflow{font-size:11px;color:var(--muted);margin-top:auto;padding-top:8px;border-top:1px dashed var(--line)}
+  .snote{font-size:11.5px;margin-top:6px}
+  .red .snote{color:var(--red)} .amber .snote{color:var(--amber)} .green .snote{color:var(--green)} .grey .snote{color:var(--muted)}
+  .arrow{align-self:center;flex:none;padding:0 2px;color:#9db0c2;font-size:15px}
+
+  h2{font-size:15px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);margin:34px 0 6px;display:flex;align-items:baseline;gap:10px}
+  h2 .sub{font-size:12.5px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted)}
+  details{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden}
+  summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:11px 16px;font-weight:600;font-size:14px}
+  summary::-webkit-details-marker{display:none}
+  summary .one{font-weight:400;color:var(--muted);font-size:13px;flex:1;text-align:right}
+  summary:hover{background:#f8fafc}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .g{background:var(--green)} .a{background:var(--amber)} .r{background:var(--red)} .n{background:var(--grey)}
+  .fields{border-top:1px solid var(--line);padding:12px 16px 14px;display:grid;grid-template-columns:150px 1fr;gap:7px 14px;font-size:13.5px}
+  .k{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding-top:2px}
+  .v.warn{color:var(--amber)} .v.bad{color:var(--red)}
+  ol.plan{margin:8px 0 0;padding-left:22px;font-size:14px}
+  ol.plan li{margin:8px 0}
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;border-radius:5px;padding:1px 7px;vertical-align:1px}
+  .tag.you{background:#1b3a5b;color:#fff}
+  .tag.machine{background:#e2ebf3;color:#1b3a5b}
+  footer{margin-top:36px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  @media (max-width:640px){ .fields{grid-template-columns:1fr} .k{padding-top:8px} summary .one{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>The OBE guest funnel, right now</h1>
+<p class="thesis"><strong>The podcast is a prospecting machine:</strong> cold leads and referrals go in one end; published episodes, promotion, and warm MyBCAT sales handoffs come out the other. Four of six stages are below their minimum, zero outreach went out this week, and four finished episodes are stuck past their publish dates.</p>
+<p class="meta">Counts read 2026-08-10 from <code>episodes/FUNNEL-LEDGER.json</code>, <code>episodes/*/episode.json</code>, <code>CANDIDATE-INBOX.json</code>, the publish schedule, and the department's floor file. Minimums are the owner-goal floors in <code>floors.yaml</code>. Click any stage for who fills it and what fires when it runs low.</p>
+
+<div class="funnel">
+  <div class="stagewrap"><div class="stage grey">
+    <span class="sname">Prospect pool</span>
+    <div class="snum">26</div>
+    <div class="smin">no floor · raw names</div>
+    <div class="snote">14 inbox + 12 new inbound</div>
+    <div class="sflow">fed by: cold sourcing + referrals</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage red">
+    <span class="sname">Invited</span>
+    <div class="snum">1</div>
+    <div class="smin">min 18 · quota 8/wk rebuild</div>
+    <div class="snote">0 sent this week</div>
+    <div class="sflow">guest-acquisition loop</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage red">
+    <span class="sname">Talking</span>
+    <div class="snum">2</div>
+    <div class="smin">min 12 · 10 replies/wk</div>
+    <div class="snote">0 live replies · 13 stale touches</div>
+    <div class="sflow">reply monitor + triage</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage red">
+    <span class="sname">Prep done</span>
+    <div class="snum">2</div>
+    <div class="smin">min 8 · 6/wk</div>
+    <div class="snote">awaiting recording</div>
+    <div class="sflow">prep booking + prep call</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage red">
+    <span class="sname">Booked</span>
+    <div class="snum">2</div>
+    <div class="smin">min 9 · 3/wk</div>
+    <div class="snote">recordings on calendar</div>
+    <div class="sflow">booking readiness</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage amber">
+    <span class="sname">In post</span>
+    <div class="snum">6</div>
+    <div class="smin">min 6 recorded stock</div>
+    <div class="snote">2 in edit · queue state STALE: some "queued" already live</div>
+    <div class="sflow">production-publish loop</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage red">
+    <span class="sname">Published</span>
+    <div class="snum">0</div>
+    <div class="smin">1/wk floor</div>
+    <div class="snote">this week · next: Aug 20</div>
+    <div class="sflow">publish + promo kit + socials</div>
+  </div><span class="arrow">→</span></div>
+
+  <div class="stagewrap"><div class="stage grey">
+    <span class="sname">Sales handoff</span>
+    <div class="snum">⊘</div>
+    <div class="smin">not measured in this pass</div>
+    <div class="snote">guests → MyBCAT prospects</div>
+    <div class="sflow">sales-handoff loop</div>
+  </div></div>
+</div>
+
+<h2>Back to full <span class="sub">the five moves that refill this funnel, in order of impact</span></h2>
+<ol class="plan">
+  <li><strong>Reconcile episode state and answer the publish loop's three asks.</strong> <span class="tag machine">MACHINE + YOU</span> The loop runs daily and verified at the provider that several "queued" episodes are already public; local state never caught up, which blocks new publishes (duplication risk on episode 105). Its Telegram escalation asks: confirm whether the Aug 7 solo was recorded, reconcile the episode-105 canonical state, and get booking to add confirmed guest recordings.</li>
+  <li><strong>Turn outreach back on.</strong> <span class="tag you">YOUR GATE</span> Quota is 20 invites/wk; this week is 0 against 26 available names (focus list is already in DEFICIT mode with 17 targets picked). The loop-drive contract that makes a zero-send run a FAILURE is half landed: verdicts are computed from receipts now, but the units that actually draft and send are awaiting your sign-off. Until then the funnel cannot refill itself.</li>
+  <li><strong>Work the 13 stale touches + 2 expired holds.</strong> <span class="tag machine">MACHINE</span> Warm conversations going cold; re-touch is reply-monitor/triage work that needs no new permission.</li>
+  <li><strong>Convert the 2 prep-done into booked recordings.</strong> <span class="tag machine">MACHINE</span> Booked stock is 2 against a floor of 9; prep-done people waiting on a calendar slot are the cheapest bookings available.</li>
+  <li><strong>Ask published guests for referrals.</strong> <span class="tag machine">MACHINE</span> Referral flywheel is running but its last QA receipt is stale (flagged Aug 7); each published guest should be producing nominee names for the pool.</li>
+</ol>
+
+<h2>Stage detail <span class="sub">who fills each stage, what good looks like, what fires when it runs low</span></h2>
+
+<details>
+  <summary><span class="dot n"></span>Prospect pool · 26 raw names<span class="one">cold sourcing + referrals in, invites out</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v">14 candidates in <code>CANDIDATE-INBOX.json</code> + 12 at stage new_inbound in the funnel ledger</div>
+    <div class="k">Good looks like</div><div class="v">enough vetted names that the invite quota (20/wk) never starves; focus list out of DEFICIT mode</div>
+    <div class="k">Who fills it</div><div class="v">guest-acquisition intake + guest-fit scoring (candidate intake → fit → contact route), referral flywheel nominees, inbound</div>
+    <div class="k">When low</div><div class="v">focus list flips to DEFICIT mode (it is DEFICIT now, 17 targets) and sourcing widens</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>Invited · 1 in play, 0 sent this week<span class="one">floor 18 in play, quota 20/wk</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v bad">1 person at outreach_sent in the ledger; sent this week 0 (funnel alarm fired this morning)</div>
+    <div class="k">Good looks like</div><div class="v">18+ live invites in play; your dictated quota met every week (8/wk while the hopper is under 6, then 4/wk steady). Flag: the compiled funnel math says ~20 invites/wk sustains 1 episode/wk at observed rates, so the dictated quota and the math disagree.</div>
+    <div class="k">Who fills it</div><div class="v">guest-acquisition loop (outreach action), personalized from the focus list, cross-model QA on copy</div>
+    <div class="k">When low</div><div class="v">a run that sends 0 while candidates exist is a FAILED run under the loop-drive contract; the only honest zero is an exhaustion proof naming every disqualified candidate</div>
+    <div class="k">Blocked on</div><div class="v warn">the drafting/sending units await your sign-off (they can put email in front of a guest, so they are gated on you)</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>Talking · 2 warm threads<span class="one">floor 12 · 13 stale touches · 2 expired holds</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v bad">2 active warm threads, 0 live replies, 13 stale touches, 2 expired holds unactioned</div>
+    <div class="k">Good looks like</div><div class="v">12+ live conversations; every reply triaged same day; no touch goes stale silently</div>
+    <div class="k">Who fills it</div><div class="v">reply monitor + reply triage; every owed reply becomes a next action, not a note</div>
+    <div class="k">When low</div><div class="v">funnel sensor classifies funnel_behind and the daily card names the gap; stale touches are owed re-touches</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>Prep done · 2 awaiting recording<span class="one">floor 8 · prep is the gate before booking</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v bad">2 people at prep-call-done in the ledger, both awaiting a recording slot</div>
+    <div class="k">Good looks like</div><div class="v">8+ prepped guests, 6 preps/wk: bio, angle, and story locked before a date is booked</div>
+    <div class="k">Who fills it</div><div class="v">prep booking + the human prep call + prep closeout (your call stays human; the machine books and packages it)</div>
+    <div class="k">When low</div><div class="v">prep sweep flags candidates ready to book a prep; funnel floor breach cards the gap</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>Booked · 2 on the calendar<span class="one">floor 9 · quota 3 recordings/wk</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v bad">2 future recordings booked (from dated recording-booked episode records)</div>
+    <div class="k">Good looks like</div><div class="v">9+ confirmed future recordings; confirmations verified, no-shows chased, holds released on time</div>
+    <div class="k">Who fills it</div><div class="v">booking readiness (recording readiness checks, confirmations)</div>
+    <div class="k">When low</div><div class="v">the cheapest refill is converting prep-done people; the sensor cards the shortfall daily</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot a"></span>In post · 6 (2 editing, 4 queued and stuck)<span class="one">recorded stock floor 6 · stuck inventory is the problem</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v warn">2 in edit (1 video-assembled, 1 content-generated) + 4 marked publish-queued in local state, but today's provider readback (Transistor, YouTube, Shorts, site) shows several of those are ALREADY PUBLIC. The local episode state was never reconciled, so the queue count is unreliable, and a naive publish from it would duplicate episode 105 as 106.</div>
+    <div class="k">Good looks like</div><div class="v">recordings ingested same week; edit → content package → preflight → queued → published ON its date; local state always matches the provider</div>
+    <div class="k">Who fills it</div><div class="v">production-publish loop (ingest → media package → content package → publish preflight). It runs daily at 10:13, exits clean, and verifies public receipts at the provider.</div>
+    <div class="k">Why nothing ships</div><div class="v bad">publish is deliberately propose-only (human + gateway gated), and today's run proved with a 12-candidate exhaustion list that no NEW legal publish exists: the ready episode is already public, everything else has no recording yet. Its escalation (delivered to Telegram today) asks for the Aug 7 recording confirmation, the episode-105 state reconciliation, and four confirmed guest recordings from booking.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot r"></span>Published + promoted · 0 this week<span class="one">floor 1/wk · next scheduled Aug 20</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v bad">0 published this week; schedule shows a hole until Aug 20 (then Aug 27, both solos) unless the 4 stuck episodes ship; promo kits sent on 2 recent episodes</div>
+    <div class="k">Good looks like</div><div class="v">1 episode/wk minimum with public receipts verified at the provider (RSS/YouTube/socials), promo kit out, guest tagged and thanked</div>
+    <div class="k">Who fills it</div><div class="v">publish preflight + public receipts + promo kit + social scheduling (social posts go out via the approval lane)</div>
+    <div class="k">When low</div><div class="v">publish-day verifier records an exact missing-proof block and cards it; a schedule hole is visible a week out, not the morning of</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot n"></span>Sales handoff · not measured in this pass<span class="one">the business outcome behind the show</span></summary>
+  <div class="fields">
+    <div class="k">What it is</div><div class="v">every recorded guest is a warm MyBCAT conversation: the sales-handoff loop detects buying signals, builds an evidence packet, gates it, and hands the packet to the sales lane</div>
+    <div class="k">Now</div><div class="v">⊘ handoff counts not extracted in this pass; the loop and its timer are live</div>
+    <div class="k">Good looks like</div><div class="v">every published guest evaluated for handoff; packets receipted; sales lane confirms receipt</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="dot n"></span>Killed · 4 episodes<span class="one">excluded from the funnel</span></summary>
+  <div class="fields">
+    <div class="k">Now</div><div class="v">4 episode records at stage killed; they count nowhere above</div>
+  </div>
+</details>
+
+<h2>Weekly flow the floors expect <span class="sub">the funnel math the owner set: each stage feeds the next</span></h2>
+<p style="font-size:15px;margin:6px 0 0">
+  <strong>20 invited</strong> → <strong>10 replies</strong> → <strong>6 preps</strong> → <strong>3 bookings</strong> → <strong>2 recordings</strong> → <strong>1 published</strong> per week.
+  This week's actuals: <span style="color:var(--red);font-weight:600">0 → 0 → 0 → 0 → 0 → 0</span>.
+  The machine knows: the funnel alarm fired this morning and the manager brief carries the gap. What it cannot yet do is send its way back to full without your sign-off on the sending units.
+</p>
+
+<footer>
+  <strong>Numbers, verbatim sources:</strong> ledger stages from <code>/mnt/d_drive/repos/podcast/episodes/FUNNEL-LEDGER.json</code> (17 people: 12 new_inbound, 1 outreach_sent, 2 prep_call_done, 2 published) · episode stages from <code>episodes/*/episode.json</code> (2026-08-10) · candidates from <code>CANDIDATE-INBOX.json</code> (14) · warm/stale/hold counts from the department's <code>objectives_observed.json</code> (11:30 ET run) · floors from <code>departments/podcast/floors.yaml</code> · publish dates from the exported publish schedule.<br>
+  Anything marked ⊘ was not measured, never assumed. The supervision machinery that watches this funnel (sensors, QA gates, heal ladder, escalation cards) has its own map: <a href="podcast-machinery-map.html">podcast-machinery-map.html</a>.
+</footer>
+
+</div>
+</body>
+</html>

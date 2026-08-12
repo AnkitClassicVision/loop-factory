@@ -1,0 +1,292 @@
+diff --git a/scripts/final_audio_check.py b/scripts/final_audio_check.py
+new file mode 100644
+index 0000000..9c11723
+--- /dev/null
++++ b/scripts/final_audio_check.py
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++"""Check the shipped episode audio for retake language.
++
++Exit codes are part of the publish-gate contract:
++
++* 0 means pass: the final audio transcript is clean.
++* 2 means findings: retake language is present; the receipt identifies it.
++* Any other code means the check itself failed (for example, missing audio or
++  transcriber failure). Callers MUST treat such a result as UNKNOWN, never pass.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import subprocess
++import sys
++import tempfile
++from datetime import datetime, timezone
++from pathlib import Path
++
++
++RETAKE_MARKERS = (
++    "redo that one",
++    "how do i do that one",
++    "let me start over",
++    "let me redo",
++    "start that again",
++    "scratch that",
++    "take two",
++    "cut that part",
++    "i'll say that again",
++)
++
++
++def normalize(text: str) -> str:
++    return " ".join(text.casefold().split())
++
++
++def file_sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as source:
++        for chunk in iter(lambda: source.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def unique(items: list[str]) -> list[str]:
++    return list(dict.fromkeys(item for item in items if item))
++
++
++def transcribe(audio: Path, whisper_bin: Path, model: str) -> str:
++    with tempfile.TemporaryDirectory(prefix="final-audio-check-") as tmp:
++        output_dir = Path(tmp)
++        command = [
++            str(whisper_bin),
++            str(audio),
++            "--model",
++            model,
++            "--output_dir",
++            str(output_dir),
++            "--output_format",
++            "txt",
++        ]
++        result = subprocess.run(command, capture_output=True, text=True, check=False)
++        if result.returncode:
++            detail = result.stderr.strip() or result.stdout.strip()
++            raise RuntimeError(f"transcriber exited {result.returncode}: {detail}")
++        expected = output_dir / f"{audio.stem}.txt"
++        if not expected.is_file():
++            outputs = sorted(output_dir.glob("*.txt"))
++            if len(outputs) != 1:
++                raise RuntimeError("transcriber did not produce exactly one text transcript")
++            expected = outputs[0]
++        return expected.read_text(encoding="utf-8")
++
++
++def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--episode", required=True, help="directory name under episodes/")
++    parser.add_argument("--audio", type=Path, help="final audio path override")
++    parser.add_argument("--phrases", type=Path, help="newline-separated extra phrases")
++    parser.add_argument(
++        "--whisper-bin",
++        type=Path,
++        default=Path("/home/ankit114/.local/bin/whisper"),
++    )
++    parser.add_argument("--model", default="tiny.en")
++    parser.add_argument("--receipt", type=Path, help="receipt output path override")
++    return parser.parse_args(argv)
++
++
++def run(args: argparse.Namespace) -> int:
++    episode_dir = Path("episodes") / args.episode
++    audio = args.audio or episode_dir / "final" / "episode.mp3"
++    receipt = args.receipt or episode_dir / "content" / "final-audio-check.json"
++    cache = episode_dir / "content" / "final-audio-transcript.txt"
++    sidecar = episode_dir / "content" / "final-audio-transcript.sha256"
++
++    if not audio.is_file():
++        raise FileNotFoundError(f"audio file not found: {audio}")
++    audio_sha = file_sha256(audio)
++
++    if cache.is_file() and sidecar.is_file() and sidecar.read_text(encoding="utf-8").strip() == audio_sha:
++        transcript = cache.read_text(encoding="utf-8")
++    else:
++        transcript = transcribe(audio, args.whisper_bin, args.model)
++        cache.parent.mkdir(parents=True, exist_ok=True)
++        cache.write_text(transcript, encoding="utf-8")
++        sidecar.write_text(audio_sha + "\n", encoding="utf-8")
++
++    phrases = list(RETAKE_MARKERS)
++    if args.phrases:
++        phrases.extend(args.phrases.read_text(encoding="utf-8").splitlines())
++    phrases = unique([normalize(phrase) for phrase in phrases])
++
++    suspects: list[str] = []
++    for relative in (Path("processed/transcript.txt"), Path("raw/transcript.txt")):
++        source = episode_dir / relative
++        if not source.is_file():
++            continue
++        for line in source.read_text(encoding="utf-8").splitlines():
++            normalized_line = normalize(line)
++            if any(marker in normalized_line for marker in RETAKE_MARKERS):
++                suspects.append(normalized_line)
++    suspects = unique(suspects)
++
++    checked = unique(phrases + suspects)
++    hits: list[dict[str, str]] = []
++    for line in transcript.splitlines():
++        normalized_line = normalize(line)
++        for phrase in checked:
++            if phrase in normalized_line:
++                hits.append({"phrase": phrase, "line": line.strip()})
++
++    payload = {
++        "schema": "final-audio-check/v1",
++        "episode": args.episode,
++        "audio_path": str(audio),
++        "audio_sha256": audio_sha,
++        "transcriber": {"bin": str(args.whisper_bin), "model": args.model},
++        "phrases_checked": checked,
++        "suspects_from_intermediates": suspects,
++        "hits": hits,
++        "status": "findings" if hits else "pass",
++        "checked_at": datetime.now(timezone.utc).isoformat(),
++    }
++    receipt.parent.mkdir(parents=True, exist_ok=True)
++    receipt.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
++    return 2 if hits else 0
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = parse_args(argv)
++    try:
++        return run(args)
++    except (OSError, RuntimeError, UnicodeError) as error:
++        print(f"final audio check failed: {error}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_final_audio_check.py b/tests/test_final_audio_check.py
+new file mode 100644
+index 0000000..a24d28b
+--- /dev/null
++++ b/tests/test_final_audio_check.py
+@@ -0,0 +1,116 @@
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SCRIPT = ROOT / "scripts" / "final_audio_check.py"
++
++
++def make_whisper(tmp_path: Path, transcript: str) -> tuple[Path, Path]:
++    binary = tmp_path / "fake_whisper.py"
++    count = tmp_path / "invocations.txt"
++    binary.write_text(
++        "#!/usr/bin/env python3\n"
++        "import pathlib, sys\n"
++        f"count = pathlib.Path({str(count)!r})\n"
++        "count.write_text(count.read_text() + '1\\n' if count.exists() else '1\\n')\n"
++        "audio = pathlib.Path(sys.argv[1])\n"
++        "out = pathlib.Path(sys.argv[sys.argv.index('--output_dir') + 1])\n"
++        f"(out / (audio.stem + '.txt')).write_text({transcript!r})\n",
++        encoding="utf-8",
++    )
++    binary.chmod(0o755)
++    return binary, count
++
++
++def invoke(tmp_path: Path, transcript: str, *, setup=None):
++    episode = tmp_path / "episodes" / "105"
++    audio = episode / "final" / "episode.mp3"
++    audio.parent.mkdir(parents=True, exist_ok=True)
++    audio.write_bytes(b"audio-v1")
++    if setup:
++        setup(episode)
++    whisper, count = make_whisper(tmp_path, transcript)
++    receipt = episode / "content" / "receipt.json"
++    command = [
++        sys.executable,
++        str(SCRIPT),
++        "--episode",
++        "105",
++        "--audio",
++        str(audio),
++        "--whisper-bin",
++        str(whisper),
++        "--receipt",
++        str(receipt),
++    ]
++    result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
++    return result, receipt, command, audio, count
++
++
++def test_clean_transcript_passes(tmp_path):
++    result, receipt, _, _, _ = invoke(tmp_path, "Welcome to the final episode.\n")
++    assert result.returncode == 0
++    assert json.loads(receipt.read_text())["status"] == "pass"
++
++
++def test_builtin_marker_is_reported_with_line(tmp_path):
++    result, receipt, _, _, _ = invoke(tmp_path, "Host: REDO   that one, please.\n")
++    assert result.returncode == 2
++    payload = json.loads(receipt.read_text())
++    assert payload["status"] == "findings"
++    assert {"phrase": "redo that one", "line": "Host: REDO   that one, please."} in payload["hits"]
++
++
++def test_intermediate_suspect_absent_then_present(tmp_path):
++    suspect = "Host: Redo that one with the sponsor name"
++
++    def setup(episode):
++        source = episode / "processed" / "transcript.txt"
++        source.parent.mkdir(parents=True)
++        source.write_text(suspect + "\n")
++
++    clean, receipt, _, _, _ = invoke(tmp_path / "absent", "The sponsor name is correct.\n", setup=setup)
++    assert clean.returncode == 0
++    payload = json.loads(receipt.read_text())
++    assert "host: redo that one with the sponsor name" in payload["suspects_from_intermediates"]
++
++    found, receipt, _, _, _ = invoke(tmp_path / "present", suspect + "\n", setup=setup)
++    assert found.returncode == 2
++    assert any(hit["phrase"] == normalize(suspect) for hit in json.loads(receipt.read_text())["hits"])
++
++
++def normalize(text):
++    return " ".join(text.casefold().split())
++
++
++def test_missing_audio_is_unknown_and_writes_no_receipt(tmp_path):
++    whisper, _ = make_whisper(tmp_path, "unused")
++    receipt = tmp_path / "receipt.json"
++    result = subprocess.run(
++        [sys.executable, str(SCRIPT), "--episode", "404", "--audio", str(tmp_path / "missing.mp3"),
++         "--whisper-bin", str(whisper), "--receipt", str(receipt)],
++        cwd=tmp_path,
++        capture_output=True,
++        text=True,
++    )
++    assert result.returncode not in (0, 2)
++    assert not receipt.exists()
++
++
++def test_cache_reused_until_audio_sha_changes(tmp_path):
++    result, receipt, command, audio, count = invoke(tmp_path, "Clean final.\n")
++    assert result.returncode == 0
++    assert count.read_text().splitlines() == ["1"]
++
++    second = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
++    assert second.returncode == 0
++    assert count.read_text().splitlines() == ["1"]
++
++    audio.write_bytes(b"audio-v2")
++    third = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
++    assert third.returncode == 0
++    assert count.read_text().splitlines() == ["1", "1"]
++    assert json.loads(receipt.read_text())["status"] == "pass"
