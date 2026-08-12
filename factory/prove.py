@@ -11,7 +11,7 @@ import argparse
 import json
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -185,7 +185,15 @@ def drill_escalation_delivery(ctx: ProofContext) -> dict:
     try:
         with tempfile.TemporaryDirectory(prefix="loop-factory-proof-") as raw:
             outbox = Path(raw) / "human-outbox.jsonl"
-            result = human_in_the_loop.escalate(ctx.name, "stage11-proof", outbox)
+            result = human_in_the_loop.escalate(
+                ctx.name,
+                "stage11-proof",
+                outbox,
+                context={"source": "factory-prove", "drill": name},
+                owner="proof-owner",
+                deadline=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+                next_action="Verify escalation delivery and record a receipt",
+            )
             rows = [json.loads(line) for line in outbox.read_text(encoding="utf-8").splitlines()]
             delivered = result.get("escalated") is True and len(rows) == 1 and rows[0].get("issue") == "stage11-proof"
             return _result(name, delivered, f"escalated={result.get('escalated')}; outbox_rows={len(rows)}")

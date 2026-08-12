@@ -10,6 +10,7 @@ import yaml
 from factory.charter_loader import CharterError, funnel_config
 from factory.events_ledger import append_event
 from factory.floor_compiler import compile_floors
+from kernel import run_manifest
 
 
 NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
@@ -44,6 +45,44 @@ def _setup(tmp_path, funnel=True):
     _charter(dept, _funnel() if funnel else None)
     state.mkdir()
     return dept, state
+
+
+def _write_bound_green_proof(
+    dept,
+    state,
+    monkeypatch,
+    *,
+    run_id="run-1",
+    created_at="2026-08-05T10:00:00Z",
+    checked_at="2026-08-05T12:00:00Z",
+):
+    monkeypatch.setenv("OE_KERNEL_SIGNING_KEY", "test-floor-signer")
+    release = {"hash": "release-1", "source_ref": "source-1"}
+    release_dir = dept / "releases" / release["hash"]
+    release_dir.mkdir(parents=True, exist_ok=True)
+    (dept / "releases" / "current").write_text(release["hash"] + "\n", encoding="utf-8")
+    (release_dir / "manifest.json").write_text(json.dumps(release), encoding="utf-8")
+
+    manifest = {
+        "schema": "run-manifest",
+        "rev": run_manifest.MANIFEST_REV,
+        "run_id": run_id,
+        "department": dept.name,
+        "created_at": created_at,
+        "release": release,
+        "signature": None,
+    }
+    manifest["signature"] = run_manifest._local_signer().sign(
+        run_manifest._canonical_without_signature(manifest)
+    )
+    verdict = run_manifest._base_verdict(run_id, "green", "ok")
+    verdict["checked_at"] = checked_at
+    run_manifest._sign_verdict(verdict)
+    manifests = state / "run-manifests"
+    manifests.mkdir(parents=True, exist_ok=True)
+    (manifests / f"{run_id}.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (manifests / f"{run_id}.verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+    return manifests
 
 
 def test_unconfigured_without_funnel(tmp_path):
@@ -123,6 +162,81 @@ def test_freezes_on_newest_red_run_manifest_verdict(tmp_path):
     (manifests / "run-1.json").write_text(json.dumps({"run_id": "run-1"}))
     (manifests / "run-1.verdict.json").write_text(json.dumps({"status": "red"}))
     assert compile_floors(dept, state, now=NOW)["status"] == "frozen"
+
+
+def test_freezes_on_unsigned_green_run_manifest_verdict(tmp_path):
+    dept, state = _setup(tmp_path)
+    compile_floors(dept, state, now=NOW - timedelta(days=8))
+    manifests = state / "run-manifests"
+    manifests.mkdir()
+    (manifests / "run-1.json").write_text(json.dumps({"run_id": "run-1"}))
+    (manifests / "run-1.verdict.json").write_text(json.dumps({"status": "green"}))
+
+    result = compile_floors(dept, state, now=NOW)
+
+    assert result["status"] == "frozen"
+    assert "signature is invalid or missing" in result["reason"]
+
+
+def test_signed_green_run_manifest_verdict_allows_floor_compilation(tmp_path, monkeypatch):
+    dept, state = _setup(tmp_path)
+    _write_bound_green_proof(dept, state, monkeypatch)
+
+    result = compile_floors(dept, state, now=NOW)
+
+    assert result["status"] == "ok"
+
+
+def test_freezes_on_signed_green_verdict_for_a_different_run(tmp_path, monkeypatch):
+    dept, state = _setup(tmp_path)
+    manifests = _write_bound_green_proof(dept, state, monkeypatch)
+    verdict = run_manifest._base_verdict("run-2", "green", "ok")
+    run_manifest._sign_verdict(verdict)
+    (manifests / "run-1.verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+
+    result = compile_floors(dept, state, now=NOW)
+
+    assert result["status"] == "frozen"
+    assert "lineage" in result["reason"]
+
+
+def test_freezes_on_signed_green_verdict_stale_before_manifest(tmp_path, monkeypatch):
+    dept, state = _setup(tmp_path)
+    _write_bound_green_proof(
+        dept,
+        state,
+        monkeypatch,
+        created_at="2026-08-05T12:00:00Z",
+        checked_at="2026-08-05T11:59:59Z",
+    )
+
+    result = compile_floors(dept, state, now=NOW)
+
+    assert result["status"] == "frozen"
+    assert "stale" in result["reason"]
+
+
+def test_freezes_when_manifest_release_pointer_is_not_current(tmp_path, monkeypatch):
+    dept, state = _setup(tmp_path)
+    _write_bound_green_proof(dept, state, monkeypatch)
+    (dept / "releases" / "current").write_text("other-release\n", encoding="utf-8")
+
+    result = compile_floors(dept, state, now=NOW)
+
+    assert result["status"] == "frozen"
+    assert "release/source binding" in result["reason"]
+
+
+def test_freezes_when_the_newest_manifest_verdict_is_unknown_or_unreadable(tmp_path):
+    dept, state = _setup(tmp_path)
+    compile_floors(dept, state, now=NOW - timedelta(days=8))
+    manifests = state / "run-manifests"
+    manifests.mkdir()
+    (manifests / "run-1.json").write_text(json.dumps({"run_id": "run-1"}))
+    (manifests / "run-1.verdict.json").write_text(json.dumps({"status": "unknown"}))
+    assert compile_floors(dept, state, now=NOW)["status"] == "frozen"
+    (manifests / "run-1.verdict.json").write_text("not json", encoding="utf-8")
+    assert compile_floors(dept, state, now=NOW + timedelta(days=1))["status"] == "frozen"
 
 
 def test_freezes_on_malformed_ledger_line(tmp_path):

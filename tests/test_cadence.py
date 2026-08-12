@@ -70,7 +70,7 @@ def test_rendered_execstart_containing_systemctl_fails(tmp_path):
     service = template_dir / "dept-loop.service.tmpl"
     service.write_text(
         service.read_text(encoding="utf-8").replace(
-            "ExecStart=/usr/bin/env bash", "ExecStart=/usr/bin/systemctl --user start x #"
+            "ExecStart=/usr/bin/python3", "ExecStart=/usr/bin/systemctl --user start x #"
         ),
         encoding="utf-8",
     )

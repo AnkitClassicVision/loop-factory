@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from factory import prove, scaffold
+from factory import runrecord
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,37 @@ def proof_department(tmp_path):
 def _ctx(root: Path) -> prove.ProofContext:
     department = root / "departments" / "throwaway"
     return prove.ProofContext("throwaway", root / "departments", department)
+
+
+@pytest.fixture(autouse=True)
+def factory_promoted_emitter(factory_record_spool, monkeypatch):
+    """Run proof drills through a signed per-state test spool."""
+    original = runrecord.emit_record
+
+    def emit(state_dir, **fields):
+        state_dir = Path(state_dir)
+        spool = state_dir / ".factory-spool"
+        if not spool.exists():
+            runrecord.write_spool_marker(
+                spool,
+                run_id="proof-fixture-run",
+                department=fields["department"],
+                release=fields.get("release"),
+                trigger="daily",
+                state_dir=state_dir,
+            )
+        monkeypatch.setenv(runrecord.RECORD_SPOOL_ENV, str(spool))
+        path = original(state_dir, **fields)
+        rows = [
+            json.loads(line)
+            for line in (spool / "runs-v2.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        runrecord._append_canonical_records(state_dir, rows)
+        (spool / "runs-v2.jsonl").unlink()
+        return path
+
+    monkeypatch.setattr(runrecord, "emit_record", emit)
 
 
 def test_full_run_green_when_unsupported_is_explicitly_allowed(proof_department):
@@ -121,7 +153,7 @@ def test_objective_breach_red_when_board_feed_omits_breach(proof_department, mon
 def test_escalation_delivery_red_when_outbox_write_is_missing(proof_department, monkeypatch):
     root, _ = proof_department
 
-    def fake_escalate(_department, _issue, outbox):
+    def fake_escalate(_department, _issue, outbox, **_kwargs):
         Path(outbox).write_text("", encoding="utf-8")
         return {"escalated": True}
 
@@ -171,4 +203,3 @@ def test_any_supported_failure_makes_run_and_cli_fail(proof_department, monkeypa
         "throwaway", root / "departments", allow_unsupported=True, now=FIXED_NOW
     )
     assert result["pass"] is False
-

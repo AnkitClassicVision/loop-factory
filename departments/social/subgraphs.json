@@ -203,5 +203,8 @@
   "runtime/linear_close_issue.py": "human-review lane: closes the Linear card after decision processing; same map debt as create_review_card.py",
   "runtime/linear_read_comments.py": "declared N10 return-path component; executed by N11 harvest_review_asks rather than as a standalone graph stage",
   "runtime/v2_record.py": "factory run-record/v2 sidecar invoked by the daily trigger for every receipt-gated stage"
+  ,"runtime/run-roster.json": "release-bound rev3 node-contract obligation roster consumed by kernel.run_manifest; data, not a graph implementation"
+  ,"runtime/social_daily_driver.py": "factory entrypoint receipt checker; graph implementations emit the bound node records"
+  ,"runtime/social_factory_daily.sh": "factory-standard daily trigger; invokes graph implementations, is not one"
  }
 }

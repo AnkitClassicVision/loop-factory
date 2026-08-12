@@ -3,7 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from departments.podcast.runtime import comms_reconcile_sensor
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 ROOT = Path(__file__).resolve().parents[1]

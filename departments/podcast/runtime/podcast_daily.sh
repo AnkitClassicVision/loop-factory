@@ -40,13 +40,13 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
+validate_json_object() {
+    python3 -c 'import json, sys; assert isinstance(json.load(sys.stdin), dict)'
+}
+
 json_object_field() {
     local field="$1"
     python3 -c 'import json, sys; row=json.load(sys.stdin); assert isinstance(row, dict); value=row[sys.argv[1]]; assert isinstance(value, str) and value; print(value)' "${field}"
-}
-
-validate_json_object() {
-    python3 -c 'import json, sys; assert isinstance(json.load(sys.stdin), dict)'
 }
 
 run_heal_phase() {
@@ -108,18 +108,45 @@ run_heal_phase() {
     done <<<"${incident_list}"
 }
 
+mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
+
+if [ -z "${LOOP_FACTORY_RUN_ID:-}" ] || [ -z "${OE_RECORD_SPOOL:-}" ] \
+    || [ ! -d "${OE_RECORD_SPOOL:-}" ] \
+    || [ ! -f "${OE_RECORD_SPOOL:-}/factory-spool.json" ]; then
+  echo "Factory run identity and record spool are required" >&2
+  exit 2
+fi
+if ! python3 - "${OE_RECORD_SPOOL}" "${LOOP_FACTORY_RUN_ID}" "${DEPARTMENT}" "${STATE_DIR}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+spool, run_id, department, state_dir = sys.argv[1:]
+try:
+    marker = json.loads((Path(spool) / "factory-spool.json").read_text(encoding="utf-8"))
+    expected = {
+        "schema": "factory-record-spool/v1",
+        "run_id": run_id,
+        "department": department,
+        "trigger": "daily",
+        "state_dir": str(Path(state_dir).resolve()),
+    }
+    if any(marker.get(key) != value for key, value in expected.items()):
+        raise ValueError
+    if not isinstance(marker.get("signature"), str) or not marker["signature"].strip():
+        raise ValueError
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+PY
+then
+  echo "Factory run identity and record spool are required" >&2
+  exit 2
+fi
+
 if [ "${1:-}" = "--heal-phase-only" ]; then
     run_heal_phase
     exit $?
 fi
-
-mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
-
-# P1: mint the run manifest BEFORE the first node (spec C2). Mint refusal is a
-# hard stop: a run that cannot declare its plan does not run (deny-by-default).
-mint_out="$(PYTHONPATH="${REPO}" python3 -m kernel.run_manifest mint --department "${DEPARTMENT}" --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --trigger daily)"
-LOOP_FACTORY_RUN_ID="$(json_object_field run_id <<<"${mint_out}")"
-export LOOP_FACTORY_RUN_ID
 
 # 1) Watchdog chain (SHADOW). Each node runs through the confinement launcher
 #    (factory/launch.py) so the department holds no credentials, and stays in
@@ -163,14 +190,9 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/fingerprint_dedup.py" --shadow
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/escalate_outbox.py" --shadow
 
-# The verifier's observation reaches compare on the next daily run; the
-# manager consumes its verdict during this run. Exit 2 is an advisory verdict.
-ver_rc=0
-PYTHONPATH="${REPO}" python3 -m kernel.run_manifest verify --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --run-id "${LOOP_FACTORY_RUN_ID}" || ver_rc=$?
-if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
-    echo "run_manifest verify failed with rc=${ver_rc} (not a verdict)" >&2
-    exit "${ver_rc}"
-fi
+# The conductor is the declared action driver. It must record before semantic
+# verification so green proves the scheduled driver actually executed.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 
 # 2) Manager cycle (deterministic; charter is the source of truth).
 python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
@@ -191,4 +213,3 @@ python3 -m factory.boardfeed --repo-root "${REPO}"
 python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --site "${REPO}/estate/state/boards"
 # Legacy commands replaced by the site render: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --out "${REPO}/estate/state/board.html"
 # Legacy command replaced by tabs: python3 -m factory.board --feed "${REPO}/estate/state/board-feed.ndjson" --department "${DEPARTMENT}" --out "${REPO}/estate/state/${DEPARTMENT}-board.html"
-python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"

@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +96,7 @@ def test_scaffold_runtime_node_emits_v2_record(tmp_path):
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+    promote_factory_records(tmp_path / "departments/future/state")
     assert (tmp_path / "departments/future/state/runs-v2.jsonl").is_file()
 
 

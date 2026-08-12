@@ -9,6 +9,7 @@ from datetime import datetime
 import pytest
 
 from factory.runrecord import (
+    RecordCustodyRefused,
     append_record,
     build_record,
     emit_record,
@@ -17,6 +18,7 @@ from factory.runrecord import (
     timed_emit,
     validate_record,
 )
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 def _fields(**overrides):
@@ -75,6 +77,96 @@ def test_happy_path_build_append_and_reload_roundtrip(tmp_path):
     assert validate_record(loaded) == record
 
 
+def test_append_refuses_canonical_write_without_factory_spool(tmp_path, monkeypatch):
+    monkeypatch.delenv("OE_RECORD_SPOOL", raising=False)
+
+    with pytest.raises(RecordCustodyRefused, match="factory_record_spool_required"):
+        append_record(tmp_path, build_record(**_fields()))
+    assert not (tmp_path / "runs-v2.jsonl").exists()
+
+
+def test_user_selected_spool_cannot_be_used_as_canonical_state(tmp_path, monkeypatch):
+    forged = tmp_path / "forged-spool"
+    forged.mkdir()
+    forged.chmod(0o700)
+    monkeypatch.setenv("OE_RECORD_SPOOL", str(forged))
+
+    with pytest.raises(RecordCustodyRefused, match="factory_record_spool_unreadable"):
+        append_record(tmp_path, build_record(**_fields()))
+    assert not (tmp_path / "runs-v2.jsonl").exists()
+
+
+def test_spool_marker_is_signed_and_tampering_is_not_factory_custody(
+    tmp_path, monkeypatch
+):
+    spool = tmp_path / "signed-spool"
+    from factory.runrecord import assert_factory_spool, verify_factory_spool, write_spool_marker
+
+    write_spool_marker(
+        spool,
+        run_id="signed-run",
+        department="example",
+        release=None,
+        trigger="daily",
+        state_dir=tmp_path,
+    )
+    assert "signature" in json.loads(
+        (spool / "factory-spool.json").read_text(encoding="utf-8")
+    )
+    assert_factory_spool(
+        spool,
+        run_id="signed-run",
+        department="example",
+        trigger="daily",
+        state_dir=tmp_path,
+    )
+    verify_factory_spool(
+        spool,
+        run_id="signed-run",
+        department="example",
+        trigger="daily",
+        state_dir=tmp_path,
+    )
+
+    marker_path = spool / "factory-spool.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    original_signature = marker["signature"]
+    marker["signature"] = "forged"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    with pytest.raises(RecordCustodyRefused, match="signature_invalid"):
+        verify_factory_spool(
+            spool,
+            run_id="signed-run",
+            department="example",
+            trigger="daily",
+            state_dir=tmp_path,
+        )
+
+    marker["signature"] = original_signature
+    marker["state_dir"] = str(tmp_path / "changed")
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    with pytest.raises(RecordCustodyRefused, match="binding_mismatch"):
+        verify_factory_spool(
+            spool,
+            run_id="signed-run",
+            department="example",
+            trigger="daily",
+            state_dir=tmp_path,
+        )
+
+    marker["state_dir"] = str(tmp_path)
+    marker["department"] = "attacker"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    with pytest.raises(RecordCustodyRefused, match="binding_mismatch"):
+        verify_factory_spool(
+            spool,
+            run_id="signed-run",
+            department="example",
+            trigger="daily",
+            state_dir=tmp_path,
+        )
+
+
 def test_bad_auth_class_names_field():
     with pytest.raises(ValueError, match="auth_class"):
         build_record(**_fields(auth_class="api_key"))
@@ -83,6 +175,35 @@ def test_bad_auth_class_names_field():
 def test_bad_status_names_field():
     with pytest.raises(ValueError, match="status"):
         build_record(**_fields(status="finished"))
+
+
+def test_hold_record_carries_an_owned_deadline_bound_contract():
+    record = build_record(
+        **_fields(
+            status="hold",
+            block={
+                "owner": "human-owner",
+                "deadline": "2026-08-03T19:45:01+00:00",
+                "next_action": "supply the missing approval",
+            },
+        )
+    )
+
+    assert record["status"] == "hold"
+    assert validate_record(record) == record
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"owner": "", "deadline": "2026-08-03T19:45:01+00:00", "next_action": "act"},
+        {"owner": "human", "deadline": "not-a-date", "next_action": "act"},
+        {"owner": "human", "deadline": "2026-08-03T19:45:01+00:00"},
+    ],
+)
+def test_malformed_block_contract_is_rejected(block):
+    with pytest.raises(ValueError, match="block"):
+        build_record(**_fields(status="blocked", block=block))
 
 
 def test_bad_trigger_kind_names_field():
@@ -124,7 +245,7 @@ def test_concurrent_appends_produce_complete_json_lines(tmp_path):
         for future in futures:
             future.result()
 
-    lines = (tmp_path / "runs-v2.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = (tmp_path / "factory-spool" / "runs-v2.jsonl").read_text(encoding="utf-8").splitlines()
     records = [json.loads(line) for line in lines]
     assert len(records) == 100
     assert len({record["run_id"] for record in records}) == 100
@@ -136,7 +257,7 @@ def test_append_creates_missing_parent_directory(tmp_path):
 
     path = append_record(state_dir, build_record(**_fields()))
 
-    assert path == state_dir / "runs-v2.jsonl"
+    assert path == tmp_path / "factory-spool" / "runs-v2.jsonl"
     assert path.is_file()
 
 
@@ -215,7 +336,7 @@ def test_timed_emit_records_ok_and_elapsed_duration(tmp_path):
     with timed_emit(tmp_path, "example", "timed_node"):
         time.sleep(0.002)
 
-    record = json.loads((tmp_path / "runs-v2.jsonl").read_text(encoding="utf-8"))
+    record = json.loads((tmp_path / "factory-spool" / "runs-v2.jsonl").read_text(encoding="utf-8"))
     assert record["status"] == "ok"
     assert record["errors"] == []
     assert record["duration_ms"] >= 1
@@ -231,7 +352,7 @@ def test_timed_emit_records_exception_class_then_reraises(tmp_path):
         ):
             raise LookupError("fixture failure")
 
-    record = json.loads((tmp_path / "runs-v2.jsonl").read_text(encoding="utf-8"))
+    record = json.loads((tmp_path / "factory-spool" / "runs-v2.jsonl").read_text(encoding="utf-8"))
     assert record["status"] == "error"
     assert record["errors"] == ["existing_code", "LookupError"]
     assert validate_record(record) == record

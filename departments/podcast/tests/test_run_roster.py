@@ -33,15 +33,20 @@ def test_nodes_invoked_after_verify_are_not_required():
                 "would make every verdict red")
 
 
-def test_every_required_roster_node_is_invoked_by_the_daily_chain():
+def test_every_roster_node_is_invoked_by_the_daily_chain():
     invoked = set(_daily_chain_nodes())
+    source_text = SCRIPT.read_text(encoding="utf-8")
     for entry in _roster_nodes():
         node = entry["node"]
-        assert node in invoked, f"roster node {node!r} is absent from the daily chain"
         if entry["required"]:
+            assert node in invoked, f"required roster node {node!r} is absent from the run chain"
             source = (RUNTIME / f"{node}.py").read_text(encoding="utf-8")
             assert "emit_record" in source or "timed_emit" in source, (
                 f"required roster node {node!r} has no completion-record call"
+            )
+        else:
+            assert f"runtime/{node}.py" in source_text, (
+                f"optional roster node {node!r} has no daily-chain invocation"
             )
 
 

@@ -111,6 +111,7 @@ def test_replayed_decision_is_a_noop(tmp_path):
     assert HIL.apply(q, "dep-1", verdict="APPROVE")["applied"] is True
     replay = HIL.apply(q, "dep-1", verdict="APPROVE")
     assert replay["applied"] is False
+    assert replay["error"] == "not pending (replay or already decided)"
 
 
 def test_hook_failure_is_recorded_never_silent(tmp_path):
@@ -124,6 +125,48 @@ def test_hook_failure_is_recorded_never_silent(tmp_path):
     saved = json.loads(q.read_text(encoding="utf-8").splitlines()[0])
     assert saved["status"] == "approved_hook_failed"
     assert "connector down" in saved["hook"]
+
+
+def test_escalation_ledger_reescalates_and_resolves_with_hashed_receipt(tmp_path):
+    outbox = tmp_path / "outbox.jsonl"
+    ledger = tmp_path / "escalations.jsonl"
+    opened = HIL.escalate(
+        "sales",
+        "truth_contract_failed",
+        outbox,
+        owner="human-owner",
+        deadline="2026-08-01T00:00:00Z",
+        next_action="review the signed verdict",
+        ledger_path=ledger,
+    )
+    assert opened["escalated"] is True
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+    reconciled = HIL.reconcile_escalations(
+        ledger,
+        now="2026-08-02T00:00:00Z",
+        outbox_path=outbox,
+    )
+    assert reconciled["re_escalated"] == 1
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 2
+
+    receipt = tmp_path / "decision.json"
+    receipt.write_text('{"decision":"repair approved"}\n', encoding="utf-8")
+    resolved = HIL.resolve_escalation(
+        ledger,
+        opened["escalation_id"],
+        owner="human-owner",
+        decided_at="2026-08-02T01:00:00Z",
+        action="approve a source-only repair",
+        receipt_path=receipt,
+        receipt_root=tmp_path,
+    )
+    assert resolved == {
+        "resolved": True,
+        "escalation_id": opened["escalation_id"],
+        "status": "resolved",
+    }
+    assert HIL.reconcile_escalations(ledger, now="2026-08-03T00:00:00Z")["re_escalated"] == 0
 
 
 # --- Codex #18: scaffold input validation ----------------------------------- #

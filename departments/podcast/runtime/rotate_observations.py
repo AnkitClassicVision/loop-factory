@@ -141,43 +141,45 @@ def main() -> int:
     try:
         receipt = rotate(args.state_dir, args.max_lines, args.dry_run)
     except (RuntimeError, ValueError) as exc:
+        if not (args.state_dir.parent / "node-contract.json").is_file():
+            runrecord.emit_record(
+                args.state_dir,
+                department="podcast",
+                node="rotate_observations",
+                status="error",
+                release=runrecord.read_release(args.state_dir.parent),
+                trigger=None,
+                cost={"lane": "flat_subscription", "model_calls": 0},
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                errors=[type(exc).__name__],
+                artifacts=[],
+                external_actions_taken=0,
+            )
+        LOGGER.error("%s", exc)
+        return 1
+    if not (args.state_dir.parent / "node-contract.json").is_file():
         runrecord.emit_record(
             args.state_dir,
             department="podcast",
             node="rotate_observations",
-            status="error",
+            status="ok",
             release=runrecord.read_release(args.state_dir.parent),
-            trigger=None,
+            trigger={
+                "kind": "time",
+                "id": "podcast-daily",
+                "dedupe_key": (
+                    f"{datetime.now(timezone.utc).date().isoformat()}-rotate_observations"
+                ),
+            },
             cost={"lane": "flat_subscription", "model_calls": 0},
             duration_ms=int((time.perf_counter() - started) * 1000),
-            errors=[type(exc).__name__],
-            artifacts=[],
+            artifacts=[{
+                "kind": "stdout_receipt",
+                "node": "rotate_observations",
+                "receipt": receipt,
+            }],
             external_actions_taken=0,
         )
-        LOGGER.error("%s", exc)
-        return 1
-    runrecord.emit_record(
-        args.state_dir,
-        department="podcast",
-        node="rotate_observations",
-        status="ok",
-        release=runrecord.read_release(args.state_dir.parent),
-        trigger={
-            "kind": "time",
-            "id": "podcast-daily",
-            "dedupe_key": (
-                f"{datetime.now(timezone.utc).date().isoformat()}-rotate_observations"
-            ),
-        },
-        cost={"lane": "flat_subscription", "model_calls": 0},
-        duration_ms=int((time.perf_counter() - started) * 1000),
-        artifacts=[{
-            "kind": "stdout_receipt",
-            "node": "rotate_observations",
-            "receipt": receipt,
-        }],
-        external_actions_taken=0,
-    )
     print(json.dumps(receipt, separators=(",", ":")))
     return 0
 

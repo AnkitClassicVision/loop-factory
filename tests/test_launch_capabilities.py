@@ -212,3 +212,29 @@ def test_no_capability_launch_keeps_arbitrary_command_behavior(tmp_path):
     assert result == 0
     assert calls[0][0] == ["/bin/echo", "still-allowed"]
     assert "XDG_RUNTIME_DIR" not in calls[0][1]
+
+
+def test_nested_launch_preserves_parent_factory_spool_after_scrub(tmp_path, monkeypatch):
+    department = "nested"
+    _write_charter(tmp_path, department)
+    runtime = tmp_path / "departments" / department / "runtime"
+    runtime.mkdir()
+    script = runtime / "sensor.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    spool = tmp_path / "nested-spool"
+    spool.mkdir(mode=0o700)
+    captured = []
+    monkeypatch.setenv("OE_RECORD_SPOOL", str(spool))
+    monkeypatch.setattr(
+        LAUNCH,
+        "launch_command",
+        lambda *args, **kwargs: captured.append((args, kwargs)) or 0,
+    )
+    monkeypatch.setattr(
+        LAUNCH.sys,
+        "argv",
+        ["factory/launch.py", "--department", department, "--", "python3", str(script)],
+    )
+
+    assert LAUNCH.main() == 0
+    assert captured[0][1]["base"]["OE_RECORD_SPOOL"] == str(spool)

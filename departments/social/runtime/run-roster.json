@@ -1,0 +1,286 @@
+{
+  "contract": {
+    "path": "node-contract.json",
+    "schema": "node-contract/v1",
+    "sha256": "78ec3d8e87dbc064ce00cfcc1c9330eba0f701c20f2ba288a062fcac813d00d3"
+  },
+  "department": "social",
+  "entrypoint": {
+    "driver": {
+      "impl": "runtime/harvest_review_asks.py",
+      "node": "harvest_review_asks",
+      "node_id": "N11",
+      "path": "runtime/harvest_review_asks.py",
+      "subgraph": "SG-REPUBLISH"
+    },
+    "path": "runtime/social_factory_daily.sh",
+    "service": "social-loop.service",
+    "service_source": "systemd/social-loop.service",
+    "timer": "social-loop.timer",
+    "timer_source": "systemd/social-loop.timer"
+  },
+  "nodes": [
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/inventory_backcatalog.py",
+      "node": "inventory_backcatalog",
+      "node_id": "N1",
+      "ordinal": 1,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/select_candidate.py",
+      "node": "select_candidate",
+      "node_id": "N2",
+      "ordinal": 2,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/assemble_context.py",
+      "node": "assemble_context",
+      "node_id": "N3",
+      "ordinal": 3,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/draft_post.py",
+      "node": "draft_post",
+      "node_id": "N4",
+      "ordinal": 4,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/qa_post.py",
+      "node": "qa_post",
+      "node_id": "N5",
+      "ordinal": 5,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/dispatch.py",
+      "node": "dispatch",
+      "node_id": "N6",
+      "ordinal": 6,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/delivery_verify.py",
+      "node": "delivery_verify",
+      "node_id": "N7",
+      "ordinal": 7,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/record.py",
+      "node": "record",
+      "node_id": "N9",
+      "ordinal": 8,
+      "required": false,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/create_review_card.py",
+      "node": "create_review_card",
+      "node_id": "N10",
+      "ordinal": 9,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/harvest_review_asks.py",
+      "node": "harvest_review_asks",
+      "node_id": "N11",
+      "ordinal": 10,
+      "required": true,
+      "subgraph": "SG-REPUBLISH"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/read_metrics_records.py",
+      "node": "read_metrics_records",
+      "node_id": "N1",
+      "ordinal": 11,
+      "required": false,
+      "subgraph": "SG-LEARN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/propose_insights.py",
+      "node": "propose_insights",
+      "node_id": "N2",
+      "ordinal": 12,
+      "required": false,
+      "subgraph": "SG-LEARN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/proposal_card_to_outbox.py",
+      "node": "proposal_card_to_outbox",
+      "node_id": "N3",
+      "ordinal": 13,
+      "required": false,
+      "subgraph": "SG-LEARN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/record.py",
+      "node": "record",
+      "node_id": "N9",
+      "ordinal": 14,
+      "required": false,
+      "subgraph": "SG-LEARN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/pull_zernio_analytics.py",
+      "node": "pull_zernio_analytics",
+      "node_id": "N1",
+      "ordinal": 15,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/pull_call_joins.py",
+      "node": "pull_call_joins",
+      "node_id": "N2",
+      "ordinal": 16,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/compare_charter.py",
+      "node": "compare_charter",
+      "node_id": "N3",
+      "ordinal": 17,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/assemble_weekly_digest.py",
+      "node": "assemble_weekly_digest",
+      "node_id": "N4",
+      "ordinal": 18,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/objectives_sensor.py",
+      "node": "objectives_sensor",
+      "node_id": "N5",
+      "ordinal": 19,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/record.py",
+      "node": "record",
+      "node_id": "N9",
+      "ordinal": 20,
+      "required": false,
+      "subgraph": "SG-SENSE"
+    }
+  ],
+  "rev": 3,
+  "schema": "run-roster"
+}

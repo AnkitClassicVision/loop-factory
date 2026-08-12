@@ -140,12 +140,17 @@ def test_transition_ceiling_five_plus_digest_and_rerun_idempotent(tmp_path):
     assert len(draft["failure"]["findings"])==7 and len((state(tmp_path)/"escalation_fingerprints.jsonl").read_text().splitlines())==12
     assert escalate_node.run(tmp_path)["new_escalations"]==0 and len((state(tmp_path)/"asks.jsonl").read_text().splitlines())==6
 
-def test_all_emitted_v2_records_validate(tmp_path):
+def test_all_emitted_v2_records_validate(tmp_path, monkeypatch):
     target=state(tmp_path);artifact=target/"proof.json";write_json(artifact,{"ok":True})
     from departments.outreach.runtime.common import emit
     import time
+    runrecord.write_spool_marker(
+        target / "factory-spool", run_id="fixture-run", department="outreach",
+        release=None, trigger="daily", state_dir=target,
+    )
+    monkeypatch.setenv("OE_RECORD_SPOOL", str(target / "factory-spool"))
     for node in ("N1","N2","N3","N4","N5","N6"):emit(target,node,time.perf_counter(),artifact)
-    for line in (target/"runs-v2.jsonl").read_text().splitlines():runrecord.validate_record(json.loads(line))
+    for line in (target/"factory-spool"/"runs-v2.jsonl").read_text().splitlines():runrecord.validate_record(json.loads(line))
 
 def test_orchestrator_halts_at_failing_node(tmp_path):
     runtime=tmp_path/"departments/outreach/runtime";runtime.mkdir(parents=True);(tmp_path/"departments/outreach/state").mkdir(parents=True)

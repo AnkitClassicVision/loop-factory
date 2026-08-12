@@ -1,11 +1,18 @@
 import json, sys
 from pathlib import Path
+
+import pytest
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from factory import runrecord
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 def _emit(tmp_path, **kw):
     runrecord.emit_record(tmp_path, department="d", node="n", status="ok", **kw)
+    promote_factory_records(tmp_path)
     rows = [json.loads(l) for l in (tmp_path / "runs-v2.jsonl").read_text().splitlines()]
     return rows[-1]
 

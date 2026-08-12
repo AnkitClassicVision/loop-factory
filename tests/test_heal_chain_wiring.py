@@ -11,6 +11,10 @@ import pytest
 
 from departments.podcast.runtime import heal_apply, heal_select, heal_verify
 from factory import runrecord
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +49,7 @@ def _write_incident(state_dir: Path, fingerprint: str = "fp-heal") -> None:
 
 
 def _records(state_dir: Path) -> list[dict]:
+    promote_factory_records(state_dir)
     return [
         json.loads(line)
         for line in (state_dir / "runs-v2.jsonl").read_text(

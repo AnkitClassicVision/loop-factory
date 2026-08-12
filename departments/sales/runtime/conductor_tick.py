@@ -14,6 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _emit(state: Path, dept: Path, *, started: float, status: str, errors=(), artifacts=()) -> None:
+    if (Path(dept) / "node-contract.json").is_file():
+        return
     runrecord.emit_record(
         state,
         department="sales",

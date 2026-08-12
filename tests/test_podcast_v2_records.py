@@ -16,6 +16,10 @@ from departments.podcast.runtime import pipeline_sensor
 from departments.podcast.runtime import publish_verifier
 from departments.podcast.runtime import sense_estate
 from factory import runrecord
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +57,7 @@ setpoints:
 
 
 def _records(state_dir: Path) -> list[dict]:
+    promote_factory_records(state_dir)
     return [
         json.loads(line)
         for line in (state_dir / "runs-v2.jsonl").read_text(
@@ -318,6 +323,7 @@ def test_runs_v2_file_is_json_lines_with_one_record_per_invocation(tmp_path):
 
     publish_verifier.run(state_dir, sources, today=date(2026, 8, 2))
     publish_verifier.run(state_dir, sources, today=date(2026, 8, 3))
+    promote_factory_records(state_dir)
 
     lines = (state_dir / "runs-v2.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2

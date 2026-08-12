@@ -1,0 +1,293 @@
+{
+  "contract_sha256": "fbf10b8ecfa6828de4ec27e04eb484347b9eab74fc5597a3af54156da12193a8",
+  "department": "podcast",
+  "nodes": [
+    {
+      "department": "podcast",
+      "impl": "runtime/dag_supervisor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_dag_supervisor.py::test_silent_skip_is_critical_and_appended_as_consumable_candidate",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-DAG-SUPERVISION",
+      "work_object": {
+        "artifact_or_field": "DAG integrity observation",
+        "consumer": "compare/dedup consume observations and candidates",
+        "name": "DAG integrity observation"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/heal_select.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_heal_lane.py::test_unknown_failure_class_is_refused_without_execution",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HEAL",
+      "work_object": {
+        "artifact_or_field": "heal selection/refusal receipt",
+        "consumer": "heal_apply consumes heals.jsonl and playbook",
+        "name": "heal selection/refusal receipt"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/heal_apply.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_heal_lane.py::test_shadow_apply_executes_nothing_and_writes_proposal",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HEAL",
+      "work_object": {
+        "artifact_or_field": "proposed/applied heal receipt",
+        "consumer": "heal_verify consumes heals.jsonl and command result",
+        "name": "proposed/applied heal receipt"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/heal_verify.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_heal_lane.py::test_verify_marks_failed_when_condition_persists",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HEAL",
+      "work_object": {
+        "artifact_or_field": "verified/failed heal receipt",
+        "consumer": "manager/escalation consumes heals.jsonl",
+        "name": "verified/failed heal receipt"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/record.py",
+      "node_id": "N9",
+      "qa": {
+        "evidence": "tests/test_v2_adoption.py::test_record_stage_keeps_legacy_receipt_and_emits_valid_v2",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HEAL",
+      "work_object": {
+        "artifact_or_field": "legacy heal run/state/heartbeat receipt",
+        "consumer": "heal manager consumes runs.jsonl, STATE.json, heartbeat",
+        "name": "legacy heal run/state/heartbeat receipt"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/manifest_sensor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_watchdog_sensors.py::test_manifest_completeness_and_fallback_flags",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-MANIFEST",
+      "work_object": {
+        "artifact_or_field": "guest manifest observation",
+        "consumer": "compare_charter consumes observations.jsonl",
+        "name": "guest manifest observation"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/pipeline_sensor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_watchdog_sensors.py::test_pipeline_independent_sources_and_auditable_fields",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-PIPELINE",
+      "work_object": {
+        "artifact_or_field": "independent pipeline observation",
+        "consumer": "compare_charter consumes observations.jsonl",
+        "name": "independent pipeline observation"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/publish_verifier.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_watchdog_sensors.py::test_publish_missing_social_receipt_fails",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-PUBLISHDAY",
+      "work_object": {
+        "artifact_or_field": "provider publish observation",
+        "consumer": "compare_charter consumes observations.jsonl",
+        "name": "provider publish observation"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/sense_estate.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_watchdog_spine.py::test_missing_fake_provider_output_emits_unknown_and_drop_fails_coverage",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "estate observation set",
+        "consumer": "compare_charter consumes observations.jsonl",
+        "name": "estate observation set"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/expectation_reconcile.py",
+      "node_id": "N10",
+      "qa": {
+        "evidence": "tests/test_expectation_exitcodes.py::test_no_manifests_is_findings_verdict_exit_2",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "expectation receipt",
+        "consumer": "compare consumes expectation-receipts/*.json",
+        "name": "expectation receipt"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/funnel_floor_sensor.py",
+      "node_id": "N11",
+      "qa": {
+        "evidence": "tests/test_funnel_floor_sensor.py::test_missing_ledger_makes_every_floor_and_quota_unknown",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "funnel-floor observation",
+        "consumer": "compare/floor compiler consume observations.jsonl",
+        "name": "funnel-floor observation"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/floor_compiler_run.py",
+      "node_id": "N13",
+      "qa": {
+        "evidence": "tests/test_floor_compiler_run.py::test_due_run_always_emits_record",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "floors snapshot/history",
+        "consumer": "funnel sensor/board consume floors.yaml and history",
+        "name": "floors snapshot/history"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/conductor_tick.py",
+      "node_id": "N14",
+      "qa": {
+        "evidence": "tests/test_conductor_tick.py::test_refused_tick_still_exits_zero",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "shadow order/heartbeat record",
+        "consumer": "estate manager consumes conductor-shadow.jsonl or refusals",
+        "name": "shadow order/heartbeat record"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/compare_charter.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_compare_charter.py::test_every_declared_failure_transition_classifies",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "incident candidate",
+        "consumer": "fingerprint_dedup consumes incident_candidates.json",
+        "name": "incident candidate"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/fingerprint_dedup.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_watchdog_spine.py::test_same_open_fingerprint_twice_is_one_incident_and_one_outbox_row",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "fingerprinted incident ledger",
+        "consumer": "escalate/heal consume incidents.json",
+        "name": "fingerprinted incident ledger"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/escalate_outbox.py",
+      "node_id": "N4",
+      "qa": {
+        "evidence": "tests/test_watchdog_spine.py::test_shadow_escalation_has_local_outbox_and_zero_external_effects",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "escalation packet",
+        "consumer": "owner outbox consumes decisions_outbox.jsonl",
+        "name": "escalation packet"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/hopper_sensor.py",
+      "node_id": "N5",
+      "qa": {
+        "evidence": "tests/test_objectives_sensors.py::test_missing_evidence_omits_objective_instead_of_inventing_zero",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "objectives-observed record",
+        "consumer": "manager/board consumes objectives_observed.json and observations.jsonl",
+        "name": "objectives-observed record"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/comms_reconcile_sensor.py",
+      "node_id": "N6",
+      "qa": {
+        "evidence": "tests/test_v2_adoption.py::test_comms_reconcile_stage_emits_valid_v2",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "communication reconciliation finding",
+        "consumer": "compare/manager consume v2 finding codes",
+        "name": "communication reconciliation finding"
+      }
+    },
+    {
+      "department": "podcast",
+      "impl": "runtime/record.py",
+      "node_id": "N9",
+      "qa": {
+        "evidence": "tests/test_watchdog_spine.py::test_record_refuses_epoch_that_does_not_increase",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-WATCHDOG",
+      "work_object": {
+        "artifact_or_field": "legacy run/state/heartbeat receipt",
+        "consumer": "manager consumes runs.jsonl, STATE.json, heartbeat",
+        "name": "legacy run/state/heartbeat receipt"
+      }
+    }
+  ],
+  "rev": 1,
+  "schema": "node-contract/v1"
+}

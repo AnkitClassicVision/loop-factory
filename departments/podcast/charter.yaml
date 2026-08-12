@@ -225,6 +225,7 @@ escalation:
   recurrence_rule: every_escalation_spawns_root_cause_item__repeat_of_resolved_fingerprint_is_department_defect  # C12 part 2
   channels: [telegram_ping, linear_card]
   no_reply_ttl_hours: 24
+  sla_hours: 24
   no_reply_action: refile_louder_same_thread_never_auto_approve
   human_gates:
     - external_send        # for the department itself; estate autosend is estate-side

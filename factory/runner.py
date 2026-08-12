@@ -580,6 +580,8 @@ def _record_graph_incident(run: _Run, code: str, detail: str,
 
 def _promote_spool(run: _Run, *, node_id: str, attempt: int, spool_dir: Path,
                    signer, control_dir: Path, output: dict,
+                   contract_subgraph: str | None = None,
+                   node_impl: str | None = None,
                    crash_hook=None) -> str | None:
     """Validate, stamp, sign, and append the node's spooled records.
 
@@ -626,8 +628,31 @@ def _promote_spool(run: _Run, *, node_id: str, attempt: int, spool_dir: Path,
     runrecord = _load("runrecord", "factory/runrecord.py")
     scores = _load("scores", "factory/scores.py")
     from factory import rollup as rollup_module
+    from factory import node_contract
 
     department = run.dept_dir.name
+
+    contract_binding = None
+    if (run.dept_dir / node_contract.CONTRACT_FILE).is_file():
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (contract_subgraph, node_impl)):
+            return "node_contract: runner identity is incomplete"
+        try:
+            declared = node_contract.lookup(
+                run.dept_dir, subgraph=contract_subgraph,
+                node_id=node_id, impl=node_impl)
+            contract_binding = {
+                "node_contract": {
+                    key: declared[key]
+                    for key in ("department", "subgraph", "node_id", "impl")
+                },
+                "contract_sha256": node_contract.load(
+                    run.dept_dir)["contract_sha256"],
+                "work_object_ref": dict(declared["work_object"]),
+                "qa_receipt_ref": dict(declared["qa"]),
+            }
+        except ValueError as exc:
+            return f"node_contract: {exc}"
 
     # ---- validate (all rows, before anything is written or signed) -------- #
     try:
@@ -644,7 +669,24 @@ def _promote_spool(run: _Run, *, node_id: str, attempt: int, spool_dir: Path,
                     raise ValueError(f"spool {stream} row carries the "
                                      f"reserved 'promotion' field")
                 if stream == "runs-v2.jsonl":
-                    runrecord.validate_record(row)
+                    if contract_binding is not None:
+                        bound = dict(row)
+                        # The runner owns the execution identity.  Validate
+                        # the node's row after assigning that identity, then
+                        # carry the exact contract binding into promotion.
+                        bound["department"] = department
+                        bound["node"] = Path(node_impl).stem
+                        for key, value in contract_binding.items():
+                            if key in row and row[key] != value:
+                                raise ValueError(
+                                    f"node contract field {key!r} conflicts "
+                                    "with the runner binding")
+                            bound[key] = value
+                        runrecord.validate_record(bound)
+                        row.clear()
+                        row.update(bound)
+                    else:
+                        runrecord.validate_record(row)
                 elif stream == "scores.jsonl":
                     scores.validate_score(row)
                 else:
@@ -821,7 +863,8 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
         reason = _promote_spool(
             run, node_id=node["id"], attempt=pending["attempt"],
             spool_dir=Path(pending["spool_dir"]), signer=signer,
-            control_dir=control_dir, output=pending["output"])
+            control_dir=control_dir, output=pending["output"],
+            contract_subgraph=run.loop_id, node_impl=node["impl"])
         if reason is not None:
             run.log("spool_rejected", node_id=node["id"], reason=reason)
             return None, {"reason": reason, "exit_code": 0,
@@ -873,6 +916,8 @@ def _execute_with_policy(run: _Run, node: dict, *, dept_name: str, root: Path,
         reason = _promote_spool(run, node_id=node["id"], attempt=attempt,
                                 spool_dir=spool_dir, signer=signer,
                                 control_dir=control_dir, output=output,
+                                contract_subgraph=run.loop_id,
+                                node_impl=node["impl"],
                                 crash_hook=crash_hook)
         if reason is not None:
             run.log("spool_rejected", node_id=node["id"], reason=reason)

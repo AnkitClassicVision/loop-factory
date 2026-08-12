@@ -8,7 +8,7 @@ Cycle (each wake):  Sense -> Compare -> Decide (Act) -> Record.
            and release drift (live tree vs pinned release — hard rule 4).
   Compare  deterministic thresholds (no LLM).
   Decide   pick whitelisted acts only; SHADOW limits Act to
-           {escalate, daily_brief, record, dispatch, bounded_retry}.
+           {escalate, daily_brief, record}.
   Record   runs first, then STATE.json (atomic), then heartbeat.
 
 Guarantees baked in here:
@@ -32,12 +32,25 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
+import numbers
 import os
 import stat
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+try:
+    from factory.escalation_contract import EscalationContractError, verify_resolution_receipt
+except ModuleNotFoundError:
+    _escalation_spec = importlib.util.spec_from_file_location(
+        "factory_escalation_contract", Path(__file__).with_name("escalation_contract.py")
+    )
+    _escalation = importlib.util.module_from_spec(_escalation_spec)
+    _escalation_spec.loader.exec_module(_escalation)
+    EscalationContractError = _escalation.EscalationContractError
+    verify_resolution_receipt = _escalation.verify_resolution_receipt
 
 try:
     from factory.lockutil import records_lock
@@ -88,7 +101,7 @@ IMMUTABLE_INVARIANTS: frozenset[str] = frozenset(
 
 # Playbook whitelist and the shadow-mode Act subset.
 SHADOW_ACTS: frozenset[str] = frozenset(
-    {"escalate", "daily_brief", "record", "dispatch", "bounded_retry"}
+    {"escalate", "daily_brief", "record"}
 )
 GATED_LIVE_ONLY_ACTS: frozenset[str] = frozenset(
     {"throttle_park", "reorder_queue", "file_promotion", "emit_dept_request"}
@@ -113,6 +126,29 @@ def _load_jsonl(path: Path | None) -> list[dict]:
         for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _safe_number(value: Any, *, integer: bool = False) -> tuple[bool, int | float | None]:
+    """Validate a numeric safety input without allowing coercion surprises."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return False, None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return False, None
+    if integer and not number.is_integer():
+        return False, None
+    return (True, int(value) if integer else value)
+
+
+def _invalid_input_finding(kind: str, name: str) -> dict:
+    return _finding(
+        f"{kind}_invalid:{name}",
+        "breach",
+        f"{kind} value {name!r} is missing, malformed, negative, or non-finite; "
+        "the safety comparison was refused",
+        observed=None,
+        setpoint=None,
+    )
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -197,6 +233,9 @@ def sense(
     if budget_path and Path(budget_path).exists():
         try:
             budget_used = json.loads(Path(budget_path).read_text(encoding="utf-8"))
+            if not isinstance(budget_used, dict):
+                budget_used = {}
+                budget_unreadable = True
         except (ValueError, OSError):
             # Codex review #13: missing/corrupt cost telemetry must surface as a
             # breach, never silently read as a healthy zero-spend baseline.
@@ -230,6 +269,27 @@ def sense(
 STATE_GRAPH_ESCALATION_BOUND = 20
 
 
+def _valid_graph_resolution(row: dict[str, Any], state_dir: Path) -> bool:
+    resolution = row.get("resolution")
+    if not isinstance(resolution, dict) or set(resolution) != {
+        "owner", "decided_at", "action", "receipt"
+    }:
+        return False
+    if not all(
+        isinstance(resolution.get(field), str) and resolution[field].strip()
+        for field in ("owner", "decided_at", "action")
+    ):
+        return False
+    try:
+        decided_at = datetime.fromisoformat(resolution["decided_at"].replace("Z", "+00:00"))
+        if decided_at.tzinfo is None:
+            return False
+        verify_resolution_receipt(resolution["receipt"], receipt_root=state_dir)
+    except (ValueError, TypeError, EscalationContractError):
+        return False
+    return True
+
+
 def sense_graph_escalations(state_dir) -> dict[str, Any]:
     """Read-only, model-free replay of the runner->manager escalation bridge.
 
@@ -258,7 +318,10 @@ def sense_graph_escalations(state_dir) -> dict[str, Any]:
                 continue
             marker = row.get("marker") or row.get("status")
             if marker == "resolved" or row.get("resolved") is True:
-                active.pop(run_id, None)
+                if _valid_graph_resolution(row, Path(state_dir)):
+                    active.pop(run_id, None)
+                else:
+                    unreadable = True
             else:
                 active[run_id] = {
                     "run_id": run_id,
@@ -286,16 +349,30 @@ def sense_manifest_verdict(state_dir) -> dict[str, Any]:
     if not manifest_dir.is_dir():
         return empty
 
-    manifests = [
-        path
-        for path in manifest_dir.glob("*.json")
-        if not path.name.endswith(".verdict.json")
-    ]
-    if not manifests:
-        return empty
+    candidates: list[tuple[datetime, Path, dict[str, Any]]] = []
+    try:
+        from kernel.run_manifest import _manifest_is_signed, verify_signed_verdict
+        for path in manifest_dir.glob("*.json"):
+            if path.name.endswith(".verdict.json"):
+                continue
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            created_at = manifest.get("created_at") if isinstance(manifest, dict) else None
+            run_id = manifest.get("run_id") if isinstance(manifest, dict) else None
+            if (
+                not isinstance(run_id, str)
+                or path.stem != run_id
+                or not isinstance(created_at, str)
+                or not _manifest_is_signed(manifest)
+            ):
+                continue
+            candidates.append((datetime.fromisoformat(created_at.replace("Z", "+00:00")), path, manifest))
+    except (ImportError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {"manifest_verdict_status": "unknown", "manifest_verdict_counts": {}}
+    if not candidates:
+        return {"manifest_verdict_status": "unknown", "manifest_verdict_counts": {}}
 
-    manifest = max(manifests, key=lambda path: path.stat().st_mtime)
-    verdict_path = manifest.with_name(f"{manifest.stem}.verdict.json")
+    _, manifest, manifest_body = max(candidates, key=lambda candidate: candidate[0])
+    verdict_path = manifest.with_name(f"{manifest_body['run_id']}.verdict.json")
     if not verdict_path.exists():
         return {
             "manifest_verdict_status": "absent",
@@ -304,14 +381,19 @@ def sense_manifest_verdict(state_dir) -> dict[str, Any]:
 
     try:
         verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+        # The manager may consume only an independently signed semantic verdict
+        # explicitly paired with the newest signed manifest lineage.
+        if not verify_signed_verdict(verdict) or verdict.get("run_id") != manifest_body["run_id"]:
+            raise ValueError("run verdict is unsigned, malformed, or unpaired")
         counts = {
             key: len(verdict[key])
-            for key in ("missing", "unexpected", "duplicates", "reordered")
+            for key in (
+                "missing", "unexpected", "duplicates", "reordered",
+                "semantic_failures", "malformed_records", "blocked_contract_failures",
+            )
         }
         status = verdict["status"]
-        if not isinstance(status, str):
-            raise TypeError("verdict status must be a string")
-    except (KeyError, TypeError, ValueError, OSError):
+    except (ImportError, KeyError, TypeError, ValueError, OSError):
         return {
             "manifest_verdict_status": "unknown",
             "manifest_verdict_counts": {},
@@ -323,8 +405,16 @@ def sense_manifest_verdict(state_dir) -> dict[str, Any]:
     }
 
 
-def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
-                             now: str | datetime | None = None) -> dict:
+def resolve_graph_escalation(
+    state_dir,
+    *,
+    department: str,
+    run_id: str,
+    owner: str,
+    action: str,
+    receipt_path: str | Path | None,
+    now: str | datetime | None = None,
+) -> dict:
     """One coordinated resolution for a bridged graph escalation (review B2).
 
     This lives on the MANAGER because the manager owns both ledgers it must
@@ -342,6 +432,33 @@ def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
     """
     state_dir = Path(state_dir)
     now_iso = _now(now).isoformat()
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or not isinstance(action, str)
+        or not action.strip()
+        or receipt_path is None
+    ):
+        return {"resolved": None, "blocked": True, "reason": "resolution_owner_action_and_receipt_required"}
+    raw_receipt = Path(receipt_path)
+    candidate = raw_receipt.resolve() if raw_receipt.is_absolute() else (state_dir / raw_receipt).resolve()
+    try:
+        relative_receipt = candidate.relative_to(state_dir.resolve()).as_posix()
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        resolution = {
+            "owner": owner.strip(),
+            "decided_at": now_iso,
+            "action": action.strip(),
+            "receipt": {
+                "schema": "file-sha256/v1",
+                "path": relative_receipt,
+                "sha256": digest,
+            },
+        }
+        if not _valid_graph_resolution({"resolution": resolution}, state_dir):
+            raise ValueError("resolution receipt rejected")
+    except (OSError, ValueError):
+        return {"resolved": None, "blocked": True, "reason": "resolution_receipt_invalid"}
     fingerprint = _escalation_fingerprint(
         department, "graph_run_escalated", str(run_id))
     with records_lock(state_dir):
@@ -352,12 +469,14 @@ def resolve_graph_escalation(state_dir, *, department: str, run_id: str,
             "marker": "resolved",
             "subject": str(run_id),
             "timestamp": now_iso,
+            "resolution": resolution,
         })
         _append_jsonl(state_dir / "graph_escalations.jsonl", {
             "department": department,
             "run_id": str(run_id),
             "marker": "resolved",
             "ts": now_iso,
+            "resolution": resolution,
         })
     return {"resolved": str(run_id), "fingerprint": fingerprint,
             "department": department}
@@ -456,17 +575,56 @@ def _finding(code, severity, detail, observed=None, setpoint=None) -> dict:
 
 def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
     """Turn a sensed snapshot into findings. Pure function, no side effects."""
-    t = thresholds or DEFAULT_THRESHOLDS
+    t = DEFAULT_THRESHOLDS if thresholds is None else thresholds
     findings: list[dict] = []
 
-    touches = int(sensed.get("week_touches", 0) or 0)
-    conversions = int(sensed.get("conversions", 0) or 0)
-    held = int(sensed.get("held_mismatch", 0) or 0)
-    carried = int(sensed.get("carried_forward", 0) or 0)
-    ceiling = t["weekly_touch_ceiling"]
+    if not isinstance(t, dict):
+        return [_invalid_input_finding("threshold", "shape")]
+
+    counts: dict[str, int] = {}
+    for name in ("week_touches", "conversions", "held_mismatch", "carried_forward"):
+        raw = sensed[name] if name in sensed else 0
+        valid, value = _safe_number(raw, integer=True)
+        if valid:
+            counts[name] = value  # type: ignore[assignment]
+        else:
+            findings.append(_invalid_input_finding("count", name))
+
+    threshold_values: dict[str, int | float] = {}
+    for name, integer in (
+        ("weekly_touch_ceiling", True),
+        ("pace_ceiling_near_frac", False),
+        ("faux_work_touch_floor", True),
+        ("backlog_aging_min", True),
+        ("budget_near_frac", False),
+    ):
+        raw = t[name] if name in t else None
+        valid, value = _safe_number(raw, integer=integer)
+        if valid:
+            threshold_values[name] = value  # type: ignore[assignment]
+        else:
+            findings.append(_invalid_input_finding("threshold", name))
+
+    raw_ceilings = t.get("budget_ceilings")
+    ceilings: dict[str, int | float] = {}
+    if not isinstance(raw_ceilings, dict):
+        findings.append(_invalid_input_finding("budget", "ceilings"))
+    else:
+        for key, raw in raw_ceilings.items():
+            valid, value = _safe_number(raw)
+            if valid:
+                ceilings[str(key)] = value  # type: ignore[assignment]
+            else:
+                findings.append(_invalid_input_finding("budget", str(key)))
+
+    touches = counts.get("week_touches")
+    conversions = counts.get("conversions")
+    held = counts.get("held_mismatch")
+    carried = counts.get("carried_forward")
+    ceiling = threshold_values.get("weekly_touch_ceiling")
 
     # breach: wrong-recipient hold (send_floor / reputation surface)
-    if held > 0:
+    if held is not None and held > 0:
         findings.append(
             _finding("held_recipient_mismatch", "breach",
                      f"{held} draft(s) held: recipient did not match the addressed name",
@@ -474,7 +632,12 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         )
 
     # breach: approaching the hard weekly ceiling
-    if touches >= t["pace_ceiling_near_frac"] * ceiling:
+    if (
+        touches is not None
+        and "pace_ceiling_near_frac" in threshold_values
+        and ceiling is not None
+        and touches >= threshold_values["pace_ceiling_near_frac"] * ceiling
+    ):
         findings.append(
             _finding("pace_ceiling_near", "breach",
                      f"{touches} valid touches this week — near the {ceiling}/wk ceiling",
@@ -482,7 +645,13 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         )
 
     # breach: faux-work / gaming — activity over the floor with zero conversion
-    if touches > t["faux_work_touch_floor"] and conversions == 0:
+    if (
+        touches is not None
+        and conversions is not None
+        and "faux_work_touch_floor" in threshold_values
+        and touches > threshold_values["faux_work_touch_floor"]
+        and conversions == 0
+    ):
         findings.append(
             _finding("faux_work", "breach",
                      f"{touches} touches with 0 attributable conversions — faux-work signal",
@@ -490,7 +659,11 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         )
 
     # warn: aging approvals (carry-forward backlog)
-    if carried >= t["backlog_aging_min"]:
+    if (
+        carried is not None
+        and "backlog_aging_min" in threshold_values
+        and carried >= threshold_values["backlog_aging_min"]
+    ):
         findings.append(
             _finding("backlog_aging", "warn",
                      f"{carried} approval(s) waiting on the owner >1 day",
@@ -498,12 +671,21 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         )
 
     # breach: budget nearing a ceiling (fail-closed at 80%)
-    for key, cap in t["budget_ceilings"].items():
-        used = sensed.get("budget_used", {}).get(key)
-        if used is not None and cap and used >= t["budget_near_frac"] * cap:
+    budget_used = sensed.get("budget_used", {})
+    if not isinstance(budget_used, dict):
+        findings.append(_invalid_input_finding("budget", "telemetry"))
+        budget_used = {}
+    for key, cap in ceilings.items():
+        if key not in budget_used:
+            continue
+        valid, used = _safe_number(budget_used[key])
+        if not valid:
+            findings.append(_invalid_input_finding("budget", key))
+            continue
+        if "budget_near_frac" in threshold_values and used >= threshold_values["budget_near_frac"] * cap:
             findings.append(
                 _finding(f"budget_near:{key}", "breach",
-                         f"{key} at {used}/{cap} — >= {int(t['budget_near_frac']*100)}% of the weekly ceiling",
+                         f"{key} at {used}/{cap} — >= {int(threshold_values['budget_near_frac']*100)}% of the weekly ceiling",
                          observed=used, setpoint=cap)
             )
 
@@ -517,7 +699,7 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
 
     # breach: a ceiling exists but its usage feed is wired and absent —
     # spend is unverifiable, which is a guard failure, not a zero.
-    if t["budget_ceilings"] and sensed.get("budget_telemetry_missing"):
+    if ceilings and sensed.get("budget_telemetry_missing"):
         findings.append(
             _finding("budget_telemetry_missing", "breach",
                      "budget ceilings are set but the usage telemetry file is "
@@ -528,7 +710,7 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
     # warn: ceilings exist and no telemetry path is wired at all — visible
     # pressure without an estate-wide alarm storm for departments that have
     # not adopted the budget feed yet.
-    if t["budget_ceilings"] and sensed.get("budget_telemetry_unconfigured"):
+    if ceilings and sensed.get("budget_telemetry_unconfigured"):
         findings.append(
             _finding("budget_telemetry_unconfigured", "warn",
                      "budget ceilings are set but no usage telemetry path is "
@@ -542,9 +724,9 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         findings.append(
             _finding(
                 "runmanifest_red",
-                "warn",
-                "the last daily run's declared plan has steps with no "
-                "completion record — see run-manifests verdict",
+                "breach",
+                "the last daily run failed its signed semantic completion contract "
+                "— see run-manifests verdict",
                 observed=counts,
                 setpoint=None,
             )
@@ -553,9 +735,9 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         findings.append(
             _finding(
                 "runmanifest_unverified",
-                "warn",
-                "a run manifest exists but no trustworthy verdict does — the "
-                "verifier did not run or could not read it",
+                "breach",
+                "a run manifest lacks a trusted signed semantic verdict — "
+                "the verifier did not run or its proof cannot be verified",
                 observed=None,
                 setpoint=None,
             )
@@ -573,7 +755,11 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
                          observed=None, setpoint=0)
             )
         elif sensed.get("drift_ok") is False:
-            count = int(sensed.get("drift_mismatch_count", 0) or 0)
+            raw_count = sensed.get("drift_mismatch_count", 0)
+            valid, count = _safe_number(raw_count, integer=True)
+            if not valid:
+                findings.append(_invalid_input_finding("count", "drift_mismatch_count"))
+                count = None
             if count:
                 sample = ", ".join(sensed.get("drift_mismatches", [])[:5])
                 findings.append(
@@ -583,7 +769,7 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
                              "without re-pin; run runbooks/process-change-qa.md",
                              observed=count, setpoint=0)
                 )
-            else:
+            elif valid:
                 findings.append(
                     _finding("release_unpinned", "breach",
                              sensed.get("drift_reason")
@@ -628,7 +814,11 @@ def compare(sensed: dict, thresholds: dict | None = None) -> list[dict]:
         )
 
     # info: under pace (expected in shadow — visibility only)
-    if touches < 0.1 * ceiling:
+    if (
+        touches is not None
+        and ceiling is not None
+        and touches < 0.1 * ceiling
+    ):
         findings.append(
             _finding("pace_under", "info",
                      f"{touches} valid touches this week (ramp/shadow)", observed=touches, setpoint=ceiling)
@@ -666,6 +856,14 @@ def gate_actions(actions: Iterable[dict], autonomy_state: str,
                 "reason": "unknown_act",
                 "finding_code": action.get("finding_code"),
                 "detail": f"'{act}' is not in the ratified playbook; escalating",
+            })
+            continue
+        if act in GATED_LIVE_ONLY_ACTS:
+            gated.append({
+                "act": "escalate",
+                "reason": "action_not_implemented",
+                "finding_code": action.get("finding_code"),
+                "detail": f"'{act}' has no Factory implementation; escalating for a human decision",
             })
             continue
         if autonomy_state == "shadow" and act not in SHADOW_ACTS:
@@ -757,7 +955,13 @@ def _active_escalation_fingerprints(path: Path) -> set[str]:
             continue
         marker = row.get("marker") or row.get("status")
         if marker == "resolved" or row.get("resolved") is True:
-            active.discard(fingerprint)
+            if row.get("finding_code") == "graph_run_escalated":
+                if _valid_graph_resolution(row, path.parent):
+                    active.discard(fingerprint)
+                else:
+                    active.add(fingerprint)
+            else:
+                active.discard(fingerprint)
         elif marker == "delivered" or row.get("delivered") is True:
             active.add(fingerprint)
     return active
@@ -771,13 +975,14 @@ def _records_state_dir(state_path, heartbeat_path, run_db_path) -> Path | None:
 
 
 def _render_brief(sensed, findings, actions, now_iso, epoch, department, thresholds) -> str:
-    t = thresholds or DEFAULT_THRESHOLDS
+    t = thresholds if isinstance(thresholds, dict) else DEFAULT_THRESHOLDS
+    ceiling = t.get("weekly_touch_ceiling", "unknown")
     lines = [
         f"# {department} department manager brief",
         f"_generated {now_iso} · cycle epoch {epoch} · SHADOW_",
         "",
         "## Numbers",
-        f"- valid touches this week: {sensed.get('week_touches', 0)} / {t['weekly_touch_ceiling']} ceiling",
+        f"- valid touches this week: {sensed.get('week_touches', 0)} / {ceiling} ceiling",
         f"- approvals waiting on the owner: {sensed.get('pending', 0)} ({sensed.get('carried_forward', 0)} aged >1 day)",
         f"- held (recipient mismatch): {sensed.get('held_mismatch', 0)}",
         f"- attributable conversions: {sensed.get('conversions', 0)}",
@@ -813,13 +1018,16 @@ def act(
     department: str = "department",
     thresholds: dict | None = None,
     autonomy_state: str = "shadow",
+    escalation_owner: str | None = None,
+    escalation_sla_hours: int = 24,
     now: str | datetime | None = None,
 ) -> dict[str, Any]:
     """Execute the (shadow-subset) acts and record in the ratified order:
     runs first, then STATE.json (atomic, epoch++), then heartbeat."""
     sensed = sensed or {}
     findings = findings or []
-    now_iso = _now(now).isoformat()
+    current = _now(now)
+    now_iso = current.isoformat()
 
     records_dir = _records_state_dir(state_path, heartbeat_path, run_db_path)
 
@@ -862,22 +1070,36 @@ def act(
             if fingerprint in active_fingerprints:
                 suppressed.append(fingerprint)
                 continue
-            if escalate_fn is None:
+            if (
+                escalate_fn is None
+                or not isinstance(escalation_owner, str)
+                or not escalation_owner.strip()
+                or isinstance(escalation_sla_hours, bool)
+                or not isinstance(escalation_sla_hours, int)
+                or escalation_sla_hours < 1
+            ):
                 undelivered += 1
                 continue
 
             issue = (
                 f"[{department}] {finding_code}: {action.get('detail', '')}"
             ).strip()
-            escalate_fn(
+            next_action = f"Review {finding_code} and choose the documented repair or hold path"
+            result = escalate_fn(
                 issue,
                 context={
                     "epoch": epoch,
                     "finding": action.get("finding_code"),
                     "fingerprint": fingerprint,
                     "subject": subject,
+                    "owner": escalation_owner.strip(),
+                    "deadline": (current + timedelta(hours=escalation_sla_hours)).isoformat(),
+                    "next_action": next_action,
                 },
             )
+            if isinstance(result, dict) and result.get("escalated") is not True:
+                undelivered += 1
+                continue
             delivered += 1
             active_fingerprints.add(fingerprint)
             if fingerprint_path is not None:
@@ -1008,6 +1230,8 @@ def run_manager_cycle(
     sense_fn: Callable[..., dict] | None = None,
     dept_dir=None,
     release_root=None,
+    escalation_owner: str | None = None,
+    escalation_sla_hours: int = 24,
     **telemetry_paths,
 ) -> dict[str, Any]:
     """One full Sense -> Compare -> Decide -> Act -> Record cycle.
@@ -1045,6 +1269,8 @@ def run_manager_cycle(
         department=department,
         thresholds=thresholds,
         autonomy_state=autonomy_state,
+        escalation_owner=escalation_owner,
+        escalation_sla_hours=escalation_sla_hours,
         now=now,
     )
     report.update({"sensed": sensed, "findings": findings, "actions": actions})
@@ -1064,9 +1290,16 @@ def _load_charter_config(repo_root: Path, department: str):
     loader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loader)
     charter = loader.load_charter(charter_path, expect_department=department)
+    escalation = charter.get("escalation") if isinstance(charter.get("escalation"), dict) else {}
+    sla_hours = escalation.get("sla_hours", 24)
+    if isinstance(sla_hours, bool) or not isinstance(sla_hours, int) or sla_hours < 1:
+        sla_hours = 24
+    owner = charter.get("owner")
     return {
         "thresholds": loader.thresholds(charter),
         "autonomy_state": loader.autonomy_state(charter),
+        "escalation_owner": owner if isinstance(owner, str) and owner.strip() else None,
+        "escalation_sla_hours": sla_hours,
     }
 
 
@@ -1088,6 +1321,10 @@ def main() -> None:
                         help="record a human resolution for a bridged graph "
                              "escalation (clears BOTH ledgers, coordinated) "
                              "instead of running a cycle")
+    parser.add_argument("--resolution-owner", default=None)
+    parser.add_argument("--resolution-action", default=None)
+    parser.add_argument("--resolution-receipt", default=None,
+                        help="state-local file whose SHA-256 binds the graph-resolution evidence")
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -1096,12 +1333,19 @@ def main() -> None:
 
     if args.resolve_graph_run:
         print(json.dumps(resolve_graph_escalation(
-            state_dir, department=args.department,
-            run_id=args.resolve_graph_run)))
+            state_dir,
+            department=args.department,
+            run_id=args.resolve_graph_run,
+            owner=args.resolution_owner,
+            action=args.resolution_action,
+            receipt_path=args.resolution_receipt,
+        )))
         return
 
     config = _load_charter_config(root, args.department)
     thresholds = config["thresholds"] if config else None
+    escalation_owner = config["escalation_owner"] if config else None
+    escalation_sla_hours = config["escalation_sla_hours"] if config else 24
     # Codex review #5: when a charter exists it is the SOLE authority on
     # autonomy — a CLI flag must not promote past it. The flag applies only to
     # charterless (scaffold/test) departments.
@@ -1112,7 +1356,7 @@ def main() -> None:
     else:
         autonomy = args.autonomy_state or "shadow"
 
-    escalate_fn = None
+    escalate_fn: Callable[..., Any] | None = None
     if args.outbox:
         import importlib.util as _ilu
 
@@ -1121,7 +1365,7 @@ def main() -> None:
         hil = _ilu.module_from_spec(spec)
         spec.loader.exec_module(hil)
 
-        def escalate_fn(issue, context=None):  # noqa: E306
+        def _escalation_sender(issue, context=None):  # noqa: E306
             context = context or {}
             code = str(context.get("finding") or "unknown")
             detail = issue.split(": ", 1)[1] if ": " in issue else issue
@@ -1161,9 +1405,17 @@ def main() -> None:
                     "needs": "Ops review",
                     "fyi_only": True,
                 }
-            hil.escalate(
-                args.department, issue, args.outbox, context=context, **card
+            return hil.escalate(
+                args.department, issue, args.outbox, context=context,
+                owner=context.get("owner") or escalation_owner,
+                deadline=context.get("deadline") or (
+                    datetime.now(timezone.utc) + timedelta(hours=escalation_sla_hours)
+                ).isoformat(),
+                next_action=context.get("next_action") or "Review the escalation and choose a documented path",
+                **card,
             )
+
+        escalate_fn = _escalation_sender
 
     # dept_dir passes unconditionally: a CLI invocation whose department dir
     # cannot be resolved must surface drift_check_failed, never silently take
@@ -1171,6 +1423,8 @@ def main() -> None:
     report = run_manager_cycle(
         state_dir, autonomy_state=autonomy, thresholds=thresholds,
         escalate_fn=escalate_fn, department=args.department,
+        escalation_owner=escalation_owner,
+        escalation_sla_hours=escalation_sla_hours,
         dept_dir=root / "departments" / args.department,
         budget_path=args.budget,
     )

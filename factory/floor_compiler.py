@@ -11,6 +11,7 @@ import yaml
 
 from factory.charter_loader import funnel_config, load_charter
 from factory.events_ledger import LedgerError, read_transitions
+from kernel.run_manifest import MANIFEST_REV, _manifest_is_signed, verify_signed_verdict
 
 
 HEADER = "# MACHINE-WRITTEN — derived; humans set goals in charter.yaml\n"
@@ -34,7 +35,81 @@ def _previous(path: Path) -> dict[str, dict]:
         return {}
 
 
-def _freeze_reason(state: Path, now: datetime) -> str | None:
+def _run_manifest_freeze_reason(dept: Path, manifest_path: Path) -> str | None:
+    """Return a refusal reason unless the selected run proof is fully bound."""
+    verdict_path = manifest_path.with_name(f"{manifest_path.stem}.verdict.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "selected run-manifest is unreadable"
+    if not isinstance(manifest, dict):
+        return "selected run-manifest schema is invalid"
+    if not _manifest_is_signed(manifest):
+        return "selected run-manifest signature is invalid or missing"
+    if (
+        manifest.get("schema") != "run-manifest"
+        or manifest.get("rev") != MANIFEST_REV
+        or manifest.get("run_id") != manifest_path.stem
+        or not isinstance(manifest.get("created_at"), str)
+        or not isinstance(manifest.get("department"), str)
+        or not manifest["department"].strip()
+    ):
+        return "selected run-manifest schema is invalid"
+
+    release = manifest.get("release")
+    if (
+        not isinstance(release, dict)
+        or set(release) != {"hash", "source_ref"}
+        or not isinstance(release.get("hash"), str)
+        or not release["hash"].strip()
+        or not isinstance(release.get("source_ref"), str)
+        or not release["source_ref"].strip()
+    ):
+        return "selected run-manifest release binding is invalid"
+
+    current_path = dept / "releases" / "current"
+    release_path = dept / "releases" / release["hash"] / "manifest.json"
+    try:
+        current_hash = current_path.read_text(encoding="utf-8").strip()
+        release_doc = json.loads(release_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "selected run-manifest release binding is unreadable"
+    if (
+        current_hash != release["hash"]
+        or not isinstance(release_doc, dict)
+        or release_doc.get("hash") != release["hash"]
+        or release_doc.get("source_ref") != release["source_ref"]
+    ):
+        return "selected run-manifest release/source binding does not match current release"
+
+    try:
+        verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "selected run-manifest verdict is unreadable"
+    if not verify_signed_verdict(verdict):
+        return "selected run-manifest verdict signature is invalid or missing"
+    if not isinstance(verdict, dict) or verdict.get("run_id") != manifest["run_id"]:
+        return "selected run-manifest verdict lineage does not match manifest"
+    if verdict.get("release") is not None and verdict.get("release") != release:
+        return "selected run-manifest verdict release binding does not match manifest"
+    if verdict.get("manifest_run_id") is not None and verdict.get("manifest_run_id") != manifest["run_id"]:
+        return "selected run-manifest verdict lineage does not match manifest"
+    if verdict.get("status") != "green":
+        return f"newest run-manifest verdict is not green: {verdict.get('status')!r}"
+
+    try:
+        created_at = datetime.fromisoformat(manifest["created_at"].replace("Z", "+00:00"))
+        checked_at = datetime.fromisoformat(verdict["checked_at"].replace("Z", "+00:00"))
+        if created_at.tzinfo is None or checked_at.tzinfo is None:
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        return "selected run-manifest verdict lineage is stale or unreadable"
+    if checked_at < created_at:
+        return "selected run-manifest verdict lineage is stale"
+    return None
+
+
+def _freeze_reason(state: Path, now: datetime, dept: Path | None = None) -> str | None:
     objectives = state / "objectives_observed.json"
     if objectives.exists():
         try:
@@ -48,13 +123,15 @@ def _freeze_reason(state: Path, now: datetime) -> str | None:
     if manifest_dir.is_dir():
         manifests = [p for p in manifest_dir.glob("*.json") if not p.name.endswith(".verdict.json")]
         if manifests:
-            newest = max(manifests, key=lambda path: path.stat().st_mtime)
-            verdict = newest.with_name(f"{newest.stem}.verdict.json")
             try:
-                if json.loads(verdict.read_text(encoding="utf-8")).get("status") == "red":
-                    return "newest run-manifest verdict is red"
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                pass
+                newest = max(manifests, key=lambda path: path.stat().st_mtime)
+            except OSError:
+                return "selected run-manifest is unreadable"
+            if dept is None:
+                return "selected run-manifest release binding cannot be verified"
+            refusal = _run_manifest_freeze_reason(dept, newest)
+            if refusal:
+                return refusal
     malformed = read_transitions(
         state, from_stage="__scan__", to_stage="__scan__",
         since=datetime.min.replace(tzinfo=timezone.utc), until=now,
@@ -125,7 +202,7 @@ def compile_floors(dept_dir, state_dir, *, now=None) -> dict:
         return result
     floors_path = dept / "floors.yaml"
     previous = _previous(floors_path)
-    freeze = _freeze_reason(state, current)
+    freeze = _freeze_reason(state, current, dept)
     if freeze:
         result = {"status": "frozen", "reason": freeze, "floors": previous, "changes": [], "computed_at": computed_at}
         _persist(state, result)

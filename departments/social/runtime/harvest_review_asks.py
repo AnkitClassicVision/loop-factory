@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -92,12 +92,17 @@ def harvest(
         if age_hours > return_sla_hours and not row.get("sla_breached_at"):
             row["sla_breached_at"] = now.isoformat()
             row["sla_hours"] = return_sla_hours
-            human_in_the_loop.escalate(
+            escalation = human_in_the_loop.escalate(
                 "social",
                 f"review ask {identifier} exceeded {return_sla_hours:g}h return SLA",
                 outbox,
                 context={"card_identifier": identifier, "age_hours": round(age_hours, 2)},
+                owner="ankit",
+                deadline=(now + timedelta(hours=return_sla_hours)).isoformat(),
+                next_action="Review the overdue card and record an approve, decline, or hold decision",
             )
+            if not escalation.get("escalated"):
+                raise RuntimeError("strict social escalation was blocked")
             breaches += 1
     _save_jsonl(ledger, rows)
     result = {

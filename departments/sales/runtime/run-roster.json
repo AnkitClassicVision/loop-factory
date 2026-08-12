@@ -1,47 +1,104 @@
 {
-  "schema": "run-roster",
-  "rev": 1,
+  "contract": {
+    "path": "node-contract.json",
+    "schema": "node-contract/v1",
+    "sha256": "71bb2673fca03c3130c939ae3f96b74a29f9030988b67de13c5c42e3af1e10c1"
+  },
   "department": "sales",
+  "entrypoint": {
+    "driver": {
+      "impl": "runtime/sense_gates.py",
+      "node": "sense_gates",
+      "node_id": "N1",
+      "path": "runtime/sense_gates.py",
+      "subgraph": "SG-SENSE"
+    },
+    "path": "runtime/sales_daily.sh",
+    "service": "sales-loop.service",
+    "service_source": "systemd/sales-loop.service",
+    "timer": "sales-loop.timer",
+    "timer_source": "systemd/sales-loop.timer"
+  },
   "nodes": [
     {
-      "ordinal": 1,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/intake_sensor.py",
       "node": "intake_sensor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 1,
+      "required": true,
+      "subgraph": "SG-RECEIVED"
     },
     {
-      "ordinal": 2,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/qualify_scorer.py",
       "node": "qualify_scorer",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 2,
+      "required": true,
+      "subgraph": "SG-QUALIFIED"
     },
     {
-      "ordinal": 3,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/booked_sensor.py",
       "node": "booked_sensor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 3,
+      "required": true,
+      "subgraph": "SG-BOOKED"
     },
     {
-      "ordinal": 4,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/held_confirm_card.py",
       "node": "held_confirm_card",
-      "required": true
+      "node_id": "N3",
+      "ordinal": 4,
+      "required": true,
+      "subgraph": "SG-HELD"
     },
     {
-      "ordinal": 5,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/held_sensor.py",
       "node": "held_sensor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 5,
+      "required": true,
+      "subgraph": "SG-HELD"
     },
     {
-      "ordinal": 6,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/sense_gates.py",
       "node": "sense_gates",
-      "required": true
-    },
-    {
-      "ordinal": 7,
-      "node": "floor_compiler_run",
-      "required": true
-    },
-    {
-      "ordinal": 8,
-      "node": "conductor_tick",
-      "required": false
+      "node_id": "N1",
+      "ordinal": 6,
+      "required": true,
+      "subgraph": "SG-SENSE"
     }
-  ]
+  ],
+  "rev": 3,
+  "schema": "run-roster"
 }

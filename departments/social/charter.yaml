@@ -186,6 +186,7 @@ escalation:
   default: fully_automated_with_escalation
   targets: [ankit]                 # sole target, all classes (Q14)
   no_reply_ttl_hours: 24           # owner override of 48h default (Q14)
+  sla_hours: 24
   no_reply_action: deny_and_refile_with_fresh_context_never_auto_approve
   floor_breach: immediate_ping
   draft_only_approval_mode: weekly_batch    # one sitting, whole queue (Q14)

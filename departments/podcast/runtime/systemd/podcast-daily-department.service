@@ -1,22 +1,11 @@
-# podcast department loop — oneshot, SHADOW-safe, hardened.
-# Instantiated from templates/systemd/dept-loop.service.tmpl on 2026-07-31.
-# Enabled deliberately by Ankit (chat GO after manual dry-runs rc=0 same day).
+# DEPRECATED 2026-08-09: the canonical Podcast trigger is
+# departments/podcast/systemd/podcast-loop.timer -> podcast-loop.service.
+# This legacy unit is intentionally inert. Deployment requires an explicit
+# human-approved disable/remove action in the target user-systemd instance.
 [Unit]
-Description=podcast department loop (loop-factory)
+Description=DEPRECATED legacy Podcast loop (inert)
+ConditionPathExists=/run/loop-factory/legacy-podcast-trigger-never-enable
 
 [Service]
 Type=oneshot
-WorkingDirectory=/mnt/d_drive/repos/loop-factory
-ExecStart=/usr/bin/env bash /mnt/d_drive/repos/loop-factory/departments/podcast/runtime/podcast_daily.sh
-TimeoutStartSec=600
-# Confinement (deny-by-default; departments hold no credentials):
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/mnt/d_drive/repos/loop-factory/departments/podcast/state /mnt/d_drive/repos/loop-factory/state
-IPAddressDeny=any
-IPAddressAllow=localhost
-RestrictAddressFamilies=AF_UNIX AF_INET
-# NO credential-bearing Environment= lines. The lock service reads secrets; the
-# department process never does.
+ExecStart=/usr/bin/false

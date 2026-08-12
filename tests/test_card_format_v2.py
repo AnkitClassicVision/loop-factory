@@ -9,13 +9,13 @@ def _row(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_old_style_escalate_marks_loud_card_gap(tmp_path):
+def test_escalate_without_owner_deadline_and_next_action_stops_as_blocked(tmp_path):
     outbox = tmp_path / "outbox.jsonl"
-    human_in_the_loop.escalate("sales", "old issue", outbox)
+    result = human_in_the_loop.escalate("sales", "old issue", outbox)
 
-    row = _row(outbox)
-    assert row["card_gap"] is True
-    assert row["eli5"].startswith("[unclear card] ")
+    assert result["escalated"] is False
+    assert result["blocked"] is True
+    assert not outbox.exists()
 
 
 def test_full_v2_escalate_writes_exact_card_shape(tmp_path):
@@ -30,9 +30,16 @@ def test_full_v2_escalate_writes_exact_card_shape(tmp_path):
         meaning="Spend is near its ceiling",
         needs="Choose whether to pause",
         actions=actions,
+        owner="human-owner",
+        deadline="2026-08-10T12:00:00Z",
+        next_action="Choose whether to pause spend",
     )
 
-    assert _row(outbox)["card"] == {
+    row = _row(outbox)
+    assert row["schema"] == "human-outbox-escalation/v1"
+    assert row["escalation"]["owner"] == "human-owner"
+    assert row["escalation"]["status"] == "open"
+    assert row["card"] == {
         "what_it_means": "Spend is near its ceiling",
         "what_it_needs": "Choose whether to pause",
         "approvable_actions": actions,
@@ -44,6 +51,9 @@ def test_fyi_only_escalate_has_no_approvable_actions(tmp_path):
     human_in_the_loop.escalate(
         "sales", "review", outbox,
         meaning="Something needs review", needs="Ops review", fyi_only=True,
+        owner="human-owner",
+        deadline="2026-08-10T12:00:00Z",
+        next_action="Review the update",
     )
 
     card = _row(outbox)["card"]
@@ -56,15 +66,20 @@ def test_manager_main_budget_telemetry_missing_card(tmp_path, monkeypatch):
     state = tmp_path / "state"
     budget = tmp_path / "missing-budget.json"
 
-    monkeypatch.setattr(manager, "_load_charter_config", lambda *_: None)
-    monkeypatch.setattr(manager, "run_manager_cycle", lambda *args, **kwargs: (
+    monkeypatch.setattr(manager, "_load_charter_config", lambda *_: {
+        "thresholds": {},
+        "autonomy_state": "shadow",
+        "escalation_owner": "human-owner",
+        "escalation_sla_hours": 24,
+    })
+    def fake_cycle(*args, **kwargs):
         kwargs["escalate_fn"](
             "[sales] budget_telemetry_missing: detail",
             context={"finding": "budget_telemetry_missing"},
-        ) or {
-            "epoch": 1, "findings": [], "escalations": 1, "brief_path": None,
-        }
-    ))
+        )
+        return {"epoch": 1, "findings": [], "escalations": 1, "brief_path": None}
+
+    monkeypatch.setattr(manager, "run_manager_cycle", fake_cycle)
     monkeypatch.setattr(sys, "argv", [
         "manager.py", "--department", "sales", "--state-dir", str(state),
         "--outbox", str(outbox), "--budget", str(budget),

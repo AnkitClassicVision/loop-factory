@@ -1,82 +1,273 @@
 {
-  "schema": "run-roster",
-  "rev": 1,
+  "contract": {
+    "path": "node-contract.json",
+    "schema": "node-contract/v1",
+    "sha256": "fbf10b8ecfa6828de4ec27e04eb484347b9eab74fc5597a3af54156da12193a8"
+  },
   "department": "podcast",
+  "entrypoint": {
+    "driver": {
+      "impl": "runtime/conductor_tick.py",
+      "node": "conductor_tick",
+      "node_id": "N14",
+      "path": "runtime/conductor_tick.py",
+      "subgraph": "SG-WATCHDOG"
+    },
+    "path": "runtime/podcast_daily.sh",
+    "service": "podcast-loop.service",
+    "service_source": "systemd/podcast-loop.service",
+    "timer": "podcast-loop.timer",
+    "timer_source": "systemd/podcast-loop.timer"
+  },
   "nodes": [
     {
-      "ordinal": 1,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/sense_estate.py",
       "node": "sense_estate",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 1,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 2,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/pipeline_sensor.py",
       "node": "pipeline_sensor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 2,
+      "required": true,
+      "subgraph": "SG-PIPELINE"
     },
     {
-      "ordinal": 3,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/publish_verifier.py",
       "node": "publish_verifier",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 3,
+      "required": true,
+      "subgraph": "SG-PUBLISHDAY"
     },
     {
-      "ordinal": 4,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/manifest_sensor.py",
       "node": "manifest_sensor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 4,
+      "required": true,
+      "subgraph": "SG-MANIFEST"
     },
     {
-      "ordinal": 5,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/hopper_sensor.py",
       "node": "hopper_sensor",
-      "required": true
+      "node_id": "N5",
+      "ordinal": 5,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 6,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/funnel_floor_sensor.py",
       "node": "funnel_floor_sensor",
-      "required": true
+      "node_id": "N11",
+      "ordinal": 6,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 7,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/floor_compiler_run.py",
       "node": "floor_compiler_run",
-      "required": true
+      "node_id": "N13",
+      "ordinal": 7,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 8,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/expectation_reconcile.py",
       "node": "expectation_reconcile",
-      "required": true
+      "node_id": "N10",
+      "ordinal": 8,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 9,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/comms_reconcile_sensor.py",
       "node": "comms_reconcile_sensor",
-      "required": true
+      "node_id": "N6",
+      "ordinal": 9,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 10,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/dag_supervisor.py",
       "node": "dag_supervisor",
-      "required": true
+      "node_id": "N1",
+      "ordinal": 10,
+      "required": true,
+      "subgraph": "SG-DAG-SUPERVISION"
     },
     {
-      "ordinal": 11,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/compare_charter.py",
       "node": "compare_charter",
-      "required": true
+      "node_id": "N2",
+      "ordinal": 11,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 12,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/fingerprint_dedup.py",
       "node": "fingerprint_dedup",
-      "required": true
+      "node_id": "N3",
+      "ordinal": 12,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 13,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/escalate_outbox.py",
       "node": "escalate_outbox",
-      "required": true
+      "node_id": "N4",
+      "ordinal": 13,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
     },
     {
-      "ordinal": 14,
-      "node": "rotate_observations",
-      "required": false
-    },
-    {
-      "ordinal": 15,
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/conductor_tick.py",
       "node": "conductor_tick",
-      "required": false
+      "node_id": "N14",
+      "ordinal": 14,
+      "required": true,
+      "subgraph": "SG-WATCHDOG"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/heal_select.py",
+      "node": "heal_select",
+      "node_id": "N1",
+      "ordinal": 15,
+      "required": false,
+      "subgraph": "SG-HEAL"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/heal_apply.py",
+      "node": "heal_apply",
+      "node_id": "N2",
+      "ordinal": 16,
+      "required": false,
+      "subgraph": "SG-HEAL"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/heal_verify.py",
+      "node": "heal_verify",
+      "node_id": "N3",
+      "ordinal": 17,
+      "required": false,
+      "subgraph": "SG-HEAL"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/record.py",
+      "node": "record",
+      "node_id": "N9",
+      "ordinal": 18,
+      "required": false,
+      "subgraph": "SG-HEAL"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/record.py",
+      "node": "record",
+      "node_id": "N9",
+      "ordinal": 19,
+      "required": false,
+      "subgraph": "SG-WATCHDOG"
     }
-  ]
+  ],
+  "rev": 3,
+  "schema": "run-roster"
 }

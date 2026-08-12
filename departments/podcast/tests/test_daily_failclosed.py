@@ -3,6 +3,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from factory import runrecord
+
 
 SCRIPT = Path(__file__).parents[1] / "runtime" / "podcast_daily.sh"
 
@@ -46,6 +48,15 @@ def _run(tmp_path, incidents, behavior):
     state = tmp_path / "state"
     (repo / "factory").mkdir(parents=True)
     state.mkdir()
+    spool = state / "factory-spool"
+    runrecord.write_spool_marker(
+        spool,
+        run_id="fixture-run",
+        department="podcast",
+        release=None,
+        trigger="daily",
+        state_dir=state,
+    )
     (repo / "factory" / "launch.py").write_text(LAUNCH_STUB, encoding="utf-8")
     (state / "incidents.json").write_text(json.dumps(incidents), encoding="utf-8")
     behavior_path = tmp_path / "behavior.json"
@@ -57,6 +68,8 @@ def _run(tmp_path, incidents, behavior):
         "PODCAST_STATE_DIR": str(state),
         "STUB_BEHAVIOR": str(behavior_path),
         "STUB_CALLS": str(calls_path),
+        "LOOP_FACTORY_RUN_ID": "fixture-run",
+        "OE_RECORD_SPOOL": str(spool),
     }
     completed = subprocess.run(
         ["bash", str(SCRIPT), "--heal-phase-only"],
@@ -121,6 +134,8 @@ def test_incident_load_failure_aborts_nonzero(tmp_path):
         "PODCAST_STATE_DIR": str(state),
         "STUB_BEHAVIOR": str(tmp_path / "behavior.json"),
         "STUB_CALLS": str(tmp_path / "calls.jsonl"),
+        "LOOP_FACTORY_RUN_ID": "fixture-run",
+        "OE_RECORD_SPOOL": str(state / "factory-spool"),
     }
     completed = subprocess.run(
         ["bash", str(SCRIPT), "--heal-phase-only"], env=env, capture_output=True
@@ -167,21 +182,14 @@ def test_floor_compiler_runs_between_floor_sensor_and_expectation_reconcile():
     assert funnel_index < compiler_index < expectation_index
 
 
-def test_run_manifest_is_minted_before_nodes_and_verified_before_manager():
+def test_daily_entrypoint_requires_factory_context_and_never_mints_or_verifies():
     text = SCRIPT.read_text(encoding="utf-8")
-    assert text.index("run_manifest mint") < text.index("sense_estate.py")
-    assert "export LOOP_FACTORY_RUN_ID" in text
-    assert "ver_rc=0" in text
-    assert "|| ver_rc=$?" in text
-    assert text.index("run_manifest verify") < text.index("factory/manager.py")
+    assert "run_manifest mint" not in text
+    assert "run_manifest verify" not in text
+    assert "LOOP_FACTORY_RUN_ID" in text
+    assert "OE_RECORD_SPOOL" in text
 
 
-def test_conductor_tick_is_the_last_runtime_node_invocation():
-    runtime_invocations = [
-        line
-        for line in SCRIPT.read_text(encoding="utf-8").splitlines()
-        if "factory/launch.py" in line and "/runtime/" in line
-    ]
-
-    assert runtime_invocations
-    assert "runtime/conductor_tick.py" in runtime_invocations[-1]
+def test_conductor_tick_runs_before_manager_as_the_declared_driver():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert text.index("runtime/conductor_tick.py") < text.index("factory/manager.py")

@@ -7,7 +7,10 @@ Description={{DEPARTMENT}} department loop (loop-factory)
 [Service]
 Type=oneshot
 WorkingDirectory={{REPO}}
-ExecStart=/usr/bin/env bash {{REPO}}/departments/{{DEPARTMENT}}/runtime/{{DEPARTMENT}}_daily.sh
+# The trusted Factory wrapper mints, binds, executes exactly one release-declared
+# entrypoint, and issues the final semantic verdict. The unit never invokes a
+# mutable department shell directly.
+ExecStart=/usr/bin/python3 -m factory.run_driver --department {{DEPARTMENT}} --root {{REPO}} --trigger daily
 TimeoutStartSec=600
 # Confinement (deny-by-default; departments hold no credentials):
 NoNewPrivileges=yes

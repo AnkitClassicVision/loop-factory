@@ -6,8 +6,14 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from departments.podcast.runtime import hopper_sensor
 from factory import runrecord
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +77,7 @@ def _run(
         pipeline_repo,
         today=today,
     )
+    promote_factory_records(state_dir)
     document = json.loads(
         (state_dir / "objectives_observed.json").read_text(encoding="utf-8")
     )
@@ -273,6 +280,7 @@ def test_forced_failure_appends_error_record_and_cli_exits_nonzero(tmp_path):
     )
 
     assert result.returncode != 0
+    promote_factory_records(state_dir)
     records = [
         json.loads(line)
         for line in (state_dir / "runs-v2.jsonl").read_text(

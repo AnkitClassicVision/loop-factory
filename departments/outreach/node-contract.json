@@ -1,0 +1,113 @@
+{
+  "contract_sha256": "6a8af60ba3181b21f163a64b0dfab3c16d48afbd414a4327eced9980fa3564c3",
+  "department": "outreach",
+  "nodes": [
+    {
+      "department": "outreach",
+      "impl": "runtime/lane_sense.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_lane_sense_stale_detection",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "lane-sense/v1 observations",
+        "consumer": "escalate consumes lane_sense.json",
+        "name": "lane-sense/v1 observations"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/state_reconcile.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_reconcile_drift_count_and_reasons",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "state-reconcile/v1 and harvested ask",
+        "consumer": "escalate/objectives consume state_reconcile.json and asks.jsonl",
+        "name": "state-reconcile/v1 and harvested ask"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/gate_monitor.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_gate_missing_receipt_is_violation",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "gate-monitor/v1 integrity result",
+        "consumer": "escalate/objectives consume gate_monitor.json",
+        "name": "gate-monitor/v1 integrity result"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/queue_ager.py",
+      "node_id": "N4",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_queue_ager_counts_old_not_fresh",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "queue-ager/v1 age result",
+        "consumer": "escalate/objectives consume queue_ager.json",
+        "name": "queue-ager/v1 age result"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/escalate.py",
+      "node_id": "N5",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_escalate_once_per_fingerprint",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "escalation ask/fingerprint",
+        "consumer": "owner outbox consumes asks.jsonl and decisions_outbox.jsonl",
+        "name": "escalation ask/fingerprint"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/objectives_sensor.py",
+      "node_id": "N6",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_objectives_real_gate_breach_reports_why",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "objectives-observed/v1",
+        "consumer": "verifier/board consume objectives_observed.json and baselines",
+        "name": "objectives-observed/v1"
+      }
+    },
+    {
+      "department": "outreach",
+      "impl": "runtime/outreach_daily.sh",
+      "node_id": "ORCH",
+      "qa": {
+        "evidence": "tests/test_outreach_nodes.py::test_orchestrator_halts_at_failing_node",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-GOVERN",
+      "work_object": {
+        "artifact_or_field": "receipt-gated daily cycle",
+        "consumer": "Factory manager consumes node records and terminal artifacts",
+        "name": "receipt-gated daily cycle"
+      }
+    }
+  ],
+  "rev": 1,
+  "schema": "node-contract/v1"
+}

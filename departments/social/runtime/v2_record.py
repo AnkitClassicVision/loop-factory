@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from factory import runrecord
+from factory import node_contract, runrecord
 
 
 class ReceiptValidationError(ValueError):
@@ -70,12 +70,31 @@ def append_stage_record(
     if isinstance(epoch, bool) or not isinstance(epoch, int):
         epoch = 0
     department_dir = department_dir or REPO_ROOT / "departments" / "social"
+    graph_node = node.split("-", 1)[0]
+    impl_by_node = {
+        "N1": "runtime/inventory_backcatalog.py",
+        "N2": "runtime/select_candidate.py",
+        "N3": "runtime/assemble_context.py",
+        "N4": "runtime/draft_post.py",
+        "N5": "runtime/qa_post.py",
+        "N6": "runtime/dispatch.py",
+        "N7": "runtime/delivery_verify.py",
+        "N9": "runtime/record.py",
+        "N10": "runtime/create_review_card.py",
+        "N11": "runtime/harvest_review_asks.py",
+    }
+    impl = impl_by_node.get(graph_node)
+    if impl is None:
+        raise ReceiptValidationError(f"unmapped social graph node: {node}")
+    declared = node_contract.lookup(
+        department_dir, subgraph="SG-REPUBLISH", node_id=graph_node, impl=impl
+    )
     record = runrecord.build_record(
         schema=runrecord.SCHEMA,
         rev=2,
         run_id=run_id,
         department="social",
-        node=node,
+        node=Path(impl).stem,
         epoch=epoch,
         ts=datetime.now(timezone.utc).isoformat(),
         attempt=1,
@@ -95,6 +114,13 @@ def append_stage_record(
         evaluator=None,
         approval=None,
         external_actions_taken=_external_actions(receipt_rows, node),
+        node_contract={
+            "department": "social", "subgraph": "SG-REPUBLISH",
+            "node_id": graph_node, "impl": impl,
+        },
+        contract_sha256=node_contract.load(department_dir)["contract_sha256"],
+        work_object_ref=declared["work_object"],
+        qa_receipt_ref=declared["qa"],
     )
     runrecord.append_record(state_dir, record)
     return record

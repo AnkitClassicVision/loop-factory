@@ -35,6 +35,13 @@ class LocalSigner(Signer):
         return hmac.compare_digest(self.sign(payload), sig)
 
 
+def canonical_payload(value) -> bytes:
+    """Serialize a Factory-signed value without accepting non-finite JSON."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+
 class KMSSigner(Signer):
     def __init__(self, key_id):
         self.key_id = key_id

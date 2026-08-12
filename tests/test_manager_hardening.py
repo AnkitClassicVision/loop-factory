@@ -68,6 +68,7 @@ def _run_breach(tmp_path, delivered, *, code="run_failed", subject="worker"):
         heartbeat_path=tmp_path / "heartbeats.jsonl",
         run_db_path=tmp_path / "runs.jsonl",
         department="podcast",
+        escalation_owner="test-owner",
         now=NOW,
     )
 
@@ -193,3 +194,52 @@ def test_resolved_then_recurring_breach_escalates_again(tmp_path):
         "resolved",
         "delivered",
     ]
+
+
+@pytest.mark.parametrize("poison", [-1, "not-a-number", float("nan"), float("inf")])
+def test_compare_refuses_poisoned_count_instead_of_coercing_or_bypassing(poison):
+    findings = M.compare(
+        {"week_touches": poison, "conversions": 0, "held_mismatch": 0, "carried_forward": 0},
+        M.DEFAULT_THRESHOLDS,
+    )
+
+    assert any(f["code"] == "count_invalid:week_touches" for f in findings)
+    assert not any(f["code"] == "pace_ceiling_near" for f in findings)
+
+
+@pytest.mark.parametrize("poison", [-1, "not-a-number", float("nan"), float("inf")])
+def test_compare_refuses_poisoned_budget_instead_of_treating_it_as_safe(poison):
+    findings = M.compare(
+        {"week_touches": 0, "budget_used": {"dollars": poison}},
+        {**M.DEFAULT_THRESHOLDS, "budget_ceilings": {"dollars": 40}},
+    )
+
+    assert any(f["code"] == "budget_invalid:dollars" for f in findings)
+    assert not any(f["code"] == "budget_near:dollars" for f in findings)
+
+
+def test_compare_refuses_poisoned_safety_threshold():
+    findings = M.compare(
+        {"week_touches": 0, "conversions": 0},
+        {**M.DEFAULT_THRESHOLDS, "weekly_touch_ceiling": -1},
+    )
+
+    assert any(f["code"] == "threshold_invalid:weekly_touch_ceiling" for f in findings)
+
+
+def test_manager_cycle_records_poisoned_count_as_a_breach(tmp_path):
+    def poisoned_sense(state_dir, now=None, **paths):
+        return {
+            "week_touches": float("nan"),
+            "conversions": 0,
+            "held_mismatch": 0,
+            "carried_forward": 0,
+            "budget_used": {},
+            "last_run_ok": True,
+        }
+
+    report = M.run_manager_cycle(tmp_path, sense_fn=poisoned_sense, now=NOW)
+
+    assert any(f["code"] == "count_invalid:week_touches" for f in report["findings"])
+    recorded = _jsonl(tmp_path / "runs.jsonl")[-1]
+    assert "count_invalid:week_touches" in recorded["findings"]

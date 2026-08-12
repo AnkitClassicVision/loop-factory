@@ -4,10 +4,16 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from factory import rollup
 from factory.board import render_html, render_site
 from factory.boardfeed import build_feed
 from factory.runrecord import append_record, build_record
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 NOW = "2026-08-02T20:00:00+00:00"
@@ -74,6 +80,7 @@ def _run(department: Path, run_id: str, *, status: str = "ok") -> None:
         external_actions_taken=0,
     )
     append_record(department / "state", record)
+    promote_factory_records(department / "state")
     telemetry = {
         "schema_version": "step-telemetry/v1",
         "ts": "2026-08-02T19:00:00+00:00",

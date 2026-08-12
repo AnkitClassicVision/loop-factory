@@ -1,0 +1,117 @@
+{
+  "contract": {
+    "path": "node-contract.json",
+    "schema": "node-contract/v1",
+    "sha256": "6a8af60ba3181b21f163a64b0dfab3c16d48afbd414a4327eced9980fa3564c3"
+  },
+  "department": "outreach",
+  "entrypoint": {
+    "driver": {
+      "impl": "runtime/escalate.py",
+      "node": "escalate",
+      "node_id": "N5",
+      "path": "runtime/escalate.py",
+      "subgraph": "SG-GOVERN"
+    },
+    "path": "runtime/outreach_daily.sh",
+    "service": "outreach-loop.service",
+    "service_source": "systemd/outreach-loop.service",
+    "timer": "outreach-loop.timer",
+    "timer_source": "systemd/outreach-loop.timer"
+  },
+  "nodes": [
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/lane_sense.py",
+      "node": "lane_sense",
+      "node_id": "N1",
+      "ordinal": 1,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/state_reconcile.py",
+      "node": "state_reconcile",
+      "node_id": "N2",
+      "ordinal": 2,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/gate_monitor.py",
+      "node": "gate_monitor",
+      "node_id": "N3",
+      "ordinal": 3,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/queue_ager.py",
+      "node": "queue_ager",
+      "node_id": "N4",
+      "ordinal": 4,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/escalate.py",
+      "node": "escalate",
+      "node_id": "N5",
+      "ordinal": 5,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/objectives_sensor.py",
+      "node": "objectives_sensor",
+      "node_id": "N6",
+      "ordinal": 6,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    },
+    {
+      "allowed_terminal_statuses": [
+        "ok",
+        "blocked",
+        "unknown"
+      ],
+      "impl": "runtime/outreach_daily.sh",
+      "node": "outreach_daily",
+      "node_id": "ORCH",
+      "ordinal": 7,
+      "required": true,
+      "subgraph": "SG-GOVERN"
+    }
+  ],
+  "rev": 3,
+  "schema": "run-roster"
+}

@@ -151,6 +151,13 @@ def check_traceability(dept_dir) -> list[str]:
         return [f"{sub_path.name} is not valid JSON: {exc}"]
 
     fails: list[str] = []
+    contract_path = Path(dept_dir) / "node-contract.json"
+    if contract_path.is_file():
+        try:
+            from factory import node_contract
+            node_contract.load(dept_dir)
+        except Exception as exc:
+            fails.append(f"node-contract/v1 invalid: {exc}")
     declared_impls: set[str] = set()
     dept_resolved = dept_dir.resolve()
     for sg in data.get("subgraphs", []):

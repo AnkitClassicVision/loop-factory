@@ -110,6 +110,8 @@ def write_record(
     now: str | None = None,
     lock_timeout: float = 3.0,
     emit_v2: bool = False,
+    contract_subgraph: str | None = None,
+    contract_node_id: str = "N9",
 ) -> dict[str, Any]:
     """Record one node run: runs.jsonl, STATE.json, then heartbeat.
 
@@ -190,6 +192,9 @@ def write_record(
                 "epoch": epoch,
             }],
             external_actions_taken=0,
+            contract_subgraph=contract_subgraph,
+            contract_node_id=contract_node_id if contract_subgraph else None,
+            contract_impl="runtime/record.py" if contract_subgraph else None,
         )
     return receipt
 
@@ -208,6 +213,7 @@ def main() -> None:
     parser.add_argument("--payload", required=True, help="JSON or short text summary")
     parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
     parser.add_argument("--intended-epoch", type=int, default=None)
+    parser.add_argument("--subgraph", default=None)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--shadow", dest="shadow", action="store_true", default=True)
     mode.add_argument("--live", dest="shadow", action="store_false")
@@ -222,6 +228,7 @@ def main() -> None:
         intended_epoch=args.intended_epoch,
         shadow=args.shadow,
         emit_v2=True,
+        contract_subgraph=args.subgraph,
     )
     print(json.dumps(receipt, sort_keys=True))
 

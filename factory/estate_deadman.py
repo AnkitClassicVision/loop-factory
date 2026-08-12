@@ -16,7 +16,7 @@ import logging
 import shutil
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -270,6 +270,9 @@ def raise_alarm(report: dict[str, Any], outbox_path: str | Path) -> dict[str, An
             "effect": "inspect the stale heartbeat and restart the affected watchdog or conductor",
             "reply": "approve inspect-restart",
         }],
+        owner="ankit",
+        deadline=((_parse_timestamp(report.get("observed_at")) or datetime.now(timezone.utc)) + timedelta(hours=24)).isoformat(),
+        next_action="Inspect the stale heartbeat and choose an approved recovery action",
     )
 
 

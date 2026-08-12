@@ -5,10 +5,16 @@ import os
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from factory import rollup, scores
 from factory.board import render_board
 from factory.boardfeed import build_feed
 from factory.runrecord import append_record, build_record
+from tests.record_fixture import promote_factory_records
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 NOW = "2026-08-02T20:00:00+00:00"
@@ -97,6 +103,7 @@ def _record(
         external_actions_taken=0,
     )
     append_record(department / "state", record)
+    promote_factory_records(department / "state")
     telemetry_calls = model_calls if model_calls > 0 else int(auth_class == "blocked")
     telemetry_path = department / "state" / "telemetry.jsonl"
     for index in range(telemetry_calls):
@@ -478,6 +485,7 @@ def test_script_node_records_count_in_rollup_without_lane_rows(tmp_path):
         external_actions_taken=0,
     )
     append_record(department / "state", record)
+    promote_factory_records(department / "state")
 
     rows, _ = _build(tmp_path)
 

@@ -1,0 +1,17 @@
+[Unit]
+Description=Podcast Loop Factory run (shadow, trusted wrapper)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/d_drive/repos/loop-factory
+ExecStart=/usr/bin/python3 -m factory.run_driver --department podcast --root /mnt/d_drive/repos/loop-factory --trigger daily
+TimeoutStartSec=600
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/d_drive/repos/loop-factory/departments/podcast/state /mnt/d_drive/repos/loop-factory/state
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET
+Environment=PLACEHOLDER_MODE=1

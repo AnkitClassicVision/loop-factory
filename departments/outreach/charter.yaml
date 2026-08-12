@@ -129,6 +129,7 @@ immutable_safety_invariants:
 
 escalation:
   default: fully_automated_with_escalation
+  sla_hours: 48
   human_gates:
     - external_send
     - crm_write

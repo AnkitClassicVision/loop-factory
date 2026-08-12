@@ -1,13 +1,11 @@
-# podcast department loop timer. Runs daily at 07:00 local, after the
-# pipeline's 06:30 DAG-projection export, so the supervisor reads a fresh
-# receipt. Enabled deliberately by the owner on 2026-07-31.
+# DEPRECATED 2026-08-09. Canonical source-controlled timer:
+# departments/podcast/systemd/podcast-loop.timer.
 [Unit]
-Description=Run the podcast department loop on schedule
+Description=DEPRECATED legacy Podcast timer (inert)
+ConditionPathExists=/run/loop-factory/legacy-podcast-trigger-never-enable
 
 [Timer]
-OnCalendar=*-*-* 07:00:00
-Persistent=true
-RandomizedDelaySec=120
+OnCalendar=*-*-* 00:00:00
+Persistent=false
 
-[Install]
-WantedBy=timers.target
+# No install stanza: this unit cannot be enabled from the source artifact.

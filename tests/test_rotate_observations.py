@@ -5,7 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from departments.podcast.runtime.rotate_observations import rotate
+
+
+pytestmark = pytest.mark.usefixtures("factory_record_spool")
 
 
 SCRIPT = Path(__file__).parents[1] / "departments" / "podcast" / "runtime" / "rotate_observations.py"

@@ -7,7 +7,7 @@ Description=outreach department loop (loop-factory)
 [Service]
 Type=oneshot
 WorkingDirectory=/mnt/d_drive/repos/loop-factory
-ExecStart=/usr/bin/env bash /mnt/d_drive/repos/loop-factory/departments/outreach/runtime/outreach_daily.sh
+ExecStart=/usr/bin/python3 -m factory.run_driver --department outreach --root /mnt/d_drive/repos/loop-factory --trigger daily
 TimeoutStartSec=600
 # Confinement (deny-by-default; departments hold no credentials):
 NoNewPrivileges=yes

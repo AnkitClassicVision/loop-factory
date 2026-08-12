@@ -14,18 +14,40 @@ SOURCES="${STATE_DIR}/sources"
 QUEUE="${STATE_DIR}/approval_queue.jsonl"
 OUTBOX="${REPO}/state/decisions_outbox.jsonl"   # your human-in-the-loop consumer watches this
 
-json_object_field() {
-    local field="$1"
-    python3 -c 'import json, sys; row=json.load(sys.stdin); assert isinstance(row, dict); value=row[sys.argv[1]]; assert isinstance(value, str) and value; print(value)' "${field}"
-}
-
 mkdir -p "${STATE_DIR}" "$(dirname "${OUTBOX}")"
 
-# P1: mint the run manifest BEFORE the first node. Mint refusal is a hard
-# stop: a run that cannot declare its plan does not run (deny-by-default).
-mint_out="$(PYTHONPATH="${REPO}" python3 -m kernel.run_manifest mint --department "${DEPARTMENT}" --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --trigger daily)"
-LOOP_FACTORY_RUN_ID="$(json_object_field run_id <<<"${mint_out}")"
-export LOOP_FACTORY_RUN_ID
+if [ -z "${LOOP_FACTORY_RUN_ID:-}" ] || [ -z "${OE_RECORD_SPOOL:-}" ] \
+    || [ ! -d "${OE_RECORD_SPOOL:-}" ] \
+    || [ ! -f "${OE_RECORD_SPOOL:-}/factory-spool.json" ]; then
+    echo "Factory run identity and record spool are required" >&2
+    exit 2
+fi
+if ! python3 - "${OE_RECORD_SPOOL}" "${LOOP_FACTORY_RUN_ID}" "${DEPARTMENT}" "${STATE_DIR}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+spool, run_id, department, state_dir = sys.argv[1:]
+try:
+    marker = json.loads((Path(spool) / "factory-spool.json").read_text(encoding="utf-8"))
+    expected = {
+        "schema": "factory-record-spool/v1",
+        "run_id": run_id,
+        "department": department,
+        "trigger": "daily",
+        "state_dir": str(Path(state_dir).resolve()),
+    }
+    if any(marker.get(key) != value for key, value in expected.items()):
+        raise ValueError
+    if not isinstance(marker.get("signature"), str) or not marker["signature"].strip():
+        raise ValueError
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+PY
+then
+    echo "Factory run identity and record spool are required" >&2
+    exit 2
+fi
 
 # Sales proving-slice chain (SHADOW). Each node runs through the confinement
 # launcher so the department holds no credentials.
@@ -41,27 +63,16 @@ python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${R
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/sense_gates.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/floor_compiler_run.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 
+# The conductor is the declared action driver. It must record before semantic
+# verification so green proves the scheduled driver actually executed.
+python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"
 
-# The verifier's observation reaches the manager during this run. Exit 2 is
-# an advisory verdict; every other nonzero result blocks the chain.
-ver_rc=0
-PYTHONPATH="${REPO}" python3 -m kernel.run_manifest verify --dept-dir "${REPO}/departments/${DEPARTMENT}" --state-dir "${STATE_DIR}" --run-id "${LOOP_FACTORY_RUN_ID}" || ver_rc=$?
-if [ "${ver_rc}" -ne 0 ] && [ "${ver_rc}" -ne 2 ]; then
-    echo "run_manifest verify failed with rc=${ver_rc} (not a verdict)" >&2
-    exit "${ver_rc}"
-fi
-
-# Budget telemetry: derive budget_used.json from the run ledger BEFORE the
-# manager reads it. Soft-fail on purpose — the producer deletes its output on
-# any refusal, and the manager tick (the enforcement surface) must still run
-# to raise budget_telemetry_missing against the absent file.
+# Budget telemetry must exist before the preliminary verdict and manager. Soft
+# failure is intentional: the manager converts absent telemetry into a strict,
+# owner-bound escalation rather than a fabricated zero.
 python3 "${REPO}/factory/budget_telemetry.py" --department "${DEPARTMENT}" --state-dir "${STATE_DIR}" --out "${STATE_DIR}/budget_used.json" || echo "budget_telemetry refused (rc=$?) — manager will breach on missing telemetry" >&2
 
-# Manager cycle (deterministic; charter is the source of truth).
+# Manager and approval publication complete before the final claim. In shadow,
+# they may only create owner-bound decision packets; they never send.
 python3 "${REPO}/factory/manager.py" --department "${DEPARTMENT}" --root "${REPO}" --outbox "${OUTBOX}" --budget "${STATE_DIR}/budget_used.json"
-
-# Publish pending approvals to the human-in-the-loop outbox.
 python3 "${REPO}/factory/human_in_the_loop.py" push --queue "${QUEUE}" --department "${DEPARTMENT}" --outbox "${OUTBOX}"
-
-# Shadow conductor observes last (post-verify: required:false in the roster).
-python3 "${REPO}/factory/launch.py" --department "${DEPARTMENT}" -- python3 "${REPO}/departments/${DEPARTMENT}/runtime/conductor_tick.py" --shadow --state-dir "${STATE_DIR}" --dept-dir "${REPO}/departments/${DEPARTMENT}"

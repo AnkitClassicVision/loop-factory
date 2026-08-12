@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+RECORD_SPOOL_ENV = "OE_RECORD_SPOOL"
 
 
 def _capabilities():
@@ -83,7 +84,13 @@ def _assert_capability_command(
         or re.fullmatch(r"python3\.\d+", executable.name) is not None
         or executable.resolve() == Path(sys.executable).resolve()
     )
-    if not python_allowed:
+    shell_entrypoint_allowed = (
+        executable in {Path("/bin/bash"), Path("bash")}
+        and len(command) >= 2
+        and (repo_root / "departments" / department / "runtime").resolve()
+        in Path(command[1]).resolve().parents
+    )
+    if not python_allowed and not shell_entrypoint_allowed:
         raise LaunchRefused(
             "capability-bearing departments may launch only python3 runtime nodes"
         )
@@ -109,6 +116,7 @@ def launch_command(
     base=None,
     root=None,
     runner=subprocess.run,
+    record_spool=None,
 ) -> int:
     capabilities = _department_capabilities(department, root=root)
     _assert_capability_command(
@@ -116,6 +124,13 @@ def launch_command(
     )
     env = build_env(base, department=department, root=root)
     env["OE_DEPARTMENT"] = department
+    # Add the spool only after build_env's allowlist scrub. The CLI exposes no
+    # spool option; the driver supplies the trusted value through this API.
+    trusted_spool = record_spool
+    if trusted_spool is None and isinstance(base, dict):
+        trusted_spool = base.get(RECORD_SPOOL_ENV)
+    if trusted_spool:
+        env[RECORD_SPOOL_ENV] = str(trusted_spool)
     return runner(command, env=env).returncode
 
 
@@ -131,7 +146,10 @@ def main() -> int:
         print("no command given", file=sys.stderr)
         return 2
     try:
-        return launch_command(args.department, command)
+        # A nested launch is running inside a Factory-confined child. Pass the
+        # already-scrubbed parent environment back through the same allowlist
+        # so its Factory-issued spool context survives one more hop.
+        return launch_command(args.department, command, base=os.environ)
     except LaunchRefused as exc:
         print(f"launch refused: {exc}", file=sys.stderr)
         return 2

@@ -1,0 +1,98 @@
+{
+  "contract_sha256": "71bb2673fca03c3130c939ae3f96b74a29f9030988b67de13c5c42e3af1e10c1",
+  "department": "sales",
+  "nodes": [
+    {
+      "department": "sales",
+      "impl": "runtime/booked_sensor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_calendar_receipts.py::test_booked_happy_path_fast_path_and_idempotent_rerun",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-BOOKED",
+      "work_object": {
+        "artifact_or_field": "booking receipt",
+        "consumer": "held path consumes bookings.jsonl and booked transition",
+        "name": "booking receipt"
+      }
+    },
+    {
+      "department": "sales",
+      "impl": "runtime/held_sensor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_calendar_receipts.py::test_held_happy_path_carries_bar_and_source_from_received_meta",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HELD",
+      "work_object": {
+        "artifact_or_field": "held-call receipt",
+        "consumer": "sales ledger consumes held.jsonl/events.jsonl",
+        "name": "held-call receipt"
+      }
+    },
+    {
+      "department": "sales",
+      "impl": "runtime/held_confirm_card.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_held_confirm.py::test_card_emitted_once_with_exact_v2_shape",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-HELD",
+      "work_object": {
+        "artifact_or_field": "held confirmation card",
+        "consumer": "owner approves/rejects; held_sensor consumes held_confirmations.jsonl",
+        "name": "held confirmation card"
+      }
+    },
+    {
+      "department": "sales",
+      "impl": "runtime/qualify_scorer.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_intake_qualify.py::test_qualify_services_and_seller_bars_both_directions",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-QUALIFIED",
+      "work_object": {
+        "artifact_or_field": "named qualification record",
+        "consumer": "booked/held sensors consume events.jsonl and qualifications.jsonl",
+        "name": "named qualification record"
+      }
+    },
+    {
+      "department": "sales",
+      "impl": "runtime/intake_sensor.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_intake_qualify.py::test_intake_happy_path_is_attributed_opaque_and_idempotent",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-RECEIVED",
+      "work_object": {
+        "artifact_or_field": "received-arrival ledger row",
+        "consumer": "qualify_scorer consumes events.jsonl",
+        "name": "received-arrival ledger row"
+      }
+    },
+    {
+      "department": "sales",
+      "impl": "runtime/sense_gates.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_sense_gates.py::test_stale_conversation_alarms_with_subject_and_fresh_does_not",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "daily gate observations",
+        "consumer": "sales manager consumes observations.jsonl",
+        "name": "daily gate observations"
+      }
+    }
+  ],
+  "rev": 1,
+  "schema": "node-contract/v1"
+}

@@ -25,6 +25,10 @@ from pathlib import Path
 # maps, interview/intent, runbooks, skills, and shell entrypoints.
 ARTIFACT_GLOBS = (
     "charter.yaml",
+    "authority-map.json",
+    "node-contract.json",
+    "systemd/*.service",
+    "systemd/*.timer",
     "procedural-graph.md",
     "subgraphs.json",
     "knowledge/*.md",
@@ -110,12 +114,19 @@ def pin_release(dept_dir, release_root, source_ref: str) -> str:
     release_hash = _tree_hash(artifacts)
     release_dir = release_root / release_hash
     release_dir.mkdir(parents=True, exist_ok=True)
+    node_contract_sha256 = None
+    contract_path = dept_dir / "node-contract.json"
+    if contract_path.is_file():
+        from factory import node_contract
+        node_contract_sha256 = node_contract.load(dept_dir)["contract_sha256"]
     manifest = {
         "hash": release_hash,
         "source_ref": source_ref,
         "factory_version": factory_version(),
         "artifacts": [{"path": rel, "sha256": digest} for rel, digest in artifacts],
     }
+    if node_contract_sha256 is not None:
+        manifest["node_contract_sha256"] = node_contract_sha256
     _atomic_write(release_dir / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     return release_hash
 

@@ -27,6 +27,7 @@
   ],
   "untraced_allowed": {
     "runtime/common.py": "shared deterministic atomic I/O and run-record support imported by traced N1-N6 nodes; not independently executable",
-    "runtime/estate.json": "D1/D3 watch registry and fixture-swappable evidence configuration consumed by traced N1-N4 nodes"
+    "runtime/estate.json": "D1/D3 watch registry and fixture-swappable evidence configuration consumed by traced N1-N4 nodes",
+    "runtime/run-roster.json": "release-bound rev3 node-contract obligation roster consumed by kernel.run_manifest; data, not a graph implementation"
   }
 }

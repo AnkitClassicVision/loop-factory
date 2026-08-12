@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -222,7 +222,7 @@ def escalate_new_incidents(
             if incident.get(escalated_field):
                 continue
 
-            escalate_fn(
+            result = escalate_fn(
                 department="podcast",
                 issue=issue,
                 outbox_path=outbox_path,
@@ -235,6 +235,12 @@ def escalate_new_incidents(
                 },
                 meaning=meaning,
                 needs=needs,
+                owner="ankit",
+                deadline=(
+                    datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    + timedelta(hours=24)
+                ).isoformat(),
+                next_action="Review the podcast incident and choose the documented repair or hold path",
                 **(
                     {"fyi_only": True}
                     if ops_repair
@@ -245,6 +251,8 @@ def escalate_new_incidents(
                     }]}
                 ),
             )
+            if result.get("escalated") is not True:
+                raise ValueError(f"podcast escalation blocked: {result.get('reason')}")
             _replace_latest_eli5(outbox_path, _eli5(failure_class))
             durable_markers[durable_key] = timestamp
             incident[escalated_field] = True

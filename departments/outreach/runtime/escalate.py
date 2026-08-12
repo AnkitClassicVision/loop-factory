@@ -1,6 +1,7 @@
 """N5: baseline findings, then escalate unseen transitions with a bounded digest."""
 from __future__ import annotations
 import argparse,hashlib,json,logging,sys,time
+from datetime import timedelta
 from pathlib import Path
 REPO_ROOT=Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:sys.path.insert(0,str(REPO_ROOT))
@@ -46,14 +47,21 @@ def _fingerprint(failure:dict)->str:
 def _lane_identity(node:object,lane:object)->str:
     return f"lane:{node}:{lane}"
 
-def _write_ask(state:Path,ask:dict,failure:dict)->None:
+def _write_ask(state:Path,ask:dict,failure:dict,current)->None:
     append_row(state/"asks.jsonl",ask)
     atomic_json(state/"outbox"/f"{ask['ask_id']}.json",{"schema":"outreach-escalation-draft/v1","ask_id":ask["ask_id"],"summary":ask["summary"],**{k:ask[k] for k in ("lane","failure_class","evidence_path","observed_condition")},"failure":failure,"pii_free":True})
-    human_in_the_loop.escalate("outreach",ask["summary"],state/"decisions_outbox.jsonl",{"ask_id":ask["ask_id"],"fingerprint":ask["fingerprint"]})
+    result=human_in_the_loop.escalate(
+        "outreach",ask["summary"],state/"decisions_outbox.jsonl",
+        {"ask_id":ask["ask_id"],"fingerprint":ask["fingerprint"]},
+        owner="ankit",deadline=(current+timedelta(hours=48)).isoformat(),
+        next_action="Review the outreach transition and choose the documented repair or hold path",
+    )
+    if result.get("escalated") is not True:
+        raise ValueError(f"outreach escalation blocked: {result.get('reason')}")
 
 def run(root:Path)->dict:
     state=root/"departments/outreach/state";dedupe_path=state/"escalation_fingerprints.jsonl";baseline_path=state/"first_run_baseline.jsonl"
-    seen={r.get("fingerprint") for r in read_rows(dedupe_path)};prior={r.get("identity"):r for r in read_rows(baseline_path)};failures=_failures(state);eligible=[];ts=utcnow().isoformat()
+    seen={r.get("fingerprint") for r in read_rows(dedupe_path)};prior={r.get("identity"):r for r in read_rows(baseline_path)};failures=_failures(state);eligible=[];current=utcnow();ts=current.isoformat()
     current_ids=set()
     for failure in failures:
         identity=_identity(failure);current_ids.add(identity);fingerprint=_fingerprint(failure);previous=prior.get(identity)
@@ -73,7 +81,7 @@ def run(root:Path)->dict:
     for failure,fingerprint in direct:
         ask_id=f"outreach-{fingerprint[:16]}";summary=f"{failure['lane']}: {failure['failure_class']} at {failure['evidence_path']} ({failure['observed_condition']})"
         ask={"ask_id":ask_id,"fingerprint":fingerprint,"status":"open","created_at":ts,"return_path":"state_reconcile","return_sla_hours":48,"summary":summary,**{k:failure[k] for k in ("lane","failure_class","evidence_path","observed_condition")}}
-        _write_ask(state,ask,failure);append_row(dedupe_path,{"fingerprint":fingerprint,"ask_id":ask_id,"ts":ts});seen.add(fingerprint);created.append(ask_id)
+        _write_ask(state,ask,failure,current);append_row(dedupe_path,{"fingerprint":fingerprint,"ask_id":ask_id,"ts":ts});seen.add(fingerprint);created.append(ask_id)
     overflow=eligible[DIRECT_ASK_CEILING:]
     if overflow:
         members=[{"lane":f["lane"],"failure_class":f["failure_class"],"evidence_path":f["evidence_path"],"observed_condition":f["observed_condition"],"fingerprint":fp} for f,fp in overflow]
@@ -83,7 +91,7 @@ def run(root:Path)->dict:
         condition="; ".join(f"{lane}/{cls}: {count}" for (lane,cls),count in sorted(counts.items()))
         failure={"node":"N5","lane":"multiple","failure_class":"transition_digest","evidence_path":"multiple paths","observed_condition":condition,"findings":members}
         ask={"ask_id":ask_id,"fingerprint":digest_fp,"status":"open","created_at":ts,"return_path":"state_reconcile","return_sla_hours":48,"summary":f"{len(members)} additional outreach transitions: {condition}",**{k:failure[k] for k in ("lane","failure_class","evidence_path","observed_condition")}}
-        _write_ask(state,ask,failure);created.append(ask_id)
+        _write_ask(state,ask,failure,current);created.append(ask_id)
         for member in members:append_row(dedupe_path,{"fingerprint":member["fingerprint"],"ask_id":ask_id,"ts":ts,"digest":True})
     output={"schema":"escalate/v1","ts":utcnow().isoformat(),"new_escalations":len(created),"ask_ids":created};atomic_json(state/"escalate.json",output);return output
 

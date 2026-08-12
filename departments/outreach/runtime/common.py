@@ -67,8 +67,18 @@ def append_row(path: Path, row: dict[str, Any]) -> None:
 def emit(state_dir: Path, node: str, started: float, artifact: Path,
          errors: list[str] | None = None) -> None:
     errors = errors or []
+    impl_by_node = {
+        "N1": "runtime/lane_sense.py",
+        "N2": "runtime/state_reconcile.py",
+        "N3": "runtime/gate_monitor.py",
+        "N4": "runtime/queue_ager.py",
+        "N5": "runtime/escalate.py",
+        "N6": "runtime/objectives_sensor.py",
+    }
     runrecord.emit_record(
-        state_dir, department="outreach", node=node,
+        state_dir, department="outreach", node=Path(impl_by_node[node]).stem,
+        contract_subgraph="SG-GOVERN", contract_node_id=node,
+        contract_impl=impl_by_node[node],
         status="error" if errors else "ok",
         release=runrecord.read_release(state_dir.parent),
         trigger={"kind": "time", "id": "outreach-daily",

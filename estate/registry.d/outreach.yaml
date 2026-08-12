@@ -2,7 +2,7 @@ entries:
   - id: outreach
     owner: "ankit"
     surface: "department"
-    schedule: "*:20/30 (cadence contract; timer never enabled until owner activation)"
+    schedule: "daily via source-controlled outreach-loop.timer; deployment state unverified"
     health_check: "test -f departments/outreach/state/STATE.json"
     heartbeat_path: "departments/outreach/state/heartbeats.jsonl"
     state_dir: "departments/outreach/state"

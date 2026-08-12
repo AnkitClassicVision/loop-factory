@@ -145,6 +145,15 @@ def test_decide_shadow_only_emits_whitelisted_acts():
     assert "record" in acts
 
 
+def test_zero_budget_ceiling_breaches_on_any_observed_usage():
+    findings = M.compare(
+        {"week_touches": 0, "budget_used": {"dollars": 0}},
+        {**M.DEFAULT_THRESHOLDS, "budget_ceilings": {"dollars": 0}},
+    )
+
+    assert any(finding["code"] == "budget_near:dollars" for finding in findings)
+
+
 def test_decide_downgrades_gated_live_verbs_in_shadow():
     # a synthetic action that would be legal at gated-live (throttle_park) must be
     # redirected to an escalation while the department is in shadow.
@@ -152,6 +161,19 @@ def test_decide_downgrades_gated_live_verbs_in_shadow():
     out = M.gate_actions(gated, autonomy_state="shadow")
     assert all(a["act"] in M.SHADOW_ACTS for a in out)
     assert any(a["act"] == "escalate" for a in out)
+
+
+def test_unimplemented_gated_live_verbs_escalate_at_every_autonomy_state():
+    action = [{"act": "throttle_park", "finding_code": "budget_near"}]
+
+    result = M.gate_actions(action, autonomy_state="gated_live")
+
+    assert result == [{
+        "act": "escalate",
+        "reason": "action_not_implemented",
+        "finding_code": "budget_near",
+        "detail": "'throttle_park' has no Factory implementation; escalating for a human decision",
+    }]
 
 
 def test_decide_cannot_touch_immutable_invariant():
@@ -181,6 +203,7 @@ def test_act_escalates_breach_writes_state_heartbeat_brief(tmp_path):
         sensed={"week_touches": 1},
         findings=findings,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
         state_path=tmp_path / "STATE.json",
         heartbeat_path=tmp_path / "heartbeats.jsonl",
         brief_path=tmp_path / "brief.md",
@@ -258,6 +281,7 @@ def test_drifted_release_is_breach_and_escalates(tmp_path):
     report = M.run_manager_cycle(
         state_dir=dept / "state", dept_dir=dept, now=NOW,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
     )
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["release_drift"]["severity"] == "breach"
@@ -298,6 +322,7 @@ def test_no_releases_dir_is_visible_warn_not_breach(tmp_path):
     report = M.run_manager_cycle(
         state_dir=dept / "state", dept_dir=dept, now=NOW,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
     )
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["drift_unverifiable"]["severity"] == "warn"
@@ -339,6 +364,7 @@ def test_release_root_that_is_a_file_fails_closed(tmp_path):
     report = M.run_manager_cycle(
         state_dir=dept / "state", dept_dir=dept, now=NOW,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
     )
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["drift_check_failed"]["severity"] == "breach"
@@ -356,6 +382,7 @@ def test_dangling_releases_symlink_fails_closed(tmp_path):
     report = M.run_manager_cycle(
         state_dir=dept / "state", dept_dir=dept, now=NOW,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
     )
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["drift_check_failed"]["severity"] == "breach"
@@ -370,6 +397,7 @@ def test_missing_dept_dir_is_breach_not_silent(tmp_path):
     report = M.run_manager_cycle(
         state_dir=tmp_path / "state", dept_dir=tmp_path / "no-such-dept", now=NOW,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
     )
     codes = {f["code"]: f for f in report["findings"]}
     assert codes["drift_check_failed"]["severity"] == "breach"
@@ -444,6 +472,7 @@ def test_run_manager_cycle_end_to_end(tmp_path):
         autonomy_state="shadow",
         approval_path=approval,
         escalate_fn=lambda issue, context=None: escalations.append(issue),
+        escalation_owner="test-owner",
         now=NOW,
     )
     assert report["ok"] is True
@@ -453,3 +482,41 @@ def test_run_manager_cycle_end_to_end(tmp_path):
     assert (tmp_path / "MANAGER_BRIEF.md").exists()
     codes = {f["code"] for f in report["findings"]}
     assert "held_recipient_mismatch" in codes
+
+
+def test_graph_resolution_requires_a_hashed_state_local_receipt(tmp_path):
+    _write_jsonl(tmp_path / "graph_escalations.jsonl", [
+        {"run_id": "run-1", "loop_id": "daily", "state": "escalated"},
+    ])
+    blocked = M.resolve_graph_escalation(
+        tmp_path,
+        department="sales",
+        run_id="run-1",
+        owner="human-owner",
+        action="approve a source-only repair",
+        receipt_path=None,
+        now="2026-08-02T00:00:00Z",
+    )
+    assert blocked["blocked"] is True
+
+    _write_jsonl(tmp_path / "graph_escalations.jsonl", [
+        {"run_id": "run-1", "loop_id": "daily", "state": "escalated"},
+        {"run_id": "run-1", "marker": "resolved"},
+    ])
+    before = M.sense_graph_escalations(tmp_path)
+    assert before["graph_escalation_count"] == 1
+    assert before["graph_escalations_unreadable"] is True
+
+    receipt = tmp_path / "graph-resolution.json"
+    receipt.write_text('{"result":"verified"}\n', encoding="utf-8")
+    resolved = M.resolve_graph_escalation(
+        tmp_path,
+        department="sales",
+        run_id="run-1",
+        owner="human-owner",
+        action="approve a source-only repair",
+        receipt_path=receipt,
+        now="2026-08-02T00:00:00Z",
+    )
+    assert resolved["resolved"] == "run-1"
+    assert M.sense_graph_escalations(tmp_path)["graph_escalation_count"] == 0

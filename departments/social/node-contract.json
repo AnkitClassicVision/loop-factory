@@ -1,0 +1,308 @@
+{
+  "contract_sha256": "78ec3d8e87dbc064ce00cfcc1c9330eba0f701c20f2ba288a062fcac813d00d3",
+  "department": "social",
+  "nodes": [
+    {
+      "department": "social",
+      "impl": "runtime/read_metrics_records.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_learn_lane.py::test_aggregates_retain_row_provenance",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-LEARN",
+      "work_object": {
+        "artifact_or_field": "grounded evidence pack",
+        "consumer": "propose_insights consumes evidence-pack JSON",
+        "name": "grounded evidence pack"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/propose_insights.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_learn_lane.py::test_ungrounded_proposal_is_dropped_and_logged",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-LEARN",
+      "work_object": {
+        "artifact_or_field": "validated proposal-card list",
+        "consumer": "outbox converter consumes proposal JSON",
+        "name": "validated proposal-card list"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/proposal_card_to_outbox.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_learn_lane.py::test_outbox_is_idempotent_and_card_has_one_question_and_ttl",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-LEARN",
+      "work_object": {
+        "artifact_or_field": "human proposal card/outbox entry",
+        "consumer": "owner/process QA consumes decisions_outbox.jsonl",
+        "name": "human proposal card/outbox entry"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/record.py",
+      "node_id": "N9",
+      "qa": {
+        "evidence": "tests/test_records_integrity.py::test_record_writes_runs_then_state_then_heartbeat",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-LEARN",
+      "work_object": {
+        "artifact_or_field": "learn run/STATE/heartbeat receipt",
+        "consumer": "Factory manager consumes record files",
+        "name": "learn run/STATE/heartbeat receipt"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/inventory_backcatalog.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_republish_scripts.py::test_rss_fixture_parses_to_valid_index",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "back-catalog index",
+        "consumer": "select_candidate consumes backcatalog_index.json",
+        "name": "back-catalog index"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/create_review_card.py",
+      "node_id": "N10",
+      "qa": {
+        "evidence": "tests/test_receipt_chain.py::test_review_card_success_has_receipt_and_run_continues",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "human review card/ledger receipt",
+        "consumer": "owner/harvester consume review ledger and card receipt",
+        "name": "human review card/ledger receipt"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/harvest_review_asks.py",
+      "node_id": "N11",
+      "qa": {
+        "evidence": "tests/test_v2_and_asks.py::test_ask_older_than_sla_produces_breach_receipt_and_outbox",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "review decision/SLA receipt",
+        "consumer": "record/manager consume ledger and escalation",
+        "name": "review decision/SLA receipt"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/select_candidate.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_republish_scripts.py::test_selection_is_deterministic",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "selected candidate",
+        "consumer": "assemble_context consumes candidate JSON; quarantine consumes blocked selection",
+        "name": "selected candidate"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/assemble_context.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_republish_scripts.py::test_full_context_happy_path_embeds_body",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "complete context manifest",
+        "consumer": "draft_post consumes context JSON; quarantine consumes incomplete context",
+        "name": "complete context manifest"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/draft_post.py",
+      "node_id": "N4",
+      "qa": {
+        "evidence": "tests/test_llm_nodes.py::test_draft_refuses_unsanitized_bundle_and_quarantines",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "sanitized social draft",
+        "consumer": "qa_post consumes draft JSON; quarantine consumes blocked attempts",
+        "name": "sanitized social draft"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/qa_post.py",
+      "node_id": "N5",
+      "qa": {
+        "evidence": "tests/test_llm_nodes.py::test_qa_refuses_same_engine_as_draft",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "enumerated QA defect report",
+        "consumer": "revision/dispatch consumes QA JSON; quarantine consumes non-convergence",
+        "name": "enumerated QA defect report"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/dispatch.py",
+      "node_id": "N6",
+      "qa": {
+        "evidence": "tests/test_publish_chain.py::test_shadow_dispatch_uses_kernel_simulates_zero_and_never_calls_zernio",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "dispatch receipt",
+        "consumer": "delivery_verify consumes post_ref/simulated/delivered_count",
+        "name": "dispatch receipt"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/delivery_verify.py",
+      "node_id": "N7",
+      "qa": {
+        "evidence": "tests/test_publish_chain.py::test_delivery_verify_rejects_scheduler_echo_and_accepts_platform_id",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "platform delivery proof",
+        "consumer": "record/review consumes verified platform_post_id",
+        "name": "platform delivery proof"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/record.py",
+      "node_id": "N9",
+      "qa": {
+        "evidence": "tests/test_records_integrity.py::test_record_writes_runs_then_state_then_heartbeat",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-REPUBLISH",
+      "work_object": {
+        "artifact_or_field": "stage run/STATE/heartbeat receipt",
+        "consumer": "Factory manager consumes run records and state",
+        "name": "stage run/STATE/heartbeat receipt"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/pull_zernio_analytics.py",
+      "node_id": "N1",
+      "qa": {
+        "evidence": "tests/test_sense_lane.py::test_pull_zernio_missing_verification_is_missing_and_not_metric",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "verified engagement rows",
+        "consumer": "compare/digest consume observation JSONL",
+        "name": "verified engagement rows"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/pull_call_joins.py",
+      "node_id": "N2",
+      "qa": {
+        "evidence": "tests/test_sense_lane.py::test_pull_call_joins_ambiguous_row_quarantined_and_excluded",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "call-attribution rows",
+        "consumer": "compare/digest consume joined output; quarantine consumes ambiguity",
+        "name": "call-attribution rows"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/compare_charter.py",
+      "node_id": "N3",
+      "qa": {
+        "evidence": "tests/test_sense_lane.py::test_compare_charter_thresholds_are_charter_driven",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "charter signal set",
+        "consumer": "digest/objectives/manager consume signals JSON",
+        "name": "charter signal set"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/assemble_weekly_digest.py",
+      "node_id": "N4",
+      "qa": {
+        "evidence": "tests/test_sense_lane.py::test_assemble_weekly_digest_links_seam_and_tbd_and_no_dm_leak",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "owner weekly digest",
+        "consumer": "owner consumes digest with verified-post links",
+        "name": "owner weekly digest"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/objectives_sensor.py",
+      "node_id": "N5",
+      "qa": {
+        "evidence": "tests/test_objectives_sensor.py::test_each_missing_objective_source_is_omitted_not_zero",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "objectives-observed/v1",
+        "consumer": "verifier/board consume objectives_observed.json",
+        "name": "objectives-observed/v1"
+      }
+    },
+    {
+      "department": "social",
+      "impl": "runtime/record.py",
+      "node_id": "N9",
+      "qa": {
+        "evidence": "tests/test_records_integrity.py::test_epoch_reuse_and_skip_are_refused_without_new_rows",
+        "verifier": "pytest"
+      },
+      "subgraph": "SG-SENSE",
+      "work_object": {
+        "artifact_or_field": "sensing run/STATE/heartbeat receipt",
+        "consumer": "Factory manager consumes record files",
+        "name": "sensing run/STATE/heartbeat receipt"
+      }
+    }
+  ],
+  "rev": 1,
+  "schema": "node-contract/v1"
+}

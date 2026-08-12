@@ -166,6 +166,7 @@ escalation:
   recurrence_rule: every_escalation_spawns_root_cause_item__repeat_of_resolved_fingerprint_is_department_defect
   channels: [telegram_ping, linear_card]
   no_reply_ttl_hours: 48                    # Q12: 48h SLA; unanswered self-parks dependents
+  sla_hours: 48                             # exact escalation-contract deadline
   no_reply_action: self_park_dependents_daily_digest_never_auto_approve
   human_gates:                              # Q12 — every card carries make-sense + the
     - external_send                         # exact approvable action (owner directive)

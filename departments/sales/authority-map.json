@@ -1,0 +1,51 @@
+{
+  "schema": "authority-map/v1",
+  "department": "sales",
+  "actions": [
+    {
+      "action": "observe",
+      "owner": "factory-manager",
+      "actor": "factory_supervisor",
+      "authority": "observe",
+      "proof": "signed_observation",
+      "external_effect": false,
+      "approval_required": false
+    },
+    {
+      "action": "plan",
+      "owner": "sales-worker",
+      "actor": "direct_worker",
+      "authority": "draft",
+      "proof": "release_bound_proposal",
+      "external_effect": false,
+      "approval_required": false
+    },
+    {
+      "action": "approve",
+      "owner": "ankit",
+      "actor": "human_gate",
+      "authority": "approve",
+      "proof": "signed_human_decision",
+      "external_effect": false,
+      "approval_required": false
+    },
+    {
+      "action": "execute",
+      "owner": "sales-executor",
+      "actor": "dedicated_executor",
+      "authority": "execute",
+      "proof": "target_readback",
+      "external_effect": true,
+      "approval_required": true
+    },
+    {
+      "action": "verify",
+      "owner": "sales-verifier",
+      "actor": "independent_verifier",
+      "authority": "verify",
+      "proof": "target_readback",
+      "external_effect": false,
+      "approval_required": false
+    }
+  ]
+}

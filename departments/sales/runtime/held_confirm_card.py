@@ -29,7 +29,7 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from factory import runrecord
@@ -270,7 +270,7 @@ def _ask(state: Path, outbox: Path, current: datetime) -> tuple[int, int]:
         decision_id = _decision_id(event_id)
         if decision_id not in carded:
             card = _card(event_id, subject_id, minutes, start_raw)
-            escalate(
+            result = escalate(
                 department="sales",
                 issue=card["issue"],
                 outbox_path=outbox,
@@ -278,7 +278,13 @@ def _ask(state: Path, outbox: Path, current: datetime) -> tuple[int, int]:
                 meaning=card["meaning"],
                 needs=card["needs"],
                 actions=card["actions"],
+                owner="ankit",
+                deadline=(current + timedelta(hours=48)).isoformat(),
+                next_action="Confirm whether the booked call met the held-call definition",
             )
+            if result.get("escalated") is not True:
+                LOGGER.error("held confirmation escalation blocked: %s", result.get("reason"))
+                continue
             carded.add(decision_id)
         # The packet is durable before the queue row: a crash between the two
         # re-queues on the next run without ever duplicating the card.

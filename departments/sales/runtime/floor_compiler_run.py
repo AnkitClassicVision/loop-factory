@@ -31,6 +31,8 @@ def _latest_history(state_dir: Path) -> dict | None:
 
 
 def _emit(state_dir: Path, *, started: float, status: str, errors=(), artifacts=()) -> None:
+    if (Path(state_dir).parent / "node-contract.json").is_file():
+        return
     runrecord.emit_record(
         state_dir,
         department="sales",
