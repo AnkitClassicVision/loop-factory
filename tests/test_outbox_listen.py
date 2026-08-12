@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from factory import outbox_listen
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "factory" / "outbox_listen.py"
@@ -444,3 +446,214 @@ def test_fix_decision_row_carries_everything_an_agent_needs_to_resume(tmp_path):
     )
     assert decision["first_raised"] == "2026-08-01T09:00:00+00:00"
     assert decision["card_url"] == "https://example.test/ANK-777"
+
+
+def test_fyi_actions_settle_each_row_by_its_own_first_raised(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [
+        _ledger_row("old", "ANK-FYI", action_mode="fyi", fyi_only=True, first_raised="2026-08-08T12:00:00Z"),
+        _ledger_row("future", "ANK-FYI", action_mode="fyi", fyi_only=True, first_raised="2026-08-08T14:00:00Z"),
+    ])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-FYI": [{"body": "ACKNOWLEDGE", "createdAt": "2026-08-08T13:00:00Z"}]}))
+    closer = _recorder(tmp_path, "closer")
+    ack = _recorder(tmp_path, "ack")
+
+    assert _run(_config(tmp_path, ledger, reader, closer, ack)).returncode == 0
+    latest = {row["row_hash"]: row for row in _rows(ledger)}
+    assert latest["old"]["status"] == "acknowledged"
+    assert latest["future"]["status"] == "open"
+    receipt = _rows(tmp_path / "decisions.jsonl")[0]
+    assert (receipt["action_mode"], receipt["row_hash"]) == ("fyi", "old")
+    assert _calls(tmp_path, "closer") == []
+    assert _calls(tmp_path, "ack")[0][1].startswith("AGENT UPDATE:")
+
+
+def test_fyi_rejects_decision_grammar_and_bad_timestamps(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [
+        _ledger_row(name, f"ANK-{name}", action_mode="fyi", fyi_only=True, first_raised="2026-08-08T12:00:00Z")
+        for name in ("APPROVE", "MISSING", "NAIVE")
+    ])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({
+        "ANK-APPROVE": [{"body": "APPROVE", "createdAt": "2026-08-08T13:00:00Z"}],
+        "ANK-MISSING": [{"body": "ACKNOWLEDGE"}],
+        "ANK-NAIVE": [{"body": "RETIRE", "createdAt": "2026-08-08T13:00:00"}],
+    }))
+    closer = _recorder(tmp_path, "closer")
+
+    assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
+    assert len(_rows(ledger)) == 3
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_fyi_snooze_is_exact_utc_and_acknowledge_does_not_settle_legacy(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [
+        _ledger_row("fyi", "ANK-SNOOZE", action_mode="fyi", fyi_only=True, first_raised="2026-08-08T12:00:00Z"),
+        _ledger_row("legacy", "ANK-LEGACY", first_raised="2026-08-08T12:00:00Z"),
+    ])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({
+        "ANK-SNOOZE": [{"body": "SNOOZE 24H", "createdAt": "2026-08-08T09:30:00-04:00"}],
+        "ANK-LEGACY": [{"body": "ACKNOWLEDGE", "createdAt": "2026-08-08T14:00:00Z"}],
+    }))
+    closer = _recorder(tmp_path, "closer")
+
+    assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
+    latest = {row["row_hash"]: row for row in _rows(ledger)}
+    assert latest["fyi"]["status"] == "snoozed"
+    assert latest["fyi"]["snooze_until"] == "2026-08-09T13:30:00+00:00"
+    assert latest["fyi"]["last_fyi_action_key"].startswith("sha256:")
+    assert latest["fyi"]["last_fyi_action_at"] == "2026-08-08T13:30:00+00:00"
+    assert latest["legacy"]["status"] == "open"
+    assert _calls(tmp_path, "closer") == []
+
+
+def test_fyi_cursor_blocks_replay_after_wake_but_allows_newer_action(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [
+        _ledger_row("fyi", "ANK-FYI", action_mode="fyi", fyi_only=True, first_raised="2026-08-08T12:00:00Z")
+    ])
+    reader, data = _reader(tmp_path)
+    snooze = {"id": "comment-1", "body": "SNOOZE 24H", "createdAt": "2026-08-08T13:00:00Z"}
+    data.write_text(json.dumps({"ANK-FYI": [snooze]}))
+    closer = _recorder(tmp_path, "closer")
+    config = _config(tmp_path, ledger, reader, closer)
+
+    assert _run(config).returncode == 0
+    snoozed = _rows(ledger)[-1]
+    _write_rows(ledger, _rows(ledger) + [{**snoozed, "ts": "2026-08-09T13:00:00Z", "status": "open"}])
+    before = ledger.read_bytes()
+    assert _run(config).returncode == 0
+    assert ledger.read_bytes() == before
+    assert _rows(ledger)[-1]["status"] == "open"
+
+    data.write_text(json.dumps({"ANK-FYI": [snooze, {"id": "comment-2", "body": "RETIRE", "createdAt": "2026-08-08T14:00:00Z"}]}))
+    assert _run(config).returncode == 0
+    assert _rows(ledger)[-1]["status"] == "retired"
+    assert _rows(ledger)[-1]["last_fyi_action_key"] == "comment:comment-2"
+
+
+def test_fyi_cursor_allows_different_comment_id_at_same_timestamp(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row(
+        "fyi", "ANK-FYI", action_mode="fyi", fyi_only=True,
+        first_raised="2026-08-08T12:00:00Z", status="open",
+        last_fyi_action_key="comment:comment-1",
+        last_fyi_action_at="2026-08-08T13:00:00+00:00",
+    )])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-FYI": [
+        {"id": "comment-1", "body": "SNOOZE 24H", "createdAt": "2026-08-08T13:00:00Z"},
+        {"id": "comment-2", "body": "ACKNOWLEDGE", "createdAt": "2026-08-08T13:00:00Z"},
+    ]}))
+    closer = _recorder(tmp_path, "closer")
+
+    assert _run(_config(tmp_path, ledger, reader, closer)).returncode == 0
+    assert _rows(ledger)[-1]["status"] == "acknowledged"
+    assert _rows(ledger)[-1]["last_fyi_action_key"] == "comment:comment-2"
+
+
+def test_fyi_invalid_stored_cursor_fails_closed(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row(
+        "fyi", "ANK-FYI", action_mode="fyi", fyi_only=True,
+        first_raised="2026-08-08T12:00:00Z", last_fyi_action_key="comment:old",
+    )])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-FYI": [
+        {"id": "comment-new", "body": "RETIRE", "createdAt": "2026-08-08T14:00:00Z"}
+    ]}))
+    closer = _recorder(tmp_path, "closer")
+
+    result = _run(_config(tmp_path, ledger, reader, closer))
+    assert result.returncode == 0
+    assert len(_rows(ledger)) == 1
+    assert "invalid replay cursor" in result.stderr
+
+
+def test_grouped_decision_retry_reuses_receipt_after_partial_ledger_failure(
+    tmp_path, monkeypatch
+):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [
+        _ledger_row("hash-a", "ANK-RETRY"),
+        _ledger_row("hash-b", "ANK-RETRY"),
+        _ledger_row("hash-c", "ANK-RETRY"),
+    ])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-RETRY": [{
+        "id": "comment-retry", "body": "APPROVE", "createdAt": "2026-08-08T13:00:00Z"
+    }]}))
+    closer = _recorder(tmp_path, "closer")
+    config = outbox_listen.load_config(_config(tmp_path, ledger, reader, closer))
+    original_append = outbox_listen._append_jsonl
+    ledger_appends = 0
+
+    def fail_middle(path, row):
+        nonlocal ledger_appends
+        if Path(path) == ledger:
+            ledger_appends += 1
+            if ledger_appends == 2:
+                raise OSError("injected middle transition failure")
+        original_append(path, row)
+
+    monkeypatch.setattr(outbox_listen, "_append_jsonl", fail_middle)
+    assert outbox_listen.tick(config) == 0
+    monkeypatch.setattr(outbox_listen, "_append_jsonl", original_append)
+    assert outbox_listen.tick(config) == 0
+
+    receipts = _rows(tmp_path / "decisions.jsonl")
+    assert len(receipts) == 1
+    assert receipts[0]["source_action_key"] == "ANK-RETRY:comment:comment-retry"
+    final_rows = [row for row in _rows(ledger) if row["status"] == "decided:approve"]
+    assert sorted(row["row_hash"] for row in final_rows) == ["hash-a", "hash-b", "hash-c"]
+
+
+def test_fyi_retry_reuses_receipt_and_completes_cursor_transition(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row(
+        "fyi-retry", "ANK-FYI-RETRY", action_mode="fyi", fyi_only=True,
+        first_raised="2026-08-08T12:00:00Z",
+    )])
+    reader, data = _reader(tmp_path)
+    data.write_text(json.dumps({"ANK-FYI-RETRY": [{
+        "id": "fyi-comment", "body": "ACKNOWLEDGE", "createdAt": "2026-08-08T13:00:00Z"
+    }]}))
+    closer = _recorder(tmp_path, "closer")
+    config = outbox_listen.load_config(_config(tmp_path, ledger, reader, closer))
+    original_append = outbox_listen._append_jsonl
+    failed = False
+
+    def fail_first_ledger(path, row):
+        nonlocal failed
+        if Path(path) == ledger and not failed:
+            failed = True
+            raise OSError("injected first transition failure")
+        original_append(path, row)
+
+    monkeypatch.setattr(outbox_listen, "_append_jsonl", fail_first_ledger)
+    assert outbox_listen.tick(config) == 0
+    monkeypatch.setattr(outbox_listen, "_append_jsonl", original_append)
+    assert outbox_listen.tick(config) == 0
+
+    assert len(_rows(tmp_path / "decisions.jsonl")) == 1
+    final = _rows(ledger)[-1]
+    assert final["status"] == "acknowledged"
+    assert final["last_fyi_action_key"] == "comment:fyi-comment"
+
+
+def test_malformed_receipt_line_blocks_listener_replay(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _write_rows(ledger, [_ledger_row("hash-bad-receipt", "ANK-BAD-RECEIPT")])
+    reader, _ = _reader(tmp_path)
+    closer = _recorder(tmp_path, "closer")
+    config_path = _config(tmp_path, ledger, reader, closer)
+    (tmp_path / "decisions.jsonl").write_text("{broken\n", encoding="utf-8")
+
+    result = _run(config_path)
+    assert result.returncode == 3
+    assert len(_rows(ledger)) == 1
+    assert "invalid JSON" in result.stderr

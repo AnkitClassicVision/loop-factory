@@ -24,6 +24,7 @@ shell commands. Available placeholders are ``{card_identifier}``, ``{issue}``,
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import subprocess
@@ -36,7 +37,8 @@ import yaml
 
 
 LOGGER = logging.getLogger(__name__)
-ELIGIBLE_STATUSES = frozenset({"open", "fix_requested"})
+ELIGIBLE_STATUSES = frozenset({"open", "fix_requested", "snoozed"})
+DELIVERY_PENDING = "delivery_pending"
 NORMAL_BASE_HOURS = 48
 NORMAL_CAP_HOURS = 336
 URGENT_FLOOR_HOURS = 2
@@ -140,12 +142,22 @@ def _cards(
     grouped: dict[str, dict[str, Any]] = {}
     latest, quarantined = _latest_rows(path)
     for _, row in latest:
+        if row.get("status") == DELIVERY_PENDING:
+            identifier = row.get("card_identifier")
+            quarantined.append(
+                QuarantinedRow(
+                    identity=identifier if isinstance(identifier, str) and identifier else row["row_hash"],
+                    reason="delivery confirmation is pending manual reconciliation",
+                )
+            )
+            continue
         if row.get("status") not in ELIGIBLE_STATUSES:
             continue
         identifier = row.get("card_identifier")
         if not isinstance(identifier, str) or not identifier:
             continue
-        grouped.setdefault(identifier, row)
+        key = row["row_hash"] if row.get("status") == "snoozed" else identifier
+        grouped.setdefault(key, row)
     return list(grouped.values()), quarantined
 
 
@@ -164,6 +176,9 @@ def _cadence(
     row: dict[str, Any], now: datetime
 ) -> tuple[datetime, timedelta, str, int]:
     count = _count(row.get("reescalation_count"))
+    if row.get("status") == "snoozed":
+        wake = _datetime(row.get("snooze_until"), "snooze_until")
+        return wake, timedelta(0), "FYI snooze expired", count
     clock_field = "last_ping_at" if row.get("last_ping_at") else "first_raised"
     start = _datetime(row.get(clock_field), clock_field)
     urgency = row.get("urgency", "normal")
@@ -269,7 +284,7 @@ def _append_ping(path: str | Path, card: DueCard, now_text: str) -> None:
             "ts": now_text,
             "last_ping_at": now_text,
             "reescalation_count": card.reescalation_count + 1,
-            "status": card.row["status"],
+            "status": "open" if card.row["status"] == "snoozed" else card.row["status"],
         }
     )
     ledger = Path(path)
@@ -278,6 +293,27 @@ def _append_ping(path: str | Path, card: DueCard, now_text: str) -> None:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
     except OSError as exc:
         raise ReescalationError(f"ledger ping row could not be appended: {exc}") from exc
+
+
+def _append_delivery_row(
+    path: str | Path, card: DueCard, now_text: str, status: str
+) -> None:
+    row = dict(card.row)
+    row.update({"ts": now_text, "status": status})
+    if status == DELIVERY_PENDING:
+        identity = (
+            f"{card.row['row_hash']}\n{card.reescalation_count + 1}\n{now_text}"
+        )
+        row["delivery_intent_key"] = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        row["delivery_prior_status"] = card.row["status"]
+    ledger = Path(path)
+    try:
+        with ledger.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    except OSError as exc:
+        raise ReescalationError(
+            f"ledger delivery row could not be appended: {exc}"
+        ) from exc
 
 
 def send_due(
@@ -304,6 +340,11 @@ def send_due(
                 if isinstance(card.row.get("first_raised"), str)
                 else ""
             ),
+            "action_mode": (
+                card.row.get("action_mode")
+                if isinstance(card.row.get("action_mode"), str)
+                else "decision"
+            ),
             "text": (
                 f"Re-escalation due for {card.card_identifier}. "
                 f"Ping {card.reescalation_count + 1}. {card.reason}."
@@ -311,10 +352,20 @@ def send_due(
         }
         argv = _render(sender, values)
         try:
+            _append_delivery_row(ledger, card, now_text, DELIVERY_PENDING)
+        except ReescalationError as exc:
+            LOGGER.error("%s", exc)
+            failures += 1
+            continue
+        try:
             result = subprocess.run(argv, check=False)
         except OSError as exc:
             LOGGER.error("sender could not start for %s: %s", card.card_identifier, exc)
             failures += 1
+            try:
+                _append_delivery_row(ledger, card, now_text, card.row["status"])
+            except ReescalationError as compensation_exc:
+                LOGGER.error("%s", compensation_exc)
             continue
         if result.returncode != 0:
             LOGGER.error(
@@ -323,6 +374,10 @@ def send_due(
                 result.returncode,
             )
             failures += 1
+            try:
+                _append_delivery_row(ledger, card, now_text, card.row["status"])
+            except ReescalationError as compensation_exc:
+                LOGGER.error("%s", compensation_exc)
             continue
         try:
             _append_ping(ledger, card, now_text)

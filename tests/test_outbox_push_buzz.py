@@ -49,6 +49,7 @@ def _config(
         "card_enabled": card_enabled,
     }
     if buzz is not None:
+        senders["card"].append("{dedupe_key}")
         senders["buzz"] = [
             sys.executable,
             str(buzz),
@@ -56,6 +57,7 @@ def _config(
             "{department}",
             "{kind}",
             "{text}",
+            "{action_mode}",
         ]
     value = {
         "cursor_file": str(tmp_path / "cursor.json"),
@@ -136,6 +138,7 @@ def test_buzz_runs_with_card_and_existing_placeholders(tmp_path):
             "buzz-dept",
             "escalation",
             "Department: buzz-dept\nKind: escalation\nOwner decision?",
+            "decision",
         ]
     ]
     assert (tmp_path / "card.jsonl").stat().st_mtime_ns <= (
@@ -324,3 +327,59 @@ def test_no_buzz_preserves_legacy_ping_then_card_path(tmp_path):
 
     assert result.returncode == 0
     assert (tmp_path / "events.txt").read_text().splitlines() == ["ping", "card"]
+
+
+def test_fyi_mode_is_exact_and_persisted_with_stable_dedupe(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"eli5": "FYI", "card": {"fyi_only": True}},
+                {"eli5": "Truthy is decision", "card": {"fyi_only": 1}},
+            )
+        )
+        + "\n"
+    )
+    ledger = tmp_path / "ledger.jsonl"
+    ping = _sender(tmp_path, "ping")
+    card = _sender(tmp_path, "card", output='{"identifier":"ANK-92"}\n')
+    buzz = _sender(tmp_path, "buzz")
+
+    assert _run(_config(tmp_path, watch, ping, card, buzz=buzz, ledger_file=ledger)).returncode == 0
+
+    card_calls = _calls(tmp_path / "card.jsonl")
+    buzz_calls = _calls(tmp_path / "buzz.jsonl")
+    ledger_rows = _calls(ledger)
+    assert card_calls[0][-1] == "loop-factory-fyi:buzz-dept"
+    assert card_calls[1][-1] != card_calls[0][-1]
+    assert [call[-1] for call in buzz_calls] == ["fyi", "decision"]
+    assert [(row["action_mode"], row["fyi_only"]) for row in ledger_rows] == [
+        ("fyi", True),
+        ("decision", False),
+    ]
+    assert " fyi:" in card_calls[0][-3]
+    assert all(action in card_calls[0][-2] for action in ("ACKNOWLEDGE", "SNOOZE 24H", "RETIRE"))
+    assert all(word not in card_calls[0][-2] for word in ("APPROVE", "SKIP", "FIX"))
+
+
+@pytest.mark.parametrize("missing", ["card", "buzz"])
+def test_bound_config_refuses_missing_lifecycle_placeholder_before_sender(tmp_path, missing):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "FYI", "card": {"fyi_only": True}}) + "\n")
+    ping = _sender(tmp_path, "ping")
+    card = _sender(tmp_path, "card", output='{"identifier":"ANK-93"}\n')
+    buzz = _sender(tmp_path, "buzz")
+    config = _config(tmp_path, watch, ping, card, buzz=buzz)
+    data = yaml.safe_load(config.read_text())
+    placeholder = "{dedupe_key}" if missing == "card" else "{action_mode}"
+    data["senders"][missing].remove(placeholder)
+    config.write_text(yaml.safe_dump(data))
+
+    result = _run(config)
+
+    assert result.returncode == 2
+    assert placeholder in result.stderr
+    assert _calls(tmp_path / "ping.jsonl") == []
+    assert _calls(tmp_path / "card.jsonl") == []
+    assert _calls(tmp_path / "buzz.jsonl") == []

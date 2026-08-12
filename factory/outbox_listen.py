@@ -36,7 +36,7 @@ import json
 import logging
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,11 @@ import yaml
 
 LOGGER = logging.getLogger(__name__)
 DECISION_RE = re.compile(r"^(APPROVE|SKIP|FIX)\w*\b", re.IGNORECASE)
+FYI_ACTIONS = {
+    "ACKNOWLEDGE": "acknowledge",
+    "SNOOZE 24H": "snooze",
+    "RETIRE": "retire",
+}
 AGENT_MARKERS = (
     "AGENT CLAIMED:",
     "AGENT UPDATE:",
@@ -65,6 +70,7 @@ TIMESTAMP_FIELDS = (
     "timestamp",
     "ts",
 )
+COMMENT_ID_FIELDS = ("id", "identifier")
 # Owner decision (Ankit 2026-08-05): a FIX reply is owned by the human, not
 # silently re-queued to the department that raised it. The card moves to
 # NEEDS_INPUT_STATE and stays open so the re-escalation keeps working against it.
@@ -275,9 +281,89 @@ def _timestamp(value: Any) -> float | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
+
+
+def _comment_timestamp(comment: dict[str, Any]) -> datetime | None:
+    for field in TIMESTAMP_FIELDS:
+        value = comment.get(field)
+        stamp = _timestamp(value)
+        if stamp is not None:
+            return datetime.fromtimestamp(stamp, timezone.utc)
+    return None
+
+
+def _source_action_key(
+    identifier: str,
+    comment: dict[str, Any],
+    body: str,
+    created: datetime | None = None,
+) -> str:
+    """Return a card-scoped source key, preferring the real comment identity."""
+    for field in COMMENT_ID_FIELDS:
+        value = comment.get(field)
+        if isinstance(value, str) and value.strip():
+            return f"{identifier}:comment:{value.strip()}"
+    normalized_at = created.astimezone(timezone.utc).isoformat() if created else ""
+    normalized_body = body.replace("\r\n", "\n").replace("\r", "\n")
+    payload = f"{normalized_at}\n{normalized_body}"
+    return f"{identifier}:sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+
+def _receipt_index(path: str | Path) -> dict[str, list[dict[str, Any]]] | None:
+    """Read keyed receipts. Legacy rows remain valid but cannot prove replay."""
+    receipts = Path(path)
+    if not receipts.exists():
+        return {}
+    try:
+        lines = receipts.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        LOGGER.error("decision receipts could not be read: %s", exc)
+        return None
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            LOGGER.error("decision receipt line %d is invalid JSON: %s", line_number, exc)
+            return None
+        if not isinstance(row, dict):
+            LOGGER.error("decision receipt line %d is not a JSON object", line_number)
+            return None
+        if "source_action_key" not in row:
+            continue
+        key = row.get("source_action_key")
+        if not isinstance(key, str) or not key:
+            LOGGER.error("decision receipt line %d has an invalid source action key", line_number)
+            return None
+        indexed.setdefault(key, []).append(row)
+    return indexed
+
+
+def _fyi_cursor(row: dict[str, Any]) -> tuple[str, datetime] | None | bool:
+    """Load an FYI replay cursor; False means malformed and must fail closed."""
+    key_present = "last_fyi_action_key" in row
+    at_present = "last_fyi_action_at" in row
+    if not key_present and not at_present:
+        return None
+    key = row.get("last_fyi_action_key")
+    at = row.get("last_fyi_action_at")
+    stamp = _timestamp(at)
+    if (
+        not key_present
+        or not at_present
+        or not isinstance(key, str)
+        or not key
+        or not isinstance(at, str)
+        or stamp is None
+    ):
+        return False
+    return key, datetime.fromtimestamp(stamp, timezone.utc)
 
 
 def _newest_first(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -294,7 +380,9 @@ def _newest_first(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [comment for _, comment in sorted(indexed, key=sort_key, reverse=True)]
 
 
-def _decision(comments: list[dict[str, Any]]) -> tuple[str, str, str] | None:
+def _decision(
+    comments: list[dict[str, Any]],
+) -> tuple[str, str, str, dict[str, Any]] | None:
     for comment in _newest_first(comments):
         body = comment.get("body")
         if not isinstance(body, str) or not body:
@@ -304,8 +392,42 @@ def _decision(comments: list[dict[str, Any]]) -> tuple[str, str, str] | None:
             continue
         match = DECISION_RE.match(first_line)
         if match:
-            return match.group(1).lower(), first_line[:120], body
+            return match.group(1).lower(), first_line[:120], body, comment
     return None
+
+
+def _fyi_decision(
+    comments: list[dict[str, Any]], first_raised: Any, cursor: tuple[str, datetime] | None
+) -> tuple[str, str, str, datetime, str] | None:
+    raised_stamp = _timestamp(first_raised)
+    if raised_stamp is None:
+        return None
+    eligible: list[tuple[datetime, int, str, str, str, str]] = []
+    for index, comment in enumerate(comments):
+        body = comment.get("body")
+        if not isinstance(body, str) or not body:
+            continue
+        first_line = body.splitlines()[0].strip()
+        if first_line.startswith(AGENT_MARKERS):
+            continue
+        action = FYI_ACTIONS.get(first_line.upper())
+        if action is None:
+            continue
+        created = _comment_timestamp(comment)
+        if created is None or created.timestamp() < raised_stamp:
+            continue
+        action_key = _source_action_key("", comment, body, created).lstrip(":")
+        if cursor is not None:
+            last_key, last_at = cursor
+            if action_key == last_key or created < last_at:
+                continue
+        eligible.append((created, index, action, first_line, body, action_key))
+    if not eligible:
+        return None
+    created, _, action, first_line, body, action_key = max(
+        eligible, key=lambda item: (item[0], item[1])
+    )
+    return action, first_line, body, created, action_key
 
 
 def _open_groups(latest: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -333,10 +455,12 @@ def _open_groups(latest: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                 "card": card,
                 "row_hashes": [row_hash],
                 "fix_notes_hashes": set(card.get("_fix_notes_hashes", set())),
+                "rows": {row_hash: card},
             }
             continue
         group["row_hashes"].append(row_hash)
         group["fix_notes_hashes"] |= set(card.get("_fix_notes_hashes", set()))
+        group["rows"][row_hash] = card
     return list(groups.values())
 
 
@@ -375,8 +499,9 @@ def _run_optional(argv: list[str], label: str) -> None:
 
 def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
     latest = _latest_ledger_rows(config["ledger_file"])
-    if latest is None:
-        return 0
+    receipts = _receipt_index(config["decisions_file"])
+    if latest is None or receipts is None:
+        return 3
     reader_calls = 0
     reader_failures = 0
     for group in _open_groups(latest):
@@ -390,13 +515,55 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
         if comments is None:
             reader_failures += 1
             continue
+        decision_hashes = [
+            row_hash
+            for row_hash in row_hashes
+            if latest[row_hash].get("action_mode", "decision") != "fyi"
+        ]
+        fyi_hashes = [
+            row_hash
+            for row_hash in row_hashes
+            if latest[row_hash].get("action_mode") == "fyi"
+        ]
+        if decision_hashes:
+            _settle_decision_group(
+                config, identifier, card, decision_hashes, group, comments, receipts, dry_run
+            )
+        for row_hash in fyi_hashes:
+            _settle_fyi_row(
+                config, identifier, latest[row_hash], row_hash, comments, receipts, dry_run
+            )
+    if reader_calls and reader_failures == reader_calls:
+        return 3
+    return 0
+
+
+def _settle_decision_group(
+    config: dict[str, Any],
+    identifier: str,
+    card: dict[str, Any],
+    row_hashes: list[str],
+    group: dict[str, Any],
+    comments: list[dict[str, Any]],
+    receipts: dict[str, list[dict[str, Any]]],
+    dry_run: bool,
+) -> None:
         found = _decision(comments)
         if found is None:
-            continue
-        decision, first_line, notes = found
+            return
+        decision, first_line, notes, comment = found
+        action_key = _source_action_key(
+            identifier, comment, notes, _comment_timestamp(comment)
+        )
         notes_hash = hashlib.sha256(notes.encode("utf-8")).hexdigest()
         if decision == "fix" and notes_hash in group["fix_notes_hashes"]:
-            continue
+            row_hashes = [
+                row_hash
+                for row_hash in row_hashes
+                if group["rows"][row_hash].get("status") != "fix_requested"
+            ]
+            if not row_hashes:
+                return
         if dry_run:
             LOGGER.warning(
                 "dry-run would record %s for %s (%d ledger row(s)) from %r",
@@ -405,7 +572,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 len(row_hashes),
                 first_line,
             )
-            continue
+            return
         department = card.get("department")
         kind = card.get("kind")
         decision_row = {
@@ -420,14 +587,26 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             "decision": decision,
             "source": "linear-comment",
             "first_line": first_line,
+            "source_action_key": action_key,
         }
         packet_id = card.get("packet_id")
         if packet_id is not None:
             decision_row["packet_id"] = packet_id
         if decision == "fix":
             decision_row.update(_resume_context(card, notes))
+        matching = receipts.get(action_key, [])
+        if matching and not any(
+            receipt.get("card_identifier") == identifier
+            and receipt.get("action_mode", "decision") != "fyi"
+            and receipt.get("decision") == decision
+            for receipt in matching
+        ):
+            LOGGER.error("source action key conflicts with an existing decision receipt")
+            return
         try:
-            _append_jsonl(config["decisions_file"], decision_row)
+            if not matching:
+                _append_jsonl(config["decisions_file"], decision_row)
+                receipts.setdefault(action_key, []).append(decision_row)
             for row_hash in row_hashes:
                 _append_jsonl(
                     config["ledger_file"],
@@ -450,7 +629,7 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 )
         except OSError as exc:
             LOGGER.error("decision files could not be appended: %s", exc)
-            continue
+            return
         if decision == "fix":
             values = {
                 "issue": identifier,
@@ -477,9 +656,91 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
         # NEEDS_INPUT_STATE under the owner rather than closing it.
         if config["close_enabled"]:
             _run_optional(_render(config["closer"], values), "card state mover")
-    if reader_calls and reader_failures == reader_calls:
-        return 3
-    return 0
+
+
+def _settle_fyi_row(
+    config: dict[str, Any],
+    identifier: str,
+    row: dict[str, Any],
+    row_hash: str,
+    comments: list[dict[str, Any]],
+    receipts: dict[str, list[dict[str, Any]]],
+    dry_run: bool,
+) -> None:
+    cursor = _fyi_cursor(row)
+    if cursor is False:
+        LOGGER.error("FYI row %s has an invalid replay cursor", row_hash)
+        return
+    found = _fyi_decision(comments, row.get("first_raised"), cursor)
+    if found is None:
+        return
+    decision, first_line, _, created, raw_action_key = found
+    action_key = f"{identifier}:{raw_action_key}"
+    status = {
+        "acknowledge": "acknowledged",
+        "snooze": "snoozed",
+        "retire": "retired",
+    }[decision]
+    if dry_run:
+        LOGGER.warning(
+            "dry-run would record %s for %s row %s from %r",
+            decision,
+            identifier,
+            row_hash,
+            first_line,
+        )
+        return
+    department = row.get("department") if isinstance(row.get("department"), str) else ""
+    kind = row.get("kind") if isinstance(row.get("kind"), str) else ""
+    decision_row = {
+        "ts": _now(),
+        "card_identifier": identifier,
+        "row_hash": row_hash,
+        "department": department,
+        "kind": kind,
+        "decision": decision,
+        "action_mode": "fyi",
+        "source": "linear-comment",
+        "first_line": first_line,
+        "source_action_key": action_key,
+    }
+    ledger_row = {
+        **{key: value for key, value in row.items() if not key.startswith("_")},
+        "ts": _now(),
+        "row_hash": row_hash,
+        "status": status,
+        "action_mode": "fyi",
+        "fyi_only": True,
+        "last_fyi_action_key": raw_action_key,
+        "last_fyi_action_at": created.astimezone(timezone.utc).isoformat(),
+    }
+    if decision == "snooze":
+        ledger_row["snooze_until"] = (created + timedelta(hours=24)).isoformat()
+    matching = receipts.get(action_key, [])
+    if matching and not all(
+        receipt.get("card_identifier") == identifier
+        and receipt.get("action_mode") == "fyi"
+        and receipt.get("decision") == decision
+        for receipt in matching
+    ):
+        LOGGER.error("source action key conflicts with an existing FYI receipt")
+        return
+    already_recorded = any(receipt.get("row_hash") == row_hash for receipt in matching)
+    try:
+        if not already_recorded:
+            _append_jsonl(config["decisions_file"], decision_row)
+            receipts.setdefault(action_key, []).append(decision_row)
+        _append_jsonl(config["ledger_file"], ledger_row)
+    except OSError as exc:
+        LOGGER.error("FYI decision files could not be appended: %s", exc)
+        return
+    if config["ack"]:
+        values = {
+            "issue": identifier,
+            "body": f"AGENT UPDATE: FYI action recorded ({decision}) for {row_hash}.",
+            "state": "",
+        }
+        _run_optional(_render(config["ack"], values), "ack sender")
 
 
 def main(argv: list[str] | None = None) -> int:

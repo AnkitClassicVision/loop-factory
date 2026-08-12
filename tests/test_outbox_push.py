@@ -30,7 +30,8 @@ def _card_sender_output(tmp_path: Path, name: str, output: str) -> Path:
     script.write_text(
         "import pathlib, sys\n"
         f"p=pathlib.Path({str(tmp_path / (name + '.jsonl'))!r})\n"
-        "with p.open('a') as f: f.write('called\\n')\n"
+        "import json\n"
+        "with p.open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
         f"sys.stdout.write({output!r})\n",
         encoding="utf-8",
     )
@@ -138,6 +139,10 @@ def test_fyi_rows_share_stable_department_dedupe_key(tmp_path):
         "loop-factory-fyi:label",
         "loop-factory-fyi:label",
     ]
+    title, body = _calls(tmp_path / "card.jsonl")[0][:2]
+    assert title == "[label] fyi: first FYI"
+    assert all(action in body for action in ("ACKNOWLEDGE", "SNOOZE 24H", "RETIRE"))
+    assert all(word not in body for word in ("APPROVE", "SKIP", "FIX"))
 
 
 def test_real_decision_uses_unique_row_digest_as_dedupe_key(tmp_path):
@@ -307,6 +312,48 @@ def test_card_failure_retries_successfully_on_next_tick(tmp_path):
     assert len(_calls(tmp_path / "ping.jsonl")) == 2
 
 
+def test_ledger_failure_without_buzz_retries_card_with_same_dedupe_key(tmp_path):
+    watch = tmp_path / "outbox.jsonl"
+    watch.write_text(json.dumps({"eli5": "persist this card"}) + "\n")
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("not a directory")
+    ledger = blocked_parent / "ledger.jsonl"
+    cursor = tmp_path / "cursor.json"
+    cursor.write_text(
+        json.dumps({str(watch): {"offset_lines": 0, "last_hashes": []}}) + "\n"
+    )
+    ping = _sender(tmp_path, "ping")
+    card = _card_sender_output(
+        tmp_path,
+        "stable_card",
+        '{"identifier":"ANK-654","url":"https://example.test/ANK-654"}\n',
+    )
+    config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
+    data = yaml.safe_load(config.read_text())
+    data["senders"]["card"].append("{dedupe_key}")
+    config.write_text(yaml.safe_dump(data))
+
+    first = _run(config)
+
+    assert first.returncode == 3
+    assert json.loads((tmp_path / "cursor.json").read_text())[str(watch)][
+        "offset_lines"
+    ] == 0
+    assert "card ledger persistence failed" in first.stderr
+
+    blocked_parent.unlink()
+    blocked_parent.mkdir()
+    second = _run(config)
+
+    assert second.returncode == 0
+    state = json.loads((tmp_path / "cursor.json").read_text())[str(watch)]
+    assert state["offset_lines"] == 1
+    card_calls = _calls(tmp_path / "stable_card.jsonl")
+    assert len(card_calls) == 2
+    assert card_calls[0][-1] == card_calls[1][-1]
+    assert json.loads(ledger.read_text())["card_identifier"] == "ANK-654"
+
+
 def test_buzz_failure_after_card_and_ledger_consumes_row(tmp_path):
     watch = tmp_path / "outbox.jsonl"
     watch.write_text(json.dumps({"eli5": "buzz later"}) + "\n")
@@ -320,7 +367,13 @@ def test_buzz_failure_after_card_and_ledger_consumes_row(tmp_path):
     buzz = _sender(tmp_path, "bad_buzz", 1)
     config = _config(tmp_path, watch, ping, card, ledger_file=str(ledger))
     data = yaml.safe_load(config.read_text())
-    data["senders"]["buzz"] = [sys.executable, str(buzz), "{card}"]
+    data["senders"]["card"].append("{dedupe_key}")
+    data["senders"]["buzz"] = [
+        sys.executable,
+        str(buzz),
+        "{card}",
+        "{action_mode}",
+    ]
     config.write_text(yaml.safe_dump(data))
 
     result = _run(config)

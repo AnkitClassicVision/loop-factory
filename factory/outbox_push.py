@@ -31,7 +31,8 @@ Configuration YAML::
 Sender values are argv templates, never shell commands. Ping templates may use
 ``{text}``, ``{department}``, and ``{kind}``; card templates may use
 ``{title}``, ``{body}``, ``{dedupe_key}``, ``{department}``, and ``{kind}``; optional buzz
-templates may use ``{card}``, ``{text}``, ``{department}``, and ``{kind}``.
+templates may use ``{card}``, ``{text}``, ``{action_mode}``, ``{department}``,
+and ``{kind}``.
 
 Exit codes: 2 for invalid configuration, 3 for a sender delivery failure,
 and 4 when every configured watch path is missing during a non-dry-run tick.
@@ -113,6 +114,15 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ConfigError("ledger_file must be a non-empty path when configured")
     if buzz and ledger_file is None:
         raise ConfigError("ledger_file is required when senders.buzz is configured")
+    if card_enabled and buzz:
+        if "{dedupe_key}" not in "\0".join(card):
+            raise ConfigError(
+                "senders.card must contain {dedupe_key} when senders.buzz is configured"
+            )
+        if "{action_mode}" not in "\0".join(buzz):
+            raise ConfigError(
+                "senders.buzz must contain {action_mode} when bound to a card"
+            )
     clean_watches = []
     for index, watch in enumerate(watches):
         if not isinstance(watch, dict):
@@ -211,6 +221,7 @@ def _render(template: list[str], values: dict[str, str]) -> list[str]:
         .replace("{body}", values.get("body", ""))
         .replace("{card}", values.get("card", ""))
         .replace("{dedupe_key}", values.get("dedupe_key", ""))
+        .replace("{action_mode}", values.get("action_mode", ""))
         .replace("{department}", values["department"])
         .replace("{kind}", values["kind"])
         for item in template
@@ -279,6 +290,8 @@ def _append_ledger(
     urgency: Any = "normal",
     due: Any = None,
     has_due: bool = False,
+    action_mode: str = "decision",
+    fyi_only: bool = False,
 ) -> bool:
     identifier = _card_identifier(card)
     url = card.get("url") if isinstance(card, dict) else None
@@ -300,6 +313,8 @@ def _append_ledger(
         "card_url": url if isinstance(url, str) and url else None,
         "status": "open" if tracked else "untracked",
         "urgency": urgency,
+        "action_mode": action_mode,
+        "fyi_only": fyi_only,
     }
     if packet_id is not None:
         ledger_row["packet_id"] = packet_id
@@ -353,6 +368,11 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 break
             digest = hashlib.sha256(f"{watch_path}{raw}".encode()).hexdigest()
             row_digest = hashlib.sha256(raw.encode()).hexdigest()
+            fyi_only = (
+                isinstance(row.get("card"), dict)
+                and row["card"].get("fyi_only") is True
+            )
+            action_mode = "fyi" if fyi_only else "decision"
             if digest in state["last_hashes"]:
                 state["offset_lines"] = line_index + 1
                 changed = True
@@ -362,7 +382,13 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
             # row's own summary line; human-action body LEADS with YOUR MOVE and the
             # exact reply strings (approval grammar itself stays human-only).
             summary_line = " ".join(_row_summary(row).split())[:80] or f"{watch['kind']} row"
-            if watch["kind"] == "escalation":
+            if fyi_only:
+                reply_instructions = (
+                    "Reply with first line: ACKNOWLEDGE (mark this update seen), "
+                    "SNOOZE 24H (pause reminders for 24 hours), or RETIRE "
+                    "(stop future reminders for this item)."
+                )
+            elif watch["kind"] == "escalation":
                 reply_instructions = (
                     "Reply with first line: APPROVE (keep or accept this handling "
                     "as-is), or FIX: <change> (request a change or retirement; add "
@@ -375,7 +401,11 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 )
             values = {
                 "text": text,
-                "title": f"[{watch['department']}] {watch['kind']}: {summary_line}",
+                "title": (
+                    f"[{watch['department']}] fyi: {summary_line}"
+                    if fyi_only
+                    else f"[{watch['department']}] {watch['kind']}: {summary_line}"
+                ),
                 "body": (
                     "## YOUR MOVE (10 seconds)\n"
                     f"{summary_line}\n"
@@ -384,10 +414,10 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                 ),
                 "department": watch["department"],
                 "kind": watch["kind"],
+                "action_mode": action_mode,
                 "dedupe_key": (
                     f"loop-factory-fyi:{watch['department']}"
-                    if isinstance(row.get("card"), dict)
-                    and row["card"].get("fyi_only") is True
+                    if fyi_only
                     else row_digest
                 ),
             }
@@ -463,7 +493,17 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                             ),
                             due=row.get("due"),
                             has_due="due" in row,
+                            action_mode=action_mode,
+                            fyi_only=fyi_only,
                         )
+                    if ledger_file and identifier is not None and not ledger_tracked:
+                        card_failures += 1
+                        LOGGER.error(
+                            "card ledger persistence failed for %s line %d",
+                            source,
+                            line_index + 1,
+                        )
+                        break
                     if bound_notification and not ledger_tracked:
                         card_failures += 1
                         LOGGER.error(
