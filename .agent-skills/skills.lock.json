@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "project_id": "loop-factory",
+  "mode": "reference_only",
+  "generated_at": "2026-08-11T12:56:02Z",
+  "source": {
+    "repository": "https://github.com/AnkitClassicVision/Ankit-open-skills.git",
+    "commit": "f1bff0bae409ab7b95685630458fb68a4a2e24d9",
+    "pull_request": "https://github.com/AnkitClassicVision/Ankit-open-skills/pull/23",
+    "review_state": "draft"
+  },
+  "skills": [
+    {
+      "name": "outreach-mission-driver",
+      "canonical_path": "skill-library/skills/program/outreach-automation/outreach-mission-driver",
+      "skill_file_sha256": "429a47be8fcecc09eab3ebe15d65ca7462f3491bd9bca0afc8d781913d02bdba",
+      "materialized": false,
+      "sandbox_only": true,
+      "production_effects": false
+    }
+  ],
+  "activation": {
+    "status": "not_deployed",
+    "live_effects_tested": false,
+    "production_send_authorized": false
+  },
+  "verification": {
+    "sandbox_proof_groups_passed": 14,
+    "injected_crash_boundaries_passed": 11,
+    "independent_review": "pass",
+    "limitations": [
+      "No scheduler, network adapter, live source adapter, or delivery-verification adapter is included.",
+      "Injected Python exits do not prove power-loss durability or distributed provider exactly-once behavior."
+    ]
+  }
+}

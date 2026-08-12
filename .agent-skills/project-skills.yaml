@@ -1,0 +1,68 @@
+# Reference-only Open Skills manifest for Loop Factory.
+schema_version: 1
+project_id: loop-factory
+project_name: Loop Factory
+repo: AnkitClassicVision/loop-factory
+
+context_budget:
+  startup_tokens_target: 3500
+  retrieve_more_only_when_needed: true
+
+source_truth:
+  canonical_repository: https://github.com/AnkitClassicVision/Ankit-open-skills.git
+  canonical_commit: f1bff0bae409ab7b95685630458fb68a4a2e24d9
+  source_pull_request: https://github.com/AnkitClassicVision/Ankit-open-skills/pull/23
+  review_state: draft
+  primary_docs:
+    - AGENTS.md
+    - CLAUDE.md
+    - README.md
+    - runbooks/factory-pipeline.md
+    - runbooks/process-change-qa.md
+    - runbooks/promotion-ladder.md
+
+allowed_skill_families:
+  - governance-safety
+  - qa-verification
+  - sales-revenue-ops
+  - software-delivery
+  - agent-team-ops
+
+pinned_skills:
+  - name: repo-context-firewall
+    source: canonical_registry
+    required: true
+  - name: verification-before-completion
+    source: canonical_registry
+    required: true
+  - name: cross-model-qa-router
+    source: canonical_registry
+    required: true
+  - name: outreach-mission-driver
+    source: canonical_commit
+    canonical_path: skill-library/skills/program/outreach-automation/outreach-mission-driver
+    skill_file_sha256: 429a47be8fcecc09eab3ebe15d65ca7462f3491bd9bca0afc8d781913d02bdba
+    required: true
+    materialized: false
+    sandbox_only: true
+
+forbidden_context:
+  - raw secrets
+  - raw PHI/PII
+  - raw email or message bodies
+  - raw CRM, EHR, or contact identifiers
+  - department-specific data in factory code
+  - unrelated global skills
+
+deployment:
+  mode: reference_only
+  local_surface: .agent-skills/skills
+  lockfile: .agent-skills/skills.lock.json
+  require_receipt: true
+  activation_state: not_deployed
+  production_effects: false
+  live_sends_authorized: false
+
+review_policy:
+  cross_model_fresh_review_required_for_high_stakes: true
+  merge_requires_human_review: true
