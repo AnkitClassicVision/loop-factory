@@ -277,6 +277,9 @@ def _append_ledger(
     packet_id: Any = None,
     action_mode: str = "decision",
     fyi_only: bool = False,
+    urgency: Any = "normal",
+    due: Any = None,
+    has_due: bool = False,
 ) -> bool:
     identifier = _card_identifier(card)
     url = card.get("url") if isinstance(card, dict) else None
@@ -299,9 +302,12 @@ def _append_ledger(
         "status": "open" if tracked else "untracked",
         "action_mode": action_mode,
         "fyi_only": fyi_only,
+        "urgency": urgency,
     }
     if packet_id is not None:
         ledger_row["packet_id"] = packet_id
+    if has_due:
+        ledger_row["due"] = due
     ledger_path = Path(path)
     try:
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,6 +458,9 @@ def tick(config: dict[str, Any], *, dry_run: bool = False) -> int:
                             packet_id=row.get("packet_id"),
                             action_mode=action_mode,
                             fyi_only=fyi_only,
+                            urgency=row["urgency"] if "urgency" in row else "normal",
+                            due=row.get("due"),
+                            has_due="due" in row,
                         )
                     if ledger_file and identifier is not None and not ledger_tracked:
                         card_failures += 1

@@ -41,6 +41,7 @@ ELIGIBLE_STATUSES = frozenset({"open", "fix_requested", "snoozed"})
 DELIVERY_PENDING = "delivery_pending"
 NORMAL_BASE_HOURS = 48
 NORMAL_CAP_HOURS = 336
+URGENT_FLOOR_HOURS = 2
 
 
 class ReescalationError(ValueError):
@@ -180,8 +181,24 @@ def _cadence(
         return wake, timedelta(0), "FYI snooze expired", count
     clock_field = "last_ping_at" if row.get("last_ping_at") else "first_raised"
     start = _datetime(row.get(clock_field), clock_field)
-    interval = _normal_interval(count)
-    reason = f"normal cadence: {int(interval.total_seconds() // 3600)}h elapsed"
+    urgency = row.get("urgency", "normal")
+    if urgency == "normal":
+        interval = _normal_interval(count)
+        reason = f"normal cadence: {int(interval.total_seconds() // 3600)}h elapsed"
+    elif urgency == "urgent":
+        due = _datetime(row.get("due"), "due")
+        if start >= due:
+            interval = timedelta(hours=URGENT_FLOOR_HOURS)
+            reason = "urgent cadence: past due, 2h interval elapsed"
+        else:
+            interval = max(
+                (due - start) / 2,
+                timedelta(hours=URGENT_FLOOR_HOURS),
+            )
+            hours = interval.total_seconds() / 3600
+            reason = f"urgent cadence: {hours:g}h midpoint interval elapsed"
+    else:
+        raise ReescalationError("urgency must be 'normal' or 'urgent'")
     return start, interval, reason, count
 
 
