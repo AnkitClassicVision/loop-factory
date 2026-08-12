@@ -5,6 +5,96 @@ reference files, do not restate them._
 
 ---
 
+## FIRST LIVE RESOLUTION EXECUTED + 16h loop outage found and fixed (2026-08-11, night)
+
+- **ANK-348 RESOLVED END-TO-END**: owner Telegram tap 19:05 → decision row
+  (verdict_line "APPROVE external_send") → kernel receipt (decision_hash
+  0775a355, handler exit 0) → Guelcher's address in CANDIDATE-INBOX.json with
+  full provenance (approved_via ANK-348) → close comment on card → live
+  replay-safe (second run: nothing open, one receipt). First resolution in the
+  system's life. Fixes from the live path: listener tap-grammar (first-token
+  verb; podcast `03ff4b2`), plain bare cards (owner correction; `ae65cd4`,
+  Taste signal 80). u26 fixture now byte-matches the real tap.
+- **DEPARTMENT LOOP WAS DEAD 03:00→20:00** (crash every 30 min, found via the
+  missing 19:00 receipt): U12/N15 wired+pinned without registry rows; first
+  'unknown' killed Compare; dead loop kept the evidence missing = self-
+  sustaining outage. THIRD recurrence of wired-sensor-without-registries
+  (ledger 07-31, hopper 08-05). Fixed loop-factory `5cea63c` (FAILURE_CLASSES)
+  + `c14beac` (QUESTIONS, MEANINGS — the 19:30 run exposed my table-lookup
+  proof as too narrow; full-path synthetic drive now proves all four statuses).
+  Both mistakes captured to OB ledger. 20:00 fire = live proof (watcher armed
+  at write time). Release re-pin pending after green run.
+- Generic Open Engine dispatcher CLAIMED ANK-348 despite --dispatch-mode
+  manual and left AGENT FAILED noise — suppress in the wiring round.
+
+---
+
+## r33 + ONE-CARD SLICE LANDED; first live card awaiting owner (2026-08-11, evening)
+
+podcast `9e5d67f` (r33) + `1485011` (slice), feat/one-true-master, UNPUSHED
+(ahead 3 with e0db19f). Claude lane FIXED by Ankit (bypassPermissions, both
+lanes) and immediately proven: 4/4 PASS attempt 1 (r33 102s; slice lanes
+129/232/317s), workers self-executing their checks.
+
+- **r33**: strong bio signals earn a 250-word ceiling; live re-proof returns
+  the guest's real 123-word bio verbatim, zero false candidates. u25 PASS
+  (watched RED first), u21 regression green, 39 tests.
+- **ONE-CARD SLICE** (the audits' resolve-gap): scripts/identity_card.py
+  (ONE open card, YOUR MOVE body, ledger row last), identity_card_listen.py
+  (human-only grammar, kernel dispatch, closes ONLY on receipt),
+  apply_identity_approve.py (first registry handler: verified inbox write
+  with provenance). u26 seam check PASS end-to-end offline (watched RED
+  pre-build), 29 module tests. Registry live at
+  episodes/_loop_state/approve-registry.json.
+- **LIVE**: Linear ANK-348 "Guest identity approval: Michael Guelcher"
+  created by the real script (--post), payload comment posted, Telegram
+  Approve/Fix/Skip prompt delivered via obe_tg_notify.notify_card_created
+  (production VPS transport; owner tap posts the human APPROVE via
+  tg_approval.py). Awaiting owner reply; monitor armed. On APPROVE: run
+  scripts/identity_card_listen.py --root /mnt/d_drive/repos/podcast
+  --comments-file <fetched via scratchpad linear_card_io.py comments> and
+  verify inbox write + post close comment from out/identity-card-close.md.
+- **Wiring not done yet**: runner does not invoke identity_card.py (no
+  scheduled card creation, no automatic doorbell); listener not on a timer;
+  that is the next Ringer round. Doorbell one-off went through
+  notify_card_created because the runner's telegram() path is hook-blocked
+  from an interactive session (fine in production where the runner calls it).
+
+---
+
+## r32 bio extraction LANDED; claude lane diagnosed; r33 queued (2026-08-11, ~16:30)
+
+podcast `f3cbad2` (feat/one-true-master, UNPUSHED — local ahead 2 with e0db19f).
+r32's three defects fixed and live-proven: u21 v2 PASS at repo, 35 tests green
+(module + guest_assets seam), live Guelcher run shows the footer/owner-ask/
+signature false candidates GONE. Patch authored by the ringer claude lane
+(sonnet), reviewed by the coordinator and hand-applied (see below), byte-identical
+to the worker artifact preserved at
+/mnt/d_drive/ringer-work/loop-drive-contract-r32/attempt2-preserved.patch.
+
+**Claude-engine "spawn failure" root-caused — NOT claude-in-claude.** Two stacked
+harness defects: (1) 0.0s ERROR = stale-worktree collision (`ringer.py` ~7173
+refuses an existing taskdir; the dead codex attempt left one — after any FAILed
+worktrees run, remove the worktree before rerunning the same manifest);
+(2) engine template `--permission-mode acceptEdits` lets a headless worker edit
+but never execute — it wrote the full correct fix, could not run pytest, and
+honestly declined to fake its summary. **PENDING ANKIT:** flip both claude lanes
+to `bypassPermissions` in `~/.config/ringer/config.toml` (this session's edit was
+classifier-blocked; command is in the session report). Until then the claude lane
+cannot verify its own work; codex locked out until Aug 17.
+
+**New live defect found minutes after landing → r33 QUEUED.** The real guest bio
+measures 123 words; the 25..120 ceiling still excludes it even though every r32
+signal fires (probe: scratchpad `bio_signal_probe.py`, session
+3f9636d7-80e5-4560-b0ce-90656e0f243a). Check
+`ringer/loop-drive-contract/checks/u25_bio_length_check.py` written with
+self-validating fixture bands, watched RED at `f3cbad2` (L1/L2 fail, guards
+green). Manifest `manifest-r33-bio-length.json` linted clean — run it the moment
+the claude lane is unblocked. MODEL-NOTES updated (discount the two claude
+scoreboard FAILs — both harness).
+
+---
+
 ## Podcast guest-acquisition: audit-driven hardening r29-r30 (2026-08-11, afternoon)
 
 podcast `d641ec4` `e0db19f`; loop-factory `501d98e`. feat/one-true-master PUSHED
